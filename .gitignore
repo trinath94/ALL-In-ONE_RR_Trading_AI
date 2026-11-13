@@ -20,3 +20,4 @@ windows-connector/build/
 windows-connector/dist/
 windows-connector/.venv/
 windows-connector/packaging/version_info.txt
+dump.rdb
