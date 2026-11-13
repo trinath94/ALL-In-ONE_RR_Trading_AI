@@ -539,7 +539,7 @@ mod tests {
         assert!(!rep.ok);
         for c in r.calls.lock().unwrap().iter().filter(|c| c.args.first().map(|a| a == "compose").unwrap_or(false)) {
             assert!(c.args.iter().all(|a| !e.secrets.values().iter().any(|v| a.contains(v))), "secret in argv");
-            assert_eq!(c.env.len(), 9, "8 stack secrets + the image tag");
+            assert_eq!(c.env.len(), 10, "9 stack secrets + the image tag");
             assert!(c.env.contains(&("RR_ONE_IMAGE_TAG".to_string(), "local".to_string())));
         }
         let json = serde_json::to_string(&rep).unwrap();

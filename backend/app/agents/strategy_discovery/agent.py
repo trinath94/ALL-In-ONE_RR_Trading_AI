@@ -74,8 +74,32 @@ class Proposal(BaseModel):
     closest_existing_strategies: list[str]
 
 
+class ResearchOut(BaseModel):
+    gaps: list[str]
+    weaknesses: list[str]
+    duplicates: list[str]
+    proposals: list[Proposal]
+
+
+class DevelopOut(BaseModel):
+    source: str
+    notes: str
+
+
+def _ai_call(agent: ClaudeAgent | None, task: str, system: str, user: dict, schema: dict, model_cls, max_tokens: int):
+    """RR Trading One Phase 11: without an explicit agent, research and development go through the AI gateway (route
+    'strategy_discovery', or RR_ANTHROPIC_API_KEY as before): same validation, ledger and boundaries as every AI call."""
+    if agent is not None:
+        return agent._call(system, user, schema, max_tokens=max_tokens)
+    from app.ai import gateway
+    try:
+        out, meta = gateway.run(task, system, user, schema, model_cls, max_tokens=max_tokens)
+    except gateway.GatewayError as exc:
+        raise AgentError(str(exc)) from exc
+    return out.model_dump(), {**meta, "model": f"{meta['provider']}/{meta['model']}"}
+
+
 def research(db: Session, performance_summary: dict, agent: ClaudeAgent | None = None, max_new: int = 3) -> dict:
-    agent = agent or ClaudeAgent()
     reg = [{"code": m.code, "name": m.name, "category": m.category, "regimes": m.regimes, "description": m.description[:160]}
            for m in registry.metas()]
     system = SYSTEM_PROMPT + f"""
@@ -87,17 +111,19 @@ list the closest existing strategies for each proposal. Proposals are research o
 validated in an isolated sandbox (backtest, out-of-sample, walk-forward, Monte Carlo, costs, DEMO forward test)
 before any human approval. Use only data an MT5 retail feed provides (OHLC, tick volume, spread) unless you mark
 the required data explicitly."""
-    conv = AgentConversation(purpose="DISCOVERY", model=agent.model, request={"registry": len(reg)})
+    conv = AgentConversation(purpose="DISCOVERY", model=agent.model if agent else "ai-gateway", request={"registry": len(reg)})
     db.add(conv)
     db.flush()
     try:
-        data, meta = agent._call(system, {"task": "strategy_research", "registry": reg, "performance": performance_summary},
-                                 RESEARCH_SCHEMA, max_tokens=32000)
+        data, meta = _ai_call(agent, "strategy_discovery", system, {"task": "strategy_research", "registry": reg,
+                                                                    "performance": performance_summary},
+                              RESEARCH_SCHEMA, ResearchOut, 32000)
         proposals = [Proposal.model_validate(p) for p in data["proposals"]][:max_new]
     except (AgentError, ValidationError, KeyError) as exc:
         conv.error = str(exc)[:2000]
         raise AgentError(str(exc)) from exc
     conv.response, conv.input_tokens, conv.output_tokens = data, meta["input_tokens"], meta["output_tokens"]
+    conv.model = meta.get("model", conv.model)
     created = []
     for p in proposals:
         text = " ".join([p.name, p.concept, p.entry_conditions, p.mathematical_foundation])
@@ -112,14 +138,14 @@ the required data explicitly."""
 
 
 def develop(db: Session, exp: StrategyExperiment, agent: ClaudeAgent | None = None, user_id: int | None = None) -> dict:
-    agent = agent or ClaudeAgent()
     system = SYSTEM_PROMPT + "\n\nYou are now a senior quant developer. " + SANDBOX_API
-    conv = AgentConversation(purpose="DEVELOPMENT", model=agent.model, request={"experiment_id": exp.id})
+    conv = AgentConversation(purpose="DEVELOPMENT", model=agent.model if agent else "ai-gateway", request={"experiment_id": exp.id})
     db.add(conv)
     db.flush()
     try:
-        data, meta = agent._call(system, {"task": "implement_strategy", "proposal": exp.proposal,
-                                          "hypothesis": exp.hypothesis}, DEVELOP_SCHEMA, max_tokens=24000)
+        data, meta = _ai_call(agent, "strategy_discovery", system, {"task": "implement_strategy", "proposal": exp.proposal,
+                                                                    "hypothesis": exp.hypothesis},
+                              DEVELOP_SCHEMA, DevelopOut, 24000)
     except AgentError as exc:
         conv.error = str(exc)[:2000]
         raise

@@ -63,7 +63,11 @@ def estimate(db: Session, df: pd.DataFrame, sig: dict, n_confluent: int, cost_po
     if reg is None:
         return {"available": False, "status": "NO_VALIDATED_MODEL",
                 "note": "No validated probability model yet — probability unavailable (not estimated)."}
-    art = _artifact(reg)
+    try:
+        art = _artifact(reg)
+    except mreg.ModelIntegrityError as exc:       # Phase 11: an unsigned or altered artefact is never used
+        return {"available": False, "status": "MODEL_INTEGRITY_FAILED", "model": f"{reg.model_key}:v{reg.version}",
+                "note": f"{exc} Probability unavailable (not estimated)."}
     X = signal_features(df, sig, n_confluent)
     raw = float(art["model"].predict_proba(X)[:, 1][0])
     cal: Calibrator = art["calibrator"]

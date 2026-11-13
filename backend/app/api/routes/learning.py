@@ -261,8 +261,9 @@ def experiment_rollback(exp_id: int, user: User = Depends(require("strategy.mana
 
 @learning.post("/experiments/{exp_id}/develop")
 def experiment_develop(exp_id: int, user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
-    if not get_settings().anthropic_api_key:
-        raise HTTPException(409, "Claude API key not configured")
+    from app.ai import gateway as _gw
+    if not _gw.configured("strategy_discovery"):
+        raise HTTPException(409, "no AI provider is configured for strategy discovery (AI Providers page)")
     from app.agents.claude_agent import AgentError
     from app.agents.strategy_discovery import agent
     e = db.get(StrategyExperiment, exp_id)
@@ -276,8 +277,9 @@ def experiment_develop(exp_id: int, user: User = Depends(require("strategy.manag
 
 @learning.post("/research")
 def research(user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
-    if not get_settings().anthropic_api_key:
-        raise HTTPException(409, "Claude API key not configured")
+    from app.ai import gateway as _gw
+    if not _gw.configured("strategy_discovery"):
+        raise HTTPException(409, "no AI provider is configured for strategy discovery (AI Providers page)")
     from app.agents.claude_agent import AgentError
     from app.agents.strategy_discovery import agent
     summary = {d: {r.key: r.metrics.get("verdict") for r in perf.latest(db, "DEMO", d)} for d in ("strategy", "regime")}
@@ -302,7 +304,14 @@ def model_out(m: ModelRegistry) -> dict:
             "calibration": {"test_reliability": (m.calibration or {}).get("test_reliability"),
                             "segments": (m.calibration or {}).get("segments")},
             "trained_at": m.trained_at, "validated_at": m.validated_at, "approved_by": m.approved_by,
-            "approved_at": m.approved_at, "rollback_to": m.rollback_to, "features": m.features}
+            "approved_at": m.approved_at, "rollback_to": m.rollback_to, "features": m.features,
+            # Phase 11: artefact signature (valid | not_enforced | unsigned | invalid | no_artifact)
+            "signature": _sig(m)}
+
+
+def _sig(m: ModelRegistry) -> str:
+    from app.learning_engine import models as mreg
+    return mreg.signature_state(m)
 
 
 @learning.get("/models")

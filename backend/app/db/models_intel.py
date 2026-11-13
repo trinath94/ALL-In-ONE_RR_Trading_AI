@@ -157,6 +157,8 @@ class ModelRegistry(Base):
     # TRAINED -> VALIDATED -> APPROVED -> PRODUCTION | REJECTED | RETIRED
     artifact: Mapped[bytes | None] = mapped_column(LargeBinary)
     artifact_sha256: Mapped[str | None] = mapped_column(String(64))
+    # HMAC-SHA256 of the artefact with RR_MODEL_SIGNING_KEY (Phase 11, gap 7.8): authenticity, not just integrity.
+    artifact_hmac: Mapped[str | None] = mapped_column(String(64))
     trained_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))

@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # the api and analysis containers (desktop stack secrets, DPAPI). Without it, provider keys cannot be stored.
     ai_keys_key: str = ""
     agent_run_retention_days: int = 30
+    # Phase 11 (gap 7.8): HMAC key signing model artefacts. Held by api, analysis and learner (desktop stack secrets,
+    # DPAPI). When set, an artefact without a valid signature is never loaded, approved, promoted or rolled back to.
+    model_signing_key: str = ""
     bridge_scope: str = "full"            # full | read
     # RR Trading One: key for the local supervisor API (/api/v1/local). Empty = API disabled (404).
     supervisor_key: str = ""

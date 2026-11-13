@@ -254,8 +254,9 @@ def job_experiments() -> dict:
 
 
 def job_discovery() -> dict:
-    if not get_settings().anthropic_api_key:
-        return {"skipped": "Claude API key not configured"}
+    from app.ai import gateway
+    if not gateway.configured("strategy_discovery"):
+        return {"skipped": "no AI provider is configured for strategy discovery"}
     from app.agents.strategy_discovery import agent
     from app.learning_engine import performance
     with session_scope() as db:

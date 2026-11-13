@@ -66,13 +66,35 @@ def check(db: Session, days: int = 14) -> dict:
                                          value=round(b, 4), threshold=round(test["brier"] * 1.25, 4), severity="critical",
                                          details={"n": len(linked), "validation_brier": test["brier"]}))
     events += strategy_deterioration(db)
+    recommended = recommend_retraining(db, events)
     for e in events:
         db.add(e)
         if e.severity == "critical":
             notify(db, "DRAWDOWN_WARNING", f"Drift: {e.subject} {e.metric}", f"value {e.value} > threshold {e.threshold}",
                    {"scope": e.scope})
     db.flush()
-    return {"events": len(events)}
+    return {"events": len(events), "retraining_recommended": recommended}
+
+
+def recommend_retraining(db: Session, events: list[DriftEvent]) -> list[str]:
+    """Phase 11 (Part 11 item 19): a model with critical feature or performance drift gets one OPEN retraining
+    recommendation (not duplicated while it stays open). Retraining itself still ends in VALIDATED or REJECTED, and
+    production still needs an administrator."""
+    from app.db.models_intel import AIRecommendation
+    out = []
+    models = {e.subject for e in events if e.severity == "critical" and e.scope in ("feature", "performance", "prediction")
+              and ":v" in e.subject}
+    for subject in sorted(models):
+        if db.scalar(select(AIRecommendation.id).where(AIRecommendation.kind == "RETRAIN", AIRecommendation.subject == subject,
+                                                       AIRecommendation.status == "OPEN")):
+            continue
+        evid = [{"scope": e.scope, "metric": e.metric, "value": e.value, "threshold": e.threshold}
+                for e in events if e.subject == subject and e.severity == "critical"]
+        db.add(AIRecommendation(source="drift", kind="RETRAIN", subject=subject,
+                                recommendation=f"Retrain {subject}: critical drift since validation "
+                                               f"({', '.join(x['metric'] for x in evid)}).", evidence={"drift": evid}))
+        out.append(subject)
+    return out
 
 
 def strategy_deterioration(db: Session, window: int = 30) -> list[DriftEvent]:

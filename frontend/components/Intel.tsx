@@ -50,9 +50,17 @@ export function ModelsPanel() {
           { k: "bss", h: "Brier skill", r: (m) => fmt.num(m.metrics?.test?.brier_skill_score, 4) },
           { k: "auc", h: "AUC", r: (m) => fmt.num(m.metrics?.test?.auc, 3) },
           { k: "ece", h: "ECE", r: (m) => fmt.num(m.calibration?.test_reliability?.ece, 3) },
+          { k: "wf", h: "Walk-forward", sort: false, r: (m) => m.metrics?.walk_forward
+            ? <Badge tone={m.metrics.walk_forward.passed ? "neon" : "bear"}>{m.metrics.walk_forward.positive}/{m.metrics.walk_forward.scored} folds</Badge> : <span className="text-dim">—</span> },
+          { k: "base", h: "vs production", sort: false, r: (m) => { const b = m.metrics?.baseline_comparison;
+            return !b ? <span className="text-dim">—</span> : !b.production ? <span className="text-dim">none</span>
+              : b.brier_production == null ? <span className="text-dim" title={b.note}>not compared</span>
+              : <Badge tone={b.passed ? "neon" : "bear"}>{b.passed ? "not worse" : "worse"}</Badge>; } },
+          { k: "signature", h: "Signature", r: (m) => <Badge tone={m.signature === "valid" ? "neon" : m.signature === "not_enforced" ? "warn" : m.signature === "no_artifact" ? "dim" : "bear"}>
+            {m.signature === "not_enforced" ? "not enforced" : m.signature === "no_artifact" ? "no artefact" : m.signature}</Badge> },
           { k: "trained_at", h: "Trained", r: (m) => fmt.time(m.trained_at) },
           { k: "act", h: "", sort: false, r: (m) => can(me, "strategy.manage") && <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-            {m.status === "VALIDATED" && <Btn small tone="warn" onClick={() => setDlg({ m, to: "APPROVED" })}>Approve</Btn>}
+            {m.status === "VALIDATED" && <Btn small tone="warn" disabled={!["valid", "not_enforced"].includes(m.signature)} onClick={() => setDlg({ m, to: "APPROVED" })}>Approve</Btn>}
             {m.status === "APPROVED" && can(me, "trade.live") && <Btn small tone="neon" onClick={() => setDlg({ m, to: "PRODUCTION" })}>Promote</Btn>}
             {["VALIDATED", "APPROVED"].includes(m.status) && <Btn small tone="bear" onClick={() => setDlg({ m, to: "REJECTED" })}>Reject</Btn>}
             {m.status === "PRODUCTION" && m.rollback_to && can(me, "trade.live") &&
@@ -66,6 +74,14 @@ export function ModelsPanel() {
             {Object.entries(sel.metrics?.candidates || {}).map(([k, v]: any) => <div key={k}>{k}: {v.val_log_loss ?? v.error}</div>)}
             <div className="mt-1 text-dim">Test: n={sel.metrics?.test?.n}, Brier {sel.metrics?.test?.brier} vs base-rate {sel.metrics?.test?.brier_base_rate};
               Brier-gain CI low {sel.metrics?.test?.brier_gain_ci95_low}; AUC−0.5 CI low {sel.metrics?.test?.auc_minus_half_ci95_low}</div>
+            {sel.metrics?.walk_forward && <div className="mt-1">
+              <div className="text-dim">Walk-forward ({sel.metrics.walk_forward.rule}; embargo {sel.metrics.walk_forward.embargo_bars} bars):</div>
+              {sel.metrics.walk_forward.folds.map((f: any) => <div key={f.fold}>fold {f.fold}: train {f.train} to {fmt.time(f.train_end)} → test {f.test} from {fmt.time(f.test_start)}: {f.skipped ? f.skipped : `Brier skill ${f.brier_skill_score}`}</div>)}
+            </div>}
+            {sel.metrics?.baseline_comparison && <div className="mt-1 text-dim">Against production: {sel.metrics.baseline_comparison.production
+              ? `${sel.metrics.baseline_comparison.production}${sel.metrics.baseline_comparison.brier_production != null ? `, Brier ${sel.metrics.baseline_comparison.brier_production} vs candidate ${sel.metrics.baseline_comparison.brier_candidate}` : ""} (${sel.metrics.baseline_comparison.note})`
+              : sel.metrics.baseline_comparison.note}</div>}
+            <div className="mt-1 text-dim">Artefact signature: {sel.signature}{sel.signature === "unsigned" || sel.signature === "invalid" ? ": never loaded or promoted; retrain to obtain a signed model" : ""}</div>
             <div className="mt-1 text-dim">Dataset: {JSON.stringify(sel.dataset)}</div>
           </div>
           <div><div className="text-[10px] uppercase text-dim">Reliability diagram (final test)</div><ReliabilityChart bins={sel.calibration?.test_reliability?.bins} /></div>
