@@ -136,7 +136,8 @@ class FakeMT5:
                                      magic=req["magic"], comment=req["comment"], time=int(time.time()))
             self.deals.append(dict(ticket=t + 100000, order=t, position_id=t, symbol=req["symbol"], type=req["type"],
                                    volume=req["volume"], price=req["price"], profit=0.0, commission=0.0, swap=0.0,
-                                   magic=req["magic"], comment=req["comment"], time=int(time.time()), entry=0))
+                                   magic=req["magic"], comment=req["comment"], time=int(time.time()), entry=0,
+                                   reason=3))     # DEAL_REASON_EXPERT: what MT5 records for API (program) orders
         elif req["action"] == TRADE_ACTION_DEAL:
             p = self.positions[req["position"]]
             sgn = 1 if p["type"] == 0 else -1
@@ -144,7 +145,7 @@ class FakeMT5:
             self.deals.append(dict(ticket=t + 100000, order=t, position_id=p["ticket"], symbol=p["symbol"],
                                    type=req["type"], volume=req["volume"], price=req["price"], profit=pnl,
                                    commission=-0.7, swap=0.0, magic=req["magic"], comment=req["comment"],
-                                   time=int(time.time()), entry=1))
+                                   time=int(time.time()), entry=1, reason=3))
             p["volume"] = round(p["volume"] - req["volume"], 2)
             if p["volume"] <= 0:
                 del self.positions[req["position"]]

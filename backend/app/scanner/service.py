@@ -78,6 +78,24 @@ def peer_frames(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, now: da
     return out, problems
 
 
+def peer_correlation(df: pd.DataFrame, peers: dict, window: int = 200) -> dict:
+    """Measured correlation of bar-to-bar log returns between the symbol and each peer, on the closed bars both have
+    (last `window`). Reported with its sample; None below 30 common bars (Phase 10: suggestions get evidence)."""
+    import numpy as np
+    out = {}
+    base = np.log(df["close"]).diff()
+    for name, pdf in peers.items():
+        joined = pd.concat([base, np.log(pdf["close"]).diff()], axis=1, join="inner").dropna().iloc[-window:]
+        n = len(joined)
+        if n < 30:
+            out[name] = {"rho": None, "bars": n, "note": "fewer than 30 common bars"}
+            continue
+        rho = joined.iloc[:, 0].corr(joined.iloc[:, 1])
+        out[name] = ({"rho": None, "bars": n, "note": "undefined: no price variation in the window"} if pd.isna(rho)
+                     else {"rho": round(float(rho), 3), "bars": n})
+    return out
+
+
 def record_evaluations(diag: list[dict], not_applicable: list[str]) -> dict:
     """Count every strategy outcome of one analysis (signal / no_signal / unavailable / error / not_applicable) in
     Redis per day, for the strategy library. Returns the totals for this analysis."""
@@ -218,6 +236,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
                                    "spread_points": round(spread / float(sym.point), 2) if float(sym.point) else None,
                                    # Phase 8: what this symbol's feed actually provided and what every strategy did
                                    "data_caps": sorted(caps), "peers": sorted(peers), "peer_problems": peer_problems,
+                                   "peer_correlation": peer_correlation(df, peers) if peers else {},
                                    "evaluation": outcomes,
                                    "unavailable": sorted({d["strategy"] for d in diag if d["status"] == "unavailable"})},
                         strategy_outputs=[s.dict() for s in sigs] + [d for d in diag if d["status"] == "error"],

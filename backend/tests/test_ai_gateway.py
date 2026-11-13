@@ -200,7 +200,8 @@ def test_provider_api_keys_write_only_and_audited_without_secrets(client, keys):
     assert r.status_code == 200
     rows = {x["task"]: x for x in client.get("/api/ai/routes").json()}
     assert rows["candidate_review"]["source"] == "route" and rows["candidate_review"]["effective"][0]["provider"] == "Qwen"
-    assert rows["trade_research"]["used_by_engine"] is False and rows["trade_research"]["source"] == "not configured"
+    assert rows["learning_explanation"]["used_by_engine"] is False and rows["learning_explanation"]["source"] == "not configured"
+    assert rows["trade_research"]["used_by_engine"] is True
     assert client.put("/api/ai/routes/unknown", json={"chain": []}, headers=h(client)).status_code == 404
 
 

@@ -82,9 +82,18 @@ def trades(mode: str = "DEMO", limit: int = 200, _: User = Depends(current_user)
     q = (select(ClosedPosition, TradeFeatures).outerjoin(TradeFeatures, TradeFeatures.closed_position_id == ClosedPosition.id)
          .where((ClosedPosition.mode == _mode(mode)) | (TradeFeatures.mode == mode))
          .order_by(ClosedPosition.closed_at.desc()).limit(min(limit, 2000)))
+    rows = db.execute(q).all()
+    exits = perf.exit_types(db, [cp for cp, _ in rows])
     out = []
-    for cp, tf in db.execute(q):
+    for cp, tf in rows:
         out.append({"ticket": cp.ticket, "symbol": cp.symbol, "direction": cp.direction, "closed_at": cp.closed_at,
+                    # Phase 10: per-trade facts (None where not recorded)
+                    "opened_at": cp.opened_at, "exit_type": exits.get(cp.id, "UNKNOWN"),
+                    "attribution": perf.attribution(cp, tf), "commission": cp.commission, "swap": cp.swap,
+                    "slippage_points": tf.slippage_points if tf else None, "spread_points": tf.spread_points if tf else None,
+                    "timeframe": tf.timeframe if tf else None,
+                    "entry_quality": perf.entry_quality(tf.mae_r if tf else None),
+                    "exit_efficiency": perf.exit_efficiency(cp.r_multiple, tf.mfe_r if tf else None),
                     "net": round(float(cp.profit) + float(cp.commission or 0) + float(cp.swap or 0), 2), "r": cp.r_multiple,
                     "partial_exits": cp.partial_exits, "sync_status": cp.sync_status, "strategies": cp.strategy_codes,
                     "outcome": tf.outcome if tf else None, "regime": tf.regime if tf else None,
@@ -467,3 +476,94 @@ def signal_intelligence(signal_id: int, _: User = Depends(current_user), db: Ses
         raise HTTPException(404)
     ar = db.get(AnalysisResult, s.analysis_id) if s.analysis_id else None
     return {"signal_id": s.id, "intelligence": ((ar.score or {}).get("intelligence") if ar else None) or {}}
+
+
+# ================================================================ TRADE INTELLIGENCE (RR Trading One Phase 10) ======
+@learning.get("/sources")
+def sources(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Every evidence source kept apart, never summed into one figure (specification Part 10): real closed trades per
+    account mode, and the strategy-performance records per source (backtest, out-of-sample, walk-forward, paper)."""
+    from app.db.models import StrategyPerformance
+    out = {"closed_trades": {}, "strategy_performance": {}}
+    for mode in ("DEMO", "LIVE"):
+        trades = perf.load_trades(db, mode)
+        m = perf.compute_metrics(trades)
+        out["closed_trades"][mode] = {k: m.get(k) for k in ("sample_size", "verdict", "win_rate", "profit_factor",
+                                                             "expectancy", "average_r", "max_drawdown", "net_profit")}
+    for src, n, trades_, wins, gp, gl in db.execute(
+            select(StrategyPerformance.source, func.count(), func.sum(StrategyPerformance.trades),
+                   func.sum(StrategyPerformance.wins), func.sum(StrategyPerformance.gross_profit),
+                   func.sum(StrategyPerformance.gross_loss)).group_by(StrategyPerformance.source)):
+        t = int(trades_ or 0)
+        out["strategy_performance"][src] = {"records": n, "trades": t,
+                                            "win_rate": round(int(wins or 0) / t, 4) if t else None,
+                                            "profit_factor": round(float(gp) / float(gl), 3) if gl else None}
+    out["note"] = ("Closed trades come from the broker's deal history per account mode. Backtest (in-sample), "
+                   "out-of-sample, walk-forward and paper results are separate records. No figure here combines them.")
+    return out
+
+
+class TradeResearch(BaseModel):
+    findings: list[str]
+    weaknesses: list[str]
+    hypotheses_to_test: list[str]
+    data_gaps: list[str]
+
+
+TRADE_RESEARCH_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["findings", "weaknesses", "hypotheses_to_test", "data_gaps"],
+    "properties": {k: {"type": "array", "items": {"type": "string"}}
+                   for k in ("findings", "weaknesses", "hypotheses_to_test", "data_gaps")},
+}
+TRADE_RESEARCH_SYSTEM = """You are the historical trade researcher of RR Trading Engine. You receive aggregated statistics \
+of the platform's own closed trades for ONE account mode (DEMO or LIVE), broken down by dimension (strategy, symbol, \
+timeframe, session, regime, exit type, attribution, duration...), each with its sample size, plus data-coverage counts.
+
+Rules:
+- Work only from the statistics given. Never invent trades, numbers or causes.
+- Any group with fewer than 30 trades is inconclusive: say so instead of drawing conclusions.
+- Separate findings (supported by the numbers) from hypotheses to test (your interpretation).
+- List data gaps (low coverage of MAE/MFE, slippage, spread, attribution) that limit the analysis.
+- You recommend research only. You do not change strategies, risk settings, sizing or orders."""
+
+
+@learning.post("/trade-research")
+def trade_research(mode: str = "DEMO", user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
+    """AI research over the aggregated trade statistics of one mode, through the AI gateway (task 'trade_research').
+    Stored as an AI recommendation for review; it changes nothing by itself."""
+    from app.ai import gateway
+    from app.orchestration.orchestrator import record
+    _mode(mode)
+    if not gateway.configured("trade_research"):
+        raise HTTPException(409, "no AI provider is configured for trade research (AI Providers page)")
+    trades = perf.load_trades(db, mode)
+    if not trades:
+        raise HTTPException(409, f"no closed {mode} trades to research")
+    keep = ("sample_size", "verdict", "win_rate", "profit_factor", "expectancy", "average_r", "max_drawdown",
+            "breakeven_rate", "avg_entry_quality", "avg_exit_efficiency", "exit_types", "outcomes")
+    dims = {d: {k: {f: v.get(f) for f in keep} for k, v in groups.items()} for d, groups in perf.by_dimension(trades).items()}
+    overall = perf.compute_metrics(trades)
+    payload = {"mode": mode, "overall": {k: overall.get(k) for k in keep + ("coverage", "attribution",
+                                                                            "total_commission", "total_swap")},
+               "dimensions": dims, "min_trades_for_conclusions": perf.MIN_TRADES}
+    started = datetime.now(UTC)
+    try:
+        res, meta = gateway.run("trade_research", TRADE_RESEARCH_SYSTEM, payload, TRADE_RESEARCH_SCHEMA, TradeResearch,
+                                max_tokens=8000)
+    except gateway.GatewayError as exc:
+        record("post_trade_learning", "trade_research", started_at=started, duration_ms=None, status="error",
+               errors=[str(exc)[:300]])
+        raise HTTPException(502, str(exc)) from None
+    rec = AIRecommendation(source="trade_research", kind="TRADE_RESEARCH", subject=f"{mode} closed trades",
+                           recommendation="\n".join(f"- {x}" for x in res.findings) or "(no findings)",
+                           evidence={**res.model_dump(), "trades": len(trades), "provider": meta["provider"],
+                                     "model": meta["model"]})
+    db.add(rec)
+    db.flush()
+    record("post_trade_learning", "trade_research", started_at=started, duration_ms=meta["latency_ms"],
+           provider=meta["provider"], model=meta["model"], input_refs={"mode": mode, "trades": len(trades)},
+           output={"findings": len(res.findings), "hypotheses": len(res.hypotheses_to_test), "recommendation_id": rec.id},
+           evidence={"ai_output": "schema-validated; stored as an OPEN recommendation, applied to nothing"})
+    audit(db, user.id, "TRADE_RESEARCH", mode, {"recommendation_id": rec.id, "trades": len(trades)})
+    return {"recommendation_id": rec.id, **res.model_dump(), "provider": meta["provider"], "model": meta["model"]}

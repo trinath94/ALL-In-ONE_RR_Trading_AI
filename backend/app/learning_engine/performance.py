@@ -6,7 +6,7 @@ verdict is INSUFFICIENT_DATA regardless of how good the numbers look.
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 import numpy as np
@@ -111,15 +111,112 @@ def compute_metrics(trades: list[dict]) -> dict:
         "avg_mae_r": round(float(np.mean(maes)), 3) if maes else None,
         "avg_mfe_r": round(float(np.mean(mfes)), 3) if mfes else None,
         "monthly": {k: round(v, 2) for k, v in sorted(by_month.items())},
+        **trade_quality(trades),
     }
+
+
+def _avg(values: list, nd: int = 3) -> dict:
+    v = [x for x in values if x is not None]
+    return {"value": round(float(np.mean(v)), nd) if v else None, "sample": len(v)}
+
+
+def trade_quality(trades: list[dict]) -> dict:
+    """RR Trading One Phase 10 (specification Part 10): outcome, exit, cost and quality breakdown of real trades.
+    Every average states its sample: a measurement missing for a trade is left out, never estimated."""
+    n = len(trades)
+    outcomes = Counter(t.get("outcome") or "UNKNOWN" for t in trades)
+    hold = [t.get("holding_seconds") for t in trades if t.get("holding_seconds") is not None]
+    return {
+        "outcomes": dict(outcomes),
+        "breakeven_rate": round(outcomes.get("BE", 0) / n, 4) if n else None,
+        "exit_types": dict(Counter(t.get("exit_type") or "UNKNOWN" for t in trades)),
+        "trades_with_partial_exits": sum(1 for t in trades if (t.get("partial_exits") or 0) > 1),
+        "partial_exits_known": sum(1 for t in trades if t.get("partial_exits") is not None),
+        "holding_seconds": {"median": int(np.median(hold)) if hold else None,
+                            "mean": int(np.mean(hold)) if hold else None, "sample": len(hold)},
+        "total_commission": round(sum(t.get("commission") or 0.0 for t in trades), 2),
+        "total_swap": round(sum(t.get("swap") or 0.0 for t in trades), 2),
+        "avg_slippage_points": _avg([t.get("slippage_points") for t in trades], 2),
+        "avg_spread_points": _avg([t.get("spread_points") for t in trades], 2),
+        "avg_entry_quality": _avg([t.get("entry_quality") for t in trades]),
+        "avg_exit_efficiency": _avg([t.get("exit_efficiency") for t in trades]),
+        "attribution": dict(Counter(t.get("attribution") or "UNKNOWN" for t in trades)),
+        "coverage": {k: sum(1 for t in trades if t.get(f) is not None) for k, f in (
+            ("realized_r", "r"), ("mae_mfe", "mae_r"), ("slippage", "slippage_points"), ("spread", "spread_points"),
+            ("timeframe", "timeframe"), ("regime", "regime"), ("session", "session"))},
+    }
+
+
+# MT5 DEAL_REASON of the deal that closed the position (raw broker fact from the mt5_deals ledger).
+EXIT_REASON = {0: "MANUAL", 1: "MANUAL", 2: "MANUAL", 3: "PROGRAM", 4: "STOP_LOSS", 5: "TAKE_PROFIT", 6: "STOP_OUT",
+               7: "ROLLOVER", 8: "VARIATION_MARGIN", 9: "SPLIT", 10: "CORPORATE_ACTION"}
+CLOSE_REASON_EXIT = {"STOP_LOSS": "STOP_LOSS", "TAKE_PROFIT": "TAKE_PROFIT", "STOP_OUT": "STOP_OUT"}
+
+
+def exit_types(db: Session, positions: list[ClosedPosition]) -> dict[int, str]:
+    """closed_position.id -> exit type, from the reason of the position's last closing deal. Without a ledger deal the
+    collector's own close_reason is used only when it is specific (SL / TP / stop-out); otherwise UNKNOWN."""
+    from app.db.models_intel import MT5Deal
+    if not positions:
+        return {}
+    keys = {(p.account_id, p.ticket): p.id for p in positions}
+    last: dict[int, tuple] = {}
+    for d in db.scalars(select(MT5Deal).where(MT5Deal.position_id.in_([p.ticket for p in positions]),
+                                              MT5Deal.entry.in_((1, 2, 3)))):
+        cid = keys.get((d.account_id, d.position_id))
+        if cid is not None and (cid not in last or d.deal_time >= last[cid][0]):
+            last[cid] = (d.deal_time, d.reason)
+    out = {}
+    for p in positions:
+        if p.id in last and last[p.id][1] in EXIT_REASON:
+            out[p.id] = EXIT_REASON[last[p.id][1]]
+        else:
+            out[p.id] = CLOSE_REASON_EXIT.get(p.close_reason or "", "UNKNOWN")
+    return out
+
+
+def attribution(cp: ClosedPosition, tf: TradeFeatures | None) -> str:
+    """Who decided the trade, from recorded links only. ENGINE_SIGNAL: the engine order carries strategies.
+    ENGINE_MANUAL: an engine order without strategies (manual order through the console). UNLINKED: no engine order
+    is linked to this position (placed outside the engine, or its order could not be matched); it is never
+    attributed to a strategy by guesswork."""
+    if cp.strategy_codes:
+        return "ENGINE_SIGNAL"
+    if cp.execution_id:
+        return "ENGINE_MANUAL"
+    return "UNLINKED"
+
+
+def duration_bucket(seconds: int | None) -> str | None:
+    if seconds is None:
+        return None
+    return "<15m" if seconds < 900 else "15m-1h" if seconds < 3600 else "1h-8h" if seconds < 28800 else \
+        "8h-24h" if seconds < 86400 else ">1d"
+
+
+def entry_quality(mae_r: float | None) -> float | None:
+    """1 = price never moved against the entry; 0 = it moved a full initial risk (1 R) or more against it."""
+    return None if mae_r is None else round(max(0.0, 1.0 - min(mae_r, 1.0)), 4)
+
+
+def exit_efficiency(r: float | None, mfe_r: float | None) -> float | None:
+    """Share of the best available move (MFE) that the exit kept: realised R / MFE R, clipped to [-1, 1]. 1 = exited at
+    the best price reached; 0 = gave the whole move back; -1 = the loss was at least as large as the best favourable
+    move (clipped so one losing trade cannot dominate an average). Undefined (None) when the trade never moved
+    meaningfully in favour (MFE < 0.1 R)."""
+    if r is None or mfe_r is None or mfe_r < 0.1:
+        return None
+    return round(max(-1.0, min(1.0, r / mfe_r)), 4)
 
 
 def load_trades(db: Session, mode: str) -> list[dict]:
     q = select(ClosedPosition, TradeFeatures).outerjoin(TradeFeatures, TradeFeatures.closed_position_id == ClosedPosition.id) \
         .where((ClosedPosition.mode == mode) | ((ClosedPosition.mode.is_(None)) & (TradeFeatures.mode == mode))) \
         .where(learnable())
+    rows = db.execute(q).all()
+    exits = exit_types(db, [cp for cp, _ in rows])
     out = []
-    for cp, tf in db.execute(q):
+    for cp, tf in rows:
         codes = sorted(cp.strategy_codes or [])
         vol_bucket = None
         if tf and tf.volatility_pct is not None:
@@ -135,12 +232,25 @@ def load_trades(db: Session, mode: str) -> list[dict]:
             "model_version": ",".join(f"{k}:{v}" for k, v in sorted((tf.model_versions or {}).items())) if tf else None,
             "spread_bucket": (None if not tf or tf.spread_points is None else ("WIDE" if tf.spread_points > 20 else "NORMAL")),
             "mae_r": tf.mae_r if tf else None, "mfe_r": tf.mfe_r if tf else None,
+            # Phase 10 (Part 10): facts per trade; None where not recorded
+            "mode": cp.mode or (tf.mode if tf else None),
+            "outcome": tf.outcome if tf else None, "exit_type": exits.get(cp.id, "UNKNOWN"),
+            "attribution": attribution(cp, tf), "partial_exits": cp.partial_exits,
+            "commission": float(cp.commission or 0), "swap": float(cp.swap or 0),
+            "slippage_points": tf.slippage_points if tf else None, "spread_points": tf.spread_points if tf else None,
+            "holding_seconds": int((cp.closed_at - cp.opened_at).total_seconds()) if cp.opened_at and cp.closed_at else None,
+            "duration": duration_bucket(int((cp.closed_at - cp.opened_at).total_seconds())
+                                        if cp.opened_at and cp.closed_at else None),
+            "entry_quality": entry_quality(tf.mae_r if tf else None),
+            "exit_efficiency": exit_efficiency(cp.r_multiple, tf.mfe_r if tf else None),
         })
     return out
 
 
 DIMENSIONS = ["strategy", "combination", "symbol", "timeframe", "session", "regime", "volatility", "entry_method",
-              "sl_method", "tp_method", "model_version", "grade", "spread_bucket"]
+              "sl_method", "tp_method", "model_version", "grade", "spread_bucket",
+              # Phase 10 (Part 10)
+              "exit_type", "attribution", "duration"]
 
 
 def by_dimension(trades: list[dict]) -> dict[str, dict[str, dict]]:

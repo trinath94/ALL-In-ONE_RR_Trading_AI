@@ -94,6 +94,9 @@ export default function Symbols() {
                   onBlur={(e) => { const v = e.target.value.split(",").map((x) => x.trim()).filter(Boolean);
                     if (v.join(",") !== s.peers.join(",")) run(() => patch(`/api/symbols/${s.id}`, { peers: v }), () => `${s.symbol}: peers ${v.join(", ") || "cleared"}.`); }} /></div>
               : (s.peers.join(", ") || <span className="text-dim">{s.suggested_peers.length ? `suggested: ${s.suggested_peers.join(", ")}` : "—"}</span>) },
+            { k: "peer_correlation", h: "Measured ρ", sort: false, r: (s) => Object.keys(s.peer_correlation || {}).length
+              ? Object.entries(s.peer_correlation).map(([p, c]: any) => <div key={p} className="text-[10px]" title={`${c.bars} common ${c.timeframe} bars, ${fmt.time(c.at)}`}>{p}: {c.rho == null ? (c.note || "—") : c.rho.toFixed(2)}</div>)
+              : <span className="text-dim">{s.peers.length ? "not measured yet" : "—"}</span> },
             { k: "excluded", h: "Exclude", r: (s) => manage
               ? <Btn small tone={s.excluded ? "warn" : "dim"} onClick={() => run(() => patch(`/api/symbols/${s.id}`, { excluded: !s.excluded }), () => `${s.symbol}: ${s.excluded ? "no longer excluded" : "excluded (scanning off)"}.`)}>
                   {s.excluded ? "excluded" : "exclude"}</Btn>

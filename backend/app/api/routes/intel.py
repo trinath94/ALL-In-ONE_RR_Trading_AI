@@ -11,6 +11,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, require
@@ -44,6 +45,7 @@ def symbols(_: User = Depends(current_user), db: Session = Depends(get_db), cate
     if category:
         q = q.where(Symbol.category == category)
     offered = _offered(db)
+    corr = _peer_correlations(db)
     return [{"id": s.id, "symbol": s.broker_symbol, "canonical": s.canonical, "category": s.category,
              "description": s.description, "digits": s.digits, "tradable": s.tradable, "scan_enabled": s.scan_enabled,
              "priority": s.priority, "volume_min": f(s.volume_min), "volume_step": f(s.volume_step),
@@ -57,8 +59,24 @@ def symbols(_: User = Depends(current_user), db: Session = Depends(get_db), cate
              "missing_since": s.missing_since, "eligible": _eligible(s),
              # Phase 8: peers supplied to peer strategies; suggestions are never applied automatically
              "peers": list(s.peers or []),
-             "suggested_peers": peer_sugg.suggest(s.canonical, offered.get(s.broker_connection_id, {}))}
+             "suggested_peers": peer_sugg.suggest(s.canonical, offered.get(s.broker_connection_id, {})),
+             # Phase 10: measured on the latest analysis that used the peers ({} until one has)
+             "peer_correlation": corr.get(s.id, {})}
             for s in db.scalars(q)]
+
+
+def _peer_correlations(db: Session) -> dict[int, dict]:
+    """symbol id -> {peer: {rho, bars, timeframe, at}} from each symbol's latest analysis that received peer bars."""
+    rows = db.execute(select(AnalysisResult.symbol_id, AnalysisResult.timeframe, AnalysisResult.created_at,
+                             AnalysisResult.structure["peer_correlation"])
+                      .where(AnalysisResult.structure["peer_correlation"].isnot(None),
+                             AnalysisResult.structure["peer_correlation"] != func.cast("{}", JSONB))
+                      .order_by(AnalysisResult.id.desc()).limit(2000)).all()
+    out: dict[int, dict] = {}
+    for sid, tf, at, pc in rows:
+        if sid not in out and pc:
+            out[sid] = {k: {**v, "timeframe": tf, "at": at} for k, v in pc.items()}
+    return out
 
 
 def _offered(db: Session) -> dict[int, dict[str, str]]:

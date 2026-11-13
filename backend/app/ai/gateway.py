@@ -43,7 +43,7 @@ TASKS = {
     "diagnostics": "Operational diagnostics and provider tests",
 }
 # Tasks the engine calls today. The others can be routed, and are used by later phases.
-WIRED_TASKS = ("candidate_review", "strategy_discovery", "diagnostics")
+WIRED_TASKS = ("candidate_review", "strategy_discovery", "trade_research", "diagnostics")
 ENV_PROVIDER = "anthropic (RR_ANTHROPIC_API_KEY)"
 MAX_RETRY_AFTER = 30.0
 COOLDOWN_S = 120
