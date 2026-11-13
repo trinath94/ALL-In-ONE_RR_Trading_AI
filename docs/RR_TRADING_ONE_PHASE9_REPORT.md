@@ -23,7 +23,7 @@
 | Result | Value |
 |---|---|
 | Phase 9 end-to-end as an **upgrade of the Phase 8 install** (real stack, connector, fake OpenAI-compatible provider) | **7 / 7** upgrade checks (first run) + **17 / 17** for the rest (final run; see section 3) |
-| Backend suite, including the 215-strategy preservation test | **244 passed** (223 + 21 new) |
+| Backend suite, including the 215-strategy preservation test | **243 passed** in the full run (223 + 20 new). The header-status test added afterwards passed on its own, as did the API, gateway and orchestration files re-run together (35 passed). |
 | Desktop core | **90 passed** (+1: secrets format 4 upgrade); clippy clean |
 | Frontend `next build` (strict TS) | Passed, **27 pages** (new: Agent Control Room, AI Providers) |
 
