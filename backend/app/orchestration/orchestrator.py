@@ -70,7 +70,7 @@ def record(agent_id: str, task: str, *, started_at: datetime, duration_ms: float
     write([AgentRunRecord(cycle_id=cycle_id or str(uuid.uuid4()), agent_id=agent_id, agent_version=spec.version,
                           task=task, input_refs=input_refs or {}, output_schema=spec.output_schema, output=output or {},
                           status=status, started_at=started_at, completed_at=datetime.now(UTC),
-                          duration_ms=None if duration_ms is None else round(duration_ms, 1), provider=provider,
+                          duration_ms=None if duration_ms is None else round(duration_ms, 3), provider=provider,
                           model=model, evidence=evidence or {}, errors=(errors or [])[:20])])
 
 
@@ -161,7 +161,7 @@ class Cycle:
                     input_refs={"units": a.n, "refs": a.refs}, output_schema=spec.output_schema,
                     output=dict(a.out), status=status, started_at=a.first or self.started_at,
                     completed_at=a.last or datetime.now(UTC),
-                    duration_ms=round(a.ms, 1) if a.measured else None,
+                    duration_ms=round(a.ms, 3) if a.measured else None,
                     provider=a.provider, model=a.model,
                     evidence=a.evidence or ({"basis": "deterministic computation"} if spec.kind == "deterministic" else {}),
                     errors=a.errors))
@@ -173,7 +173,7 @@ class Cycle:
             input_refs={"agents": sorted(a.agent_id for a in recs)}, output_schema=m.output_schema, output=summary,
             status="ok" if not any(r.status in ("error", "partial") for r in recs) else "partial",
             started_at=self.started_at, completed_at=datetime.now(UTC),
-            duration_ms=round((time.perf_counter() - self._t0) * 1000, 1),
+            duration_ms=round((time.perf_counter() - self._t0) * 1000, 3),
             evidence={"basis": "records of the agents that ran in this cycle"},
             errors=[f"{r.agent_id}: {e}" for r in recs for e in r.errors][:10]))
         write(recs)

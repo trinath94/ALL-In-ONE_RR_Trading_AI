@@ -3,6 +3,7 @@ import clsx from "clsx";
 import {
   Activity, Bell, BookOpen, Bot, BrainCircuit, CandlestickChart, Cpu, FlaskConical, Gauge, Globe, History, LayoutDashboard,
   LogOut, Menu, Newspaper, Sparkles, Target, PieChart, Radar, Settings, ShieldAlert, Sliders, Terminal, Users, X, Zap,
+  KeyRound, Network,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -13,6 +14,8 @@ import { useApi, useLive } from "@/lib/hooks";
 export const NAV = [
   { href: "/", label: "Command Center", icon: LayoutDashboard },
   { href: "/ai", label: "AI Intelligence", icon: BrainCircuit },
+  { href: "/agents", label: "Agent Control Room", icon: Network },
+  { href: "/ai-providers", label: "AI Providers", icon: KeyRound },
   { href: "/scanner", label: "Market Scanner", icon: Radar },
   { href: "/symbols", label: "Broker Symbols", icon: Globe },
   { href: "/signals", label: "Live Signals", icon: Zap },

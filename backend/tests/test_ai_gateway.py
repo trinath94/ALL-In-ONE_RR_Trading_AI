@@ -229,3 +229,12 @@ def test_usage_health_and_provider_test(client, keys, monkeypatch):
     assert ok["task"] == "diagnostics" and ok["input_tokens"] == 1000 and ok["cost"] is None and ok["cost_note"] == "no price configured"
     hl = {x["provider"]: x for x in client.get("/api/ai/health").json()}
     assert hl["local"]["state"] == "degraded" and hl["local"]["last_error"]["status"] == "error"
+
+
+def test_header_ai_status_follows_the_gateway(client, keys):
+    login(client, "viewer")
+    st = client.get("/api/system/status").json()["services"]["claude_api"]
+    assert st["status"] == "NOT_CONFIGURED"
+    route("candidate_review", (provider("qwen"), "qwen-max"))
+    st = client.get("/api/system/status").json()["services"]["claude_api"]
+    assert st["status"] == "UP" and st["detail"]["model"] == "qwen/qwen-max"

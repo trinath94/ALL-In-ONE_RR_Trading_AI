@@ -60,6 +60,8 @@ def status(_: User = Depends(current_user), db: Session = Depends(get_db)):
     vm, disk = psutil.virtual_memory(), psutil.disk_usage("/")
     net = psutil.net_io_counters()
     last_claude = db.scalar(select(AgentConversation).order_by(AgentConversation.id.desc()).limit(1))
+    from app.ai import gateway
+    ai_hops = gateway.chain_for("candidate_review")
     claude_errors = db.scalar(select(func.count(AgentConversation.id)).where(
         AgentConversation.error.isnot(None), AgentConversation.created_at > func.now() - text("interval '1 hour'")))
     queue = db.scalar(select(func.count(TradeOrder.id)).where(TradeOrder.status.in_(["PENDING", "SENT", "UNKNOWN"])))
@@ -85,9 +87,10 @@ def status(_: User = Depends(current_user), db: Session = Depends(get_db)):
             "mt5_terminal": {"status": "UP" if bridge and bridge.get("connected") else "DOWN",
                              "detail": {k: (bridge or {}).get(k) for k in ("terminal_build", "ping_last_us", "trade_allowed")}},
             "market_data": {"status": "UP" if bridge and bridge.get("connected") else "DOWN"},
-            "claude_api": {"status": "NOT_CONFIGURED" if not s.anthropic_api_key else
-                           ("DEGRADED" if claude_errors else "UP"),
-                           "detail": {"model": s.claude_model, "errors_1h": claude_errors,
+            # AI review status follows the AI gateway (Phase 9): a configured route, or RR_ANTHROPIC_API_KEY.
+            "claude_api": {"status": "NOT_CONFIGURED" if not ai_hops else ("DEGRADED" if claude_errors else "UP"),
+                           "detail": {"model": " -> ".join(f"{h.name}/{h.model}" for h in ai_hops) or s.claude_model,
+                                      "errors_1h": claude_errors,
                                       "last_call": last_claude.created_at if last_claude else None,
                                       "last_latency_ms": last_claude.latency_ms if last_claude else None}},
             "websocket": {"status": "UP", "connections": WS_CLIENTS["count"]},
@@ -124,7 +127,7 @@ def agent_status(_: User = Depends(current_user), db: Session = Depends(get_db))
     today = func.now() - text("interval '1 day'")
     return {
         "modules": mods,
-        "claude_configured": bool(get_settings().anthropic_api_key),
+        "claude_configured": _ai_configured(),
         "stats_24h": {
             "analyses": db.scalar(text("select count(*) from analysis_results where created_at > now() - interval '1 day'")),
             "signals": db.scalar(text("select count(*) from trading_signals where created_at > now() - interval '1 day'")),
@@ -227,3 +230,8 @@ async def ws(websocket: WebSocket):
         WS_CLIENTS["count"] -= 1
         await ps.unsubscribe(CHANNEL)
         await r.aclose()
+
+
+def _ai_configured() -> bool:
+    from app.ai import gateway
+    return gateway.configured("candidate_review") or gateway.configured("strategy_discovery")
