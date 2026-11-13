@@ -26,6 +26,7 @@
 | Backend suite, including the 215-strategy preservation test | **243 passed** in the full run (223 + 20 new). The header-status test added afterwards passed on its own, as did the API, gateway and orchestration files re-run together (35 passed). |
 | Desktop core | **90 passed** (+1: secrets format 4 upgrade); clippy clean |
 | Frontend `next build` (strict TS) | Passed, **27 pages** (new: Agent Control Room, AI Providers) |
+| CI | `858a3ec`: backend 43510753863, desktop 43510753802. `a182729`: backend 43513478745, frontend 43513479126, desktop (installer build + silent install/uninstall) 43513478732. All passed. |
 
 ## 2. What was built
 

@@ -36,6 +36,7 @@ the 23 required items, and then filled the gaps **without adding a single table 
 | Phase 10 end-to-end: a real DEMO trade through the engine, the fake broker and the learner | **17 / 17** (third run; see section 3) |
 | Backend suite, including the 215-strategy preservation test | **250 passed** (244 + 6 new) in one full run |
 | Frontend `next build` (strict TS) | Passed, **28 pages** (new: Trade Intelligence) |
+| CI (`fad2a46`, which carries all Phase 10 code) | backend 43514827960, frontend 43514828033, windows-connector 43514827812, desktop (installer build + silent install/uninstall) 43514827889. All passed. |
 
 ## 2. What was built (all additive)
 
