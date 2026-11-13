@@ -114,7 +114,12 @@ The probe is limited to `127.0.0.1`, validates paths (no header injection) and c
 Tauri's only runtime warnings were the expected missing session bus for the tray icon and missing DRI3 on the virtual display. Both are headless-environment artifacts.
 
 ## 5. Not verified here (⛔ / 🟡)
-* **Windows build and runtime.** `desktop.yml` builds and packages an **unsigned** NSIS installer on `windows-latest` and runs core tests on Windows. The result is whatever that run reports; nothing is claimed until it passes.
+* **Windows build: ✅ verified in CI** (GitHub Actions run 43406772448, `windows-latest`).
+  * Core tests passed on Windows, and clippy `-D warnings` was clean.
+  * The Tauri app and its **unsigned** NSIS installer built successfully.
+  * The first run (43405985724) failed: two core tests used a host-dependent path check. That was fixed in `2d70d6e`, without weakening any test.
+  * Backend CI run 43405985759 passed.
+  * **Windows runtime** (launching the app on a real desktop, tray, WebView2) is still unverified.
 * **Console window isolation.** It relies on Tauri's capability model (remote origins get no IPC unless listed) and on the navigation pin. Both are configured, but no automated test injects an IPC call from the console origin yet. Adding one is planned for Phase 3, alongside the real gateway.
 * **The tray menu on Windows** has not been seen on a real desktop.
 * **WebView2 install path:** `downloadBootstrapper`, which needs internet on first install. The offline installer is decided in Phase 16.
