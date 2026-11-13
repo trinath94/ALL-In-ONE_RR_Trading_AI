@@ -110,10 +110,11 @@ impl AppPaths {
 /// `Path::is_absolute` follows the host OS; this follows the *target* layout so tests behave the same
 /// everywhere.
 fn is_absolute(p: &Path, windows: bool) -> bool {
-    if !windows {
-        return p.is_absolute();
-    }
     let s = p.to_string_lossy();
+    if !windows {
+        // POSIX layout: judged textually so the result does not depend on the host OS running the check.
+        return s.starts_with('/') || p.is_absolute();
+    }
     let b = s.as_bytes();
     (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/'))
         || s.starts_with("\\\\")
