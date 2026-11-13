@@ -1,0 +1,6 @@
+# Files mounted into or built for Linux containers must keep LF line endings on Windows checkouts.
+infrastructure/** text eol=lf
+docker/** text eol=lf
+nginx/** text eol=lf
+*.sh text eol=lf
+*.py text eol=lf

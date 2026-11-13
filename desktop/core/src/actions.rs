@@ -372,13 +372,18 @@ mod tests {
     #[test]
     fn every_compose_name_exists_in_the_real_compose_file() {
         let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../infrastructure/compose.yml");
-        let text = std::fs::read_to_string(&f).expect("infrastructure/compose.yml");
+        // Normalise line endings: a Windows checkout may convert LF to CRLF.
+        let text = std::fs::read_to_string(&f).expect("infrastructure/compose.yml").replace("\r\n", "\n");
         for s in Service::ALL {
             if let Some(n) = s.compose_name() {
                 assert!(text.contains(&format!("\n  {n}:\n")), "service {n} missing from {}", f.display());
             }
         }
         assert!(text.contains("profiles: [\"trading\"]"), "trading worker must sit behind a profile");
+        for role in ["monitor", "analysis", "trading"] {
+            assert!(text.contains(&format!("hostname: rr-{role}-role")), "role {role} needs a stable hostname (lock owner)");
+        }
+        assert!(text.contains("hostname: rr-learner"), "learner needs a stable hostname (lock owner)");
     }
 
     #[test]

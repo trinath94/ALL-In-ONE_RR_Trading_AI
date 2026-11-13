@@ -20,11 +20,23 @@ UTC = timezone.utc
 
 @pytest.fixture
 def r(db_clean):
-    import os
-    c = redis.Redis.from_url(os.environ["RR_REDIS_URL"])
+    """The application's own Redis client (decoded responses), exactly as the roles use it in production."""
+    c = roles.get_redis()
     c.flushdb()
     yield c
     c.flushdb()
+
+
+def test_locks_work_with_raw_bytes_clients_too(db_clean):
+    import os
+    raw = redis.Redis.from_url(os.environ["RR_REDIS_URL"])
+    raw.flushdb()
+    roles.acquire("monitor", raw, owner="c1")
+    roles.acquire("monitor", raw, owner="c1")
+    with pytest.raises(roles.RoleConflict):
+        roles.acquire("monitor", raw, owner="c2")
+    roles.release("monitor", raw, owner="c1")
+    assert not raw.exists(roles.lock_key("monitor"))
 
 
 def make_signal(created_at: datetime, decision="BUY", review="BUY", score=80.0) -> int:

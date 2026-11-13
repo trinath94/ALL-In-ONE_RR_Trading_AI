@@ -29,7 +29,14 @@ Each action expands into a fixed plan of typed steps. No variant carries a comma
 * **Every stop plan stops the trading worker first.**
 * **No action can switch to LIVE, enable auto-trading or change permissions.** Those remain engine operations.
 
-**Phase 2 status:** plans are validated and displayed, and System Health runs real probes. Starting and stopping services is implemented in **Phase 3**. Until then the UI says plainly that nothing was executed.
+**Execution (Phase 3).** `core/src/supervisor.rs` runs each step as a fixed Docker Compose argument vector against `infrastructure/compose.yml`, with no shell involved.
+* **Start plans** stop at the first failure, and the remaining steps are reported as skipped.
+* **Stop plans** are best-effort.
+* **Migrations** never run without a fresh `pg_dump`.
+* **Health** is verified from Compose health states plus the engine's `/api/health`.
+* **The native MT5 connector** is supervised from Phase 4; until then its steps report "skipped".
+
+`cargo run -p rr-one-core --example supervise -- <action>` runs the same code from a terminal.
 
 ## Locations
 
@@ -41,7 +48,12 @@ Each action expands into a fixed plan of typed steps. No variant carries a comma
 | PostgreSQL and Redis | Docker named volumes, kept on upgrade and uninstall |
 | Secrets | Windows Credential Manager / DPAPI |
 
-`ProgramData\RR Trading One\secrets` is reserved. It is created in Phase 3 together with its restricted ACL, never world-readable.
+`ProgramData\RR Trading One\secrets\stack.secrets` holds the local stack's generated secrets:
+* DPAPI-encrypted (current user);
+* the folder ACL is limited to SYSTEM, Administrators and the user;
+* never regenerated over an unreadable file.
+
+See `infrastructure/README.md`.
 
 ## Settings
 

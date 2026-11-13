@@ -59,6 +59,11 @@ class RoleConflict(RuntimeError):
     pass
 
 
+def _text(v) -> str | None:
+    """Redis values arrive as str (the app client decodes responses) or bytes (raw clients)."""
+    return v.decode() if isinstance(v, bytes) else v
+
+
 def owner_token() -> str:
     """Identifies this process's container. A container restarted by Docker keeps its hostname, so it can reclaim
     a lock its previous incarnation could not release (e.g. after a hard kill)."""
@@ -75,8 +80,7 @@ def acquire(role: str, r=None, owner: str | None = None) -> None:
         raise RoleConflict("the monolithic worker (app.workers.main) is running; roles cannot run alongside it")
     if r.set(lock_key(role), owner, nx=True, ex=LOCK_TTL):
         return
-    held = r.get(lock_key(role))
-    if held is not None and held.decode() == owner:
+    if _text(r.get(lock_key(role))) == owner:
         r.expire(lock_key(role), LOCK_TTL)
         return
     raise RoleConflict(f"another '{role}' process holds its lock")
@@ -85,8 +89,7 @@ def acquire(role: str, r=None, owner: str | None = None) -> None:
 def release(role: str, r=None, owner: str | None = None) -> None:
     """Release only a lock this owner holds."""
     r = r or get_redis()
-    held = r.get(lock_key(role))
-    if held is not None and held.decode() == (owner or owner_token()):
+    if _text(r.get(lock_key(role))) == (owner or owner_token()):
         r.delete(lock_key(role))
 
 

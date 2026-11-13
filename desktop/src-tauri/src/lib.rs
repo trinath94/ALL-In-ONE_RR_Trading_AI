@@ -10,11 +10,16 @@
 //! plans. Nothing here runs a shell command.
 
 use rr_one_core::actions::{Action, Service, START_WORKER_PHRASE};
+use rr_one_core::compose::ServiceStatus;
 use rr_one_core::health::{self, HealthState, ProbeResult};
+use rr_one_core::local;
 use rr_one_core::paths::AppPaths;
+use rr_one_core::runner::SystemRunner;
 use rr_one_core::settings::{OperatingMode, Settings};
+use rr_one_core::supervisor::{PlanReport, Supervisor};
 use rr_one_core::{INITIAL_SAFETY_STATE, VERSION};
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -22,14 +27,14 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, State, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
-/// Process control (Docker Compose + native connector supervision) is delivered in Phase 3.
-const SUPERVISOR_PHASE: u8 = 3;
 
 struct AppState {
     paths: Result<AppPaths, String>,
     settings: Mutex<Settings>,
     /// Set when the settings file exists but is invalid. Defaults are used in memory; the file is untouched.
     settings_error: Option<String>,
+    /// One supervisor action at a time.
+    busy: AtomicBool,
 }
 
 #[derive(Serialize)]
@@ -57,8 +62,8 @@ struct Overview {
     actions: Vec<ActionInfo>,
     services: Vec<ServiceInfo>,
     worker_confirmation_phrase: &'static str,
-    supervisor_available: bool,
-    supervisor_phase: u8,
+    /// Why service control is unavailable (no compose file / not LOCAL mode), if it is.
+    supervisor_unavailable: Option<String>,
 }
 
 #[tauri::command]
@@ -75,8 +80,7 @@ fn get_overview(state: State<'_, AppState>) -> Overview {
         actions: Action::ALL.iter().map(|a| ActionInfo { id: a.id(), requires_confirmation: a.requires_confirmation() }).collect(),
         services: Service::ALL.iter().map(|s| ServiceInfo { id: *s, label: s.label(), runtime: s.runtime() }).collect(),
         worker_confirmation_phrase: START_WORKER_PHRASE,
-        supervisor_available: false,
-        supervisor_phase: SUPERVISOR_PHASE,
+        supervisor_unavailable: supervisor_unavailable(&state),
     }
 }
 
@@ -109,29 +113,60 @@ fn plan_action(action: String, confirmation: Option<String>) -> Result<PlanPrevi
     Ok(PlanPreview { action: a.id(), steps })
 }
 
-#[derive(Serialize)]
-struct ActionOutcome {
-    action: &'static str,
-    executed: bool,
-    message: String,
-    health: Option<Vec<ProbeResult>>,
+fn supervisor_unavailable(state: &AppState) -> Option<String> {
+    let settings = state.settings.lock().ok()?.clone();
+    if settings.operating_mode != OperatingMode::Local {
+        return Some("service control applies to LOCAL WINDOWS MODE only".into());
+    }
+    let paths = match &state.paths {
+        Ok(p) => p,
+        Err(e) => return Some(e.clone()),
+    };
+    if local::find_compose_file(&paths.install_dir, std::env::var_os("RR_ONE_INFRA_DIR").map(Into::into)).is_none() {
+        return Some("infrastructure/compose.yml not found next to the application".into());
+    }
+    None
 }
 
+/// Run `f` with a supervisor for this machine, on a blocking thread, one action at a time.
+async fn with_supervisor<T: Send + 'static>(
+    state: &AppState,
+    f: impl FnOnce(&Supervisor<'_>) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let paths = state.paths.clone()?;
+    let settings = state.settings.lock().map_err(|_| "settings lock poisoned")?.clone();
+    if state.busy.swap(true, Ordering::SeqCst) {
+        return Err("another service action is still running".into());
+    }
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        let runner = SystemRunner;
+        let setup = local::prepare(&paths, &settings, &runner)?;
+        let sup = Supervisor {
+            cfg: setup.config,
+            runner: &runner,
+            secrets: &setup.secrets,
+            probe: Box::new(|port| health::probe_engine(port, PROBE_TIMEOUT)),
+        };
+        f(&sup)
+    })
+    .await
+    .map_err(|e| e.to_string());
+    state.busy.store(false, Ordering::SeqCst);
+    res?
+}
+
+/// Execute an allowlisted action. The confirmation phrase is checked again inside `Action::plan`.
 #[tauri::command]
-async fn run_action(state: State<'_, AppState>, action: String, confirmation: Option<String>) -> Result<ActionOutcome, String> {
+async fn run_action(state: State<'_, AppState>, action: String, confirmation: Option<String>) -> Result<PlanReport, String> {
     let a = Action::parse(&action).map_err(|e| e.to_string())?;
     a.plan(confirmation.as_deref()).map_err(|e| e.to_string())?;
-    if a == Action::SystemHealth {
-        let h = check_health(state).await?;
-        return Ok(ActionOutcome { action: a.id(), executed: true, message: "Health checked".into(), health: Some(h) });
-    }
-    // Honest status: the plan is valid, but nothing is started or stopped until the Phase 3 supervisor exists.
-    Ok(ActionOutcome {
-        action: a.id(),
-        executed: false,
-        message: format!("Not executed: service control is delivered in Phase {SUPERVISOR_PHASE}. The plan was validated only."),
-        health: None,
-    })
+    with_supervisor(&state, move |sup| sup.execute(a, confirmation.as_deref()).map_err(|e| e.to_string())).await
+}
+
+/// Live container states for the Services table.
+#[tauri::command]
+async fn service_status(state: State<'_, AppState>) -> Result<Vec<ServiceStatus>, String> {
+    with_supervisor(&state, |sup| sup.status()).await
 }
 
 /// Open the existing engine web interface. Only when the engine passes its real health check.
@@ -195,8 +230,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     show_main(app);
                 }
             }
-            // Quitting closes the desktop shell only. Engine services are not stopped implicitly; that is an
-            // explicit "Stop All" action (Phase 3).
+            // Quitting closes the desktop shell only. Engine services keep running (the monitor keeps protecting
+            // positions); stopping them is the explicit "Stop All" action.
             "quit" => app.exit(0),
             _ => {}
         })
@@ -226,7 +261,7 @@ fn load_state() -> AppState {
         }
         Err(_) => (Settings::default(), None),
     };
-    AppState { paths, settings: Mutex::new(settings), settings_error }
+    AppState { paths, settings: Mutex::new(settings), settings_error, busy: AtomicBool::new(false) }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -237,7 +272,7 @@ pub fn run() {
         // One supervisor per user session; a second launch focuses the existing window.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .manage(state)
-        .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, open_console])
+        .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console])
         .setup(move |app| {
             build_tray(app.handle())?;
             if !start_minimized {

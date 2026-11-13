@@ -112,6 +112,7 @@ services:
   monitor:
     <<: *backend
     command: ["python", "-m", "app.workers.roles", "monitor"]
+    hostname: rr-monitor-role       # stable lock owner across container re-creation (upgrades)
     restart: unless-stopped
     stop_grace_period: 30s
     cpus: "0.5"
@@ -124,6 +125,7 @@ services:
   analysis:
     <<: *backend
     command: ["python", "-m", "app.workers.roles", "analysis"]
+    hostname: rr-analysis-role       # stable lock owner across container re-creation (upgrades)
     restart: unless-stopped
     stop_grace_period: 30s
     cpus: "2.0"
@@ -135,7 +137,9 @@ services:
 
   learner:
     <<: *backend
-    command: ["python", "-m", "app.learning_engine.scheduler"]
+    # Original scheduler, wrapped only to clear a lock this same container left behind (see entry.py).
+    command: ["python", "-m", "app.learning_engine.entry"]
+    hostname: rr-learner
     restart: unless-stopped
     stop_grace_period: 30s
     cpus: "2.0"
@@ -150,6 +154,7 @@ services:
     <<: *backend
     profiles: ["trading"]          # never started by a plain `up`; only when named explicitly
     command: ["python", "-m", "app.workers.roles", "trading"]
+    hostname: rr-trading-role       # stable lock owner across container re-creation (upgrades)
     restart: "no"                  # a crashed trading worker stays stopped until the operator starts it again
     stop_grace_period: 30s
     cpus: "0.5"

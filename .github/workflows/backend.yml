@@ -10,6 +10,7 @@ on:
       - "backend/**"
       - "mt5-connector/**"
       - "windows-connector/**"
+      - "infrastructure/**"
       - ".github/workflows/backend.yml"
 
 permissions:
@@ -48,6 +49,16 @@ jobs:
       - name: MT5 connector suite
         working-directory: mt5-connector
         run: python -m pytest -q
+      - name: Local stack compose file (secrets required, trading worker never in a default up)
+        working-directory: .
+        run: |
+          ! docker compose -f infrastructure/compose.yml config -q 2>/dev/null
+          export RR_ONE_DB_PASSWORD=x RR_ONE_REDIS_PASSWORD=x RR_ONE_JWT_SECRET=x RR_ONE_ENCRYPTION_KEY=x RR_ONE_BRIDGE_SECRET=x
+          docker compose -f infrastructure/compose.yml config -q
+          ! docker compose -f infrastructure/compose.yml config --services | grep -qx trading-worker
+          docker compose -f infrastructure/compose.yml --profile trading config --services | grep -qx trading-worker
+          [ "$(docker compose -f infrastructure/compose.yml config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin); print(sum(len(s.get("ports",[])) for s in c["services"].values()))')" = 1 ]
+          docker compose -f infrastructure/compose.yml config --format json | python3 -c 'import json,sys; p=json.load(sys.stdin)["services"]["gateway"]["ports"][0]; assert p["host_ip"]=="127.0.0.1", p'
       - name: Windows connector suite (offscreen)
         working-directory: windows-connector
         env: {QT_QPA_PLATFORM: offscreen}

@@ -48,16 +48,74 @@ function showPlan(text) {
   $("plan").textContent = text;
 }
 
+const OUTCOME = { ok: "OK     ", failed: "FAILED ", skipped: "SKIPPED" };
+let SERVICES = [];
+let running = false;
+
+function composeName(id) {
+  return id === "mt5_connector" ? null : id.replace(/_/g, "-");
+}
+
+function setBusy(on) {
+  running = on;
+  for (const b of $("actions").querySelectorAll("button")) b.disabled = on;
+}
+
 async function runAction(id, confirmation) {
+  if (running) return;
+  let preview;
   try {
-    const preview = await invoke("plan_action", { action: id, confirmation: confirmation ?? null });
-    const lines = [`${LABELS[id] || id}: plan`, ...preview.steps.map((s, i) => `  ${i + 1}. ${describeStep(s)}`)];
-    const out = await invoke("run_action", { action: id, confirmation: confirmation ?? null });
-    lines.push("", out.message);
-    showPlan(lines.join("\n"));
-    if (out.health) renderHealth(out.health);
+    preview = await invoke("plan_action", { action: id, confirmation: confirmation ?? null });
   } catch (e) {
     showPlan(String(e));
+    return;
+  }
+  const title = `${LABELS[id] || id}`;
+  showPlan([`${title}: running…`, ...preview.steps.map((s, i) => `  ${i + 1}. ${describeStep(s)}`)].join("\n"));
+  setBusy(true);
+  try {
+    const rep = await invoke("run_action", { action: id, confirmation: confirmation ?? null });
+    const lines = [`${title}: ${rep.ok ? "completed" : "FAILED"}`];
+    rep.steps.forEach((s, i) => {
+      lines.push(`  ${i + 1}. [${OUTCOME[s.outcome] || s.outcome}] ${describeStep(s.step)} (${(s.duration_ms / 1000).toFixed(1)} s)`);
+      if (s.detail) lines.push(`        ${s.detail}`);
+    });
+    showPlan(lines.join("\n"));
+    renderServices(rep.services);
+    if (rep.engine) renderHealth([rep.engine]);
+  } catch (e) {
+    showPlan(`${title}: ${e}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderServices(statuses) {
+  const byName = new Map((statuses || []).map((x) => [x.Service, x]));
+  const svc = $("services");
+  svc.replaceChildren();
+  for (const x of SERVICES) {
+    const name = composeName(x.id);
+    const st = name ? byName.get(name) : null;
+    let state = "—", cls = "";
+    if (x.id === "mt5_connector") state = "managed from Phase 4";
+    else if (st) {
+      state = st.State + (st.Health ? ` / ${st.Health}` : "") + (st.State === "exited" ? ` (exit ${st.ExitCode})` : "");
+      cls = st.Health === "unhealthy" || st.State === "restarting" || (st.State === "exited" && st.ExitCode !== 0)
+        ? "st-unreachable" : (st.State === "running" ? "st-healthy" : "");
+    } else if (statuses) state = "not created";
+    const tr = el("tr");
+    tr.append(el("td", x.label), el("td", x.runtime === "compose" ? "Docker (local)" : "Windows user session (native)"),
+      el("td", state, cls));
+    svc.append(tr);
+  }
+}
+
+async function refreshServices() {
+  try {
+    renderServices(await invoke("service_status"));
+  } catch (e) {
+    renderServices(null);
   }
 }
 
@@ -117,17 +175,12 @@ async function init() {
     banner.classList.add("bad");
   }
 
-  const svc = $("services");
-  svc.replaceChildren();
-  for (const x of o.services) {
-    const tr = el("tr");
-    tr.append(el("td", x.label), el("td", x.runtime === "compose" ? "Docker (local)" : "Windows user session (native)"));
-    svc.append(tr);
-  }
+  SERVICES = o.services;
+  renderServices(null);
 
-  $("supervisor-note").textContent = o.supervisor_available
-    ? "Every action runs a fixed, allowlisted plan."
-    : `Every action runs a fixed, allowlisted plan. Service control is delivered in Phase ${o.supervisor_phase}; until then actions show and validate their plan without starting or stopping anything.`;
+  $("supervisor-note").textContent = o.supervisor_unavailable
+    ? `Service control unavailable: ${o.supervisor_unavailable}`
+    : "Every action runs a fixed, allowlisted plan of Docker Compose steps (no shell). The trading worker is only ever started by its own button.";
 
   const acts = $("actions");
   acts.replaceChildren();
@@ -163,7 +216,7 @@ async function init() {
     ["Secrets", "Windows Credential Manager (never in the installation folder)"],
   ]);
 
-  $("btn-health").addEventListener("click", checkHealth);
+  $("btn-health").addEventListener("click", () => { checkHealth(); refreshServices(); });
   $("btn-console").addEventListener("click", async () => {
     try {
       await invoke("open_console");
@@ -172,6 +225,7 @@ async function init() {
     }
   });
   checkHealth();
+  if (!o.supervisor_unavailable) refreshServices();
 }
 
 window.addEventListener("DOMContentLoaded", () => {

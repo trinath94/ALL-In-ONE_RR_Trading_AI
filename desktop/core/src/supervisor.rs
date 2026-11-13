@@ -194,7 +194,7 @@ impl<'a> Supervisor<'a> {
                 Some((ts, e.path()))
             })
             .collect();
-        dumps.sort_by(|a, b| b.0.cmp(&a.0));
+        dumps.sort_by_key(|d| std::cmp::Reverse(d.0));
         for (_, p) in dumps.into_iter().skip(KEEP_PRE_MIGRATION_BACKUPS) {
             let _ = std::fs::remove_file(p);
         }
