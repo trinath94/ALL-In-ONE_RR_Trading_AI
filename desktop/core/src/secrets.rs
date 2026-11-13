@@ -16,7 +16,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub const FILE_NAME: &str = "stack.secrets";
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 3;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +32,9 @@ pub struct StackSecrets {
     /// services (analysis, learner), which do not receive `encryption_key`.
     #[serde(default)]
     bridge_read_key: String,
+    /// HMAC key for the engine's local supervisor API (format 3). Held by the desktop app and the `api` container.
+    #[serde(default)]
+    supervisor_key: String,
 }
 
 impl fmt::Debug for StackSecrets {
@@ -92,6 +95,7 @@ impl StackSecrets {
             encryption_key: fernet_key()?,
             bridge_secret: random_alnum(48)?,
             bridge_read_key: fernet_key()?,
+            supervisor_key: random_alnum(48)?,
         })
     }
 
@@ -104,13 +108,19 @@ impl StackSecrets {
             ("RR_ONE_ENCRYPTION_KEY".into(), self.encryption_key.clone()),
             ("RR_ONE_BRIDGE_SECRET".into(), self.bridge_secret.clone()),
             ("RR_ONE_BRIDGE_READ_KEY".into(), self.bridge_read_key.clone()),
+            ("RR_ONE_SUPERVISOR_KEY".into(), self.supervisor_key.clone()),
         ]
     }
 
     /// Every secret value, for redacting text that might echo one (e.g. tool error output).
-    pub fn values(&self) -> [&str; 6] {
+    pub fn values(&self) -> [&str; 7] {
         [&self.db_password, &self.redis_password, &self.jwt_secret, &self.encryption_key, &self.bridge_secret,
-            &self.bridge_read_key]
+            &self.bridge_read_key, &self.supervisor_key]
+    }
+
+    /// Key for signing requests to the engine's local supervisor API.
+    pub fn supervisor_key(&self) -> &str {
+        &self.supervisor_key
     }
 
     pub fn redact(&self, text: &str) -> String {
@@ -210,9 +220,14 @@ pub fn load_or_create(dir: &Path, protector: &dyn Protector) -> Result<(StackSec
         Ok(sealed) => {
             let plain = protector.unprotect(&sealed).map_err(SecretsError::Undecryptable)?;
             let mut s: StackSecrets = serde_json::from_slice(&plain).map_err(|e| SecretsError::Corrupt(e.to_string()))?;
-            if s.version == 1 && s.bridge_read_key.is_empty() {
-                // Format 1 -> 2: add the read-credential key. Every existing value is kept unchanged.
-                s.bridge_read_key = fernet_key()?;
+            if s.version < FORMAT_VERSION && s.version >= 1 {
+                // Older format: add only the keys it lacks. Every existing value is kept unchanged.
+                if s.bridge_read_key.is_empty() {
+                    s.bridge_read_key = fernet_key()?;
+                }
+                if s.supervisor_key.is_empty() {
+                    s.supervisor_key = random_alnum(48)?;
+                }
                 s.version = FORMAT_VERSION;
                 let sealed = protector.protect(&serde_json::to_vec(&s).expect("serialise secrets"))
                     .map_err(SecretsError::Undecryptable)?;
@@ -364,10 +379,26 @@ mod tests {
         assert_eq!(s.db_password, "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb", "existing DB password must survive the upgrade");
         assert_eq!(s.encryption_key, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
         assert_eq!(base64::engine::general_purpose::URL_SAFE.decode(&s.bridge_read_key).unwrap().len(), 32);
+        assert_eq!(s.supervisor_key.len(), 48);
         let (again, _) = load_or_create(&dir, &PlainFileProtector).unwrap();
         assert_eq!(again, s, "the upgrade is persisted and happens once");
         assert!(!dir.join("stack.secrets.upgrade").exists());
-        assert_eq!(s.compose_env().len(), 6);
+        assert_eq!(s.compose_env().len(), 7);
+    }
+
+    #[test]
+    fn format_2_file_gains_only_the_supervisor_key() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("secrets");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut v2 = StackSecrets::generate().unwrap();
+        v2.version = 2;
+        v2.supervisor_key = String::new();
+        std::fs::write(secrets_file(&dir), serde_json::to_vec(&v2).unwrap()).unwrap();
+        let (s, _) = load_or_create(&dir, &PlainFileProtector).unwrap();
+        assert_eq!((s.db_password.as_str(), s.bridge_read_key.as_str()), (v2.db_password.as_str(), v2.bridge_read_key.as_str()));
+        assert_eq!(s.version, 3);
+        assert_eq!(s.supervisor_key.len(), 48);
     }
 
     #[cfg(unix)]

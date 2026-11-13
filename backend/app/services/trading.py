@@ -130,6 +130,37 @@ def spec_for(sym: Symbol, live: dict | None = None) -> SymbolSpec:
 
 
 # ---- account ---------------------------------------------------------------------------
+def create_account_record(db: Session, *, login: int, server: str, mode: str, password: str | None = None,
+                          broker_name: str = "Broker", terminal_name: str = "mt5-windows-1", bridge_url: str = "",
+                          timezone_name: str = "Etc/GMT-2") -> TradingAccount:
+    """Create a trading account with its terminal and broker connection (shared by the API and local setup)."""
+    from app.core.security import encrypt_secret
+    from app.db.models import BrokerConnection, MT5Terminal
+    term = db.scalar(select(MT5Terminal).where(MT5Terminal.name == terminal_name))
+    if term is None:
+        term = MT5Terminal(name=terminal_name, bridge_url=bridge_url)
+        db.add(term)
+        db.flush()
+    bc = BrokerConnection(broker_name=broker_name, server=server, terminal_id=term.id, timezone=timezone_name)
+    db.add(bc)
+    db.flush()
+    a = TradingAccount(broker_connection_id=bc.id, login=login, server=server, mode=mode,
+                       encrypted_password=encrypt_secret(password) if password else None)
+    db.add(a)
+    db.flush()
+    return a
+
+
+def activate_account(db: Session, a: TradingAccount) -> None:
+    """Make `a` the active account of its mode. Switching the account of the active mode turns auto-trading off
+    and requires the startup checks to pass again."""
+    for o in db.scalars(select(TradingAccount).where(TradingAccount.mode == a.mode)):
+        o.is_active = o.id == a.id
+    st = get_state(db)
+    if st.active_mode == a.mode:
+        st.auto_trading, st.startup_checks_passed = False, False
+
+
 class IdentityError(Exception):
     pass
 

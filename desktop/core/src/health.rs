@@ -56,7 +56,20 @@ fn valid_path(path: &str) -> bool {
 
 /// `GET http://127.0.0.1:{port}{path}` with a hard timeout.
 pub fn http_get_loopback(port: u16, path: &str, timeout: Duration) -> Result<HttpResponse, ProbeError> {
-    if !valid_path(path) {
+    http_request_loopback(port, "GET", path, &[], b"", timeout)
+}
+
+fn header_ok(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 512 && s.bytes().all(|b| (0x20..0x7f).contains(&b))
+}
+
+/// Minimal HTTP/1.1 request to **127.0.0.1 only**. Method, path and headers are validated (no CR/LF injection).
+pub fn http_request_loopback(port: u16, method: &str, path: &str, headers: &[(String, String)], body: &[u8],
+                             timeout: Duration) -> Result<HttpResponse, ProbeError> {
+    if !valid_path(path) || !matches!(method, "GET" | "POST") {
+        return Err(ProbeError::BadPath);
+    }
+    if headers.iter().any(|(k, v)| !header_ok(k) || k.contains(':') || k.contains(' ') || !header_ok(v)) {
         return Err(ProbeError::BadPath);
     }
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
@@ -64,10 +77,18 @@ pub fn http_get_loopback(port: u16, path: &str, timeout: Duration) -> Result<Htt
     let io = |e: std::io::Error| ProbeError::Io(e.kind().to_string());
     s.set_read_timeout(Some(timeout)).map_err(io)?;
     s.set_write_timeout(Some(timeout)).map_err(io)?;
-    let req = format!(
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUser-Agent: rr-trading-one-supervisor\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+    let mut req = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUser-Agent: rr-trading-one-supervisor\r\nAccept: */*\r\nConnection: close\r\n"
     );
+    for (k, v) in headers {
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    if method == "POST" {
+        req.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
+    req.push_str("\r\n");
     s.write_all(req.as_bytes()).map_err(io)?;
+    s.write_all(body).map_err(io)?;
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8192];
     loop {

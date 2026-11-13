@@ -76,6 +76,17 @@ pub struct LocalSetup {
     pub connector: Option<ConnectorSetup>,
 }
 
+/// The engine's local supervisor API key, from the stack secrets. Never creates secrets: before the first
+/// Start All there is no engine to talk to.
+pub fn supervisor_key(paths: &AppPaths) -> Result<String, String> {
+    let dir = paths.secrets_dir();
+    if !secrets::secrets_file(&dir).is_file() {
+        return Err("the engine has not been set up yet: run Start All first".into());
+    }
+    let (s, _) = secrets::load_or_create(&dir, secrets::platform_protector().as_ref()).map_err(|e| e.to_string())?;
+    Ok(s.supervisor_key().to_string())
+}
+
 /// MT5 profiles file in the per-user settings folder.
 pub fn profiles_file(paths: &AppPaths) -> PathBuf {
     paths.settings_dir.join(connector::PROFILES_FILE)

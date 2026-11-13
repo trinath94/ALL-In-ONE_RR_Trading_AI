@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-engine-bootstrap-admin"
+description = "Enables the engine_bootstrap_admin command without any pre-configured scope."
+commands.allow = ["engine_bootstrap_admin"]
+
+[[permission]]
+identifier = "deny-engine-bootstrap-admin"
+description = "Denies the engine_bootstrap_admin command without any pre-configured scope."
+commands.deny = ["engine_bootstrap_admin"]

@@ -9,7 +9,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import client_ip, current_user, require
-from app.core.security import encrypt_secret
 from app.db.models import (AccountSnapshot, BrokerConnection, ClosedPosition, MT5Terminal, OpenPosition, RiskEvaluation,
                            Symbol, TradeExecution, TradeOrder, TradingAccount, TradingSignal, User)
 from app.db.session import get_db
@@ -182,18 +181,9 @@ def accounts(_: User = Depends(current_user), db: Session = Depends(get_db)):
 
 @router.post("/accounts")
 def create_account(body: AccountIn, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
-    term = db.scalar(select(MT5Terminal).where(MT5Terminal.name == body.terminal_name))
-    if term is None:
-        term = MT5Terminal(name=body.terminal_name, bridge_url=body.bridge_url)
-        db.add(term)
-        db.flush()
-    bc = BrokerConnection(broker_name=body.broker_name, server=body.server, terminal_id=term.id, timezone=body.timezone)
-    db.add(bc)
-    db.flush()
-    a = TradingAccount(broker_connection_id=bc.id, login=body.login, server=body.server, mode=body.mode,
-                       encrypted_password=encrypt_secret(body.password) if body.password else None)
-    db.add(a)
-    db.flush()
+    a = tr.create_account_record(db, login=body.login, server=body.server, mode=body.mode, password=body.password,
+                                 broker_name=body.broker_name, terminal_name=body.terminal_name,
+                                 bridge_url=body.bridge_url, timezone_name=body.timezone)
     audit(db, user.id, "ACCOUNT_CREATE", f"{body.login}@{body.server}", {"mode": body.mode})
     return account_out(a)
 
@@ -232,11 +222,7 @@ def activate(account_id: int, user: User = Depends(require("system.manage")), db
     a = db.get(TradingAccount, account_id)
     if not a:
         raise HTTPException(404)
-    for o in db.scalars(select(TradingAccount).where(TradingAccount.mode == a.mode)):
-        o.is_active = o.id == a.id
-    st = tr.get_state(db)
-    if st.active_mode == a.mode:
-        st.auto_trading, st.startup_checks_passed = False, False
+    tr.activate_account(db, a)
     audit(db, user.id, "ACCOUNT_ACTIVATED", f"{a.login}@{a.server}", {"mode": a.mode})
     return account_out(a)
 

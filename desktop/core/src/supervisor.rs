@@ -533,7 +533,7 @@ mod tests {
         assert!(!rep.ok);
         for c in r.calls.lock().unwrap().iter().filter(|c| c.args.first().map(|a| a == "compose").unwrap_or(false)) {
             assert!(c.args.iter().all(|a| !e.secrets.values().iter().any(|v| a.contains(v))), "secret in argv");
-            assert_eq!(c.env.len(), 6);
+            assert_eq!(c.env.len(), 7);
         }
         let json = serde_json::to_string(&rep).unwrap();
         assert!(!json.contains(&pw) && json.contains("rr:***"));

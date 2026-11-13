@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-engine-use-demo-account"
+description = "Enables the engine_use_demo_account command without any pre-configured scope."
+commands.allow = ["engine_use_demo_account"]
+
+[[permission]]
+identifier = "deny-engine-use-demo-account"
+description = "Denies the engine_use_demo_account command without any pre-configured scope."
+commands.deny = ["engine_use_demo_account"]

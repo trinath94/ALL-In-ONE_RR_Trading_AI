@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="style.css">
   <script src="app.js" defer></script>
   <script src="mt5.js" defer></script>
+  <script src="engine.js" defer></script>
 </head>
 <body>
   <header class="top">
@@ -17,10 +18,23 @@
   <main>
     <div id="banner" class="banner" hidden></div>
 
+    <section class="card" id="setup" aria-labelledby="h-setup" hidden>
+      <h2 id="h-setup">First-time setup: create the administrator</h2>
+      <p class="muted">The engine has no users yet. Create the administrator account you will use to sign in to the
+        Trading Console. The password is sent only to the local engine (127.0.0.1) and stored as an Argon2id hash.</p>
+      <form id="setup-form" class="form" autocomplete="off">
+        <label>Username <input id="s-user" maxlength="64" pattern="[A-Za-z0-9_.\-]{3,64}" required></label>
+        <label>Password (10+ characters) <input id="s-pass" type="password" minlength="10" maxlength="256" required></label>
+        <label>Confirm password <input id="s-pass2" type="password" minlength="10" maxlength="256" required></label>
+        <div class="row end"><button type="submit" class="primary">Create administrator</button></div>
+      </form>
+      <pre class="plan" id="setup-out" aria-live="polite"></pre>
+    </section>
+
     <section class="card" aria-labelledby="h-safety">
       <h2 id="h-safety">Safety state</h2>
-      <p class="muted">How RR Trading One ships. These values are enforced by the engine (RBAC, Risk Engine) and the MT5
-        connector's LIVE lock. This window cannot change them. Live values appear once the engine is connected.</p>
+      <p class="muted" id="safety-note">How RR Trading One ships. These values are enforced by the engine (RBAC, Risk
+        Engine) and the MT5 connector's LIVE lock. This window cannot change them.</p>
       <dl class="kv" id="safety"></dl>
     </section>
 
@@ -38,7 +52,8 @@
         <div class="btns"><button id="mt5-detect" type="button">Detect terminals</button>
           <button id="mt5-link" type="button">Link connector</button>
           <button id="mt5-start" type="button" class="primary">Start connector</button>
-          <button id="mt5-stop" type="button">Stop connector</button></div></div>
+          <button id="mt5-stop" type="button">Stop connector</button>
+          <button id="mt5-use-demo" type="button">Use as engine DEMO account</button></div></div>
       <p class="muted" id="mt5-note">The connector runs natively in your Windows session and attaches only to the terminal and
         account of the selected profile. It never asks for or stores your trading password.</p>
       <dl class="kv" id="mt5-status"></dl>

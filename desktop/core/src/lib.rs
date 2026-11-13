@@ -7,6 +7,7 @@
 pub mod actions;
 pub mod compose;
 pub mod connector;
+pub mod engine;
 pub mod health;
 pub mod local;
 pub mod paths;

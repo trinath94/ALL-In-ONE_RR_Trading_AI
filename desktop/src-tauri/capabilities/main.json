@@ -16,6 +16,9 @@
     "allow-mt5-save-profile",
     "allow-mt5-select-profile",
     "allow-mt5-delete-profile",
-    "allow-mt5-link"
+    "allow-mt5-link",
+    "allow-engine-status",
+    "allow-engine-bootstrap-admin",
+    "allow-engine-use-demo-account"
   ]
 }

@@ -4,7 +4,8 @@
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&["get_overview", "check_health", "plan_action", "run_action", "service_status", "open_console",
-            "mt5_overview", "mt5_detect", "mt5_save_profile", "mt5_select_profile", "mt5_delete_profile", "mt5_link"]),
+            "mt5_overview", "mt5_detect", "mt5_save_profile", "mt5_select_profile", "mt5_delete_profile", "mt5_link",
+            "engine_status", "engine_bootstrap_admin", "engine_use_demo_account"]),
     ))
     .expect("failed to run tauri-build");
 }

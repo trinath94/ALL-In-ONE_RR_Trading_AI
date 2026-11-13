@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     # cannot decrypt the trading secret either. Defaults keep the original single-secret behaviour.
     bridge_read_key: str = ""
     bridge_scope: str = "full"            # full | read
+    # RR Trading One: key for the local supervisor API (/api/v1/local). Empty = API disabled (404).
+    supervisor_key: str = ""
 
     # Scanner
     scan_interval_seconds: int = 60

@@ -172,6 +172,46 @@ async fn service_status(state: State<'_, AppState>) -> Result<Vec<ServiceStatus>
     with_supervisor(&state, |sup, _| sup.status()).await
 }
 
+// ---- Engine (local supervisor API) -----------------------------------------------------------------------------
+async fn with_engine<T: Send + 'static>(
+    state: &AppState,
+    f: impl FnOnce(&rr_one_core::engine::LocalEngine<'_>) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let paths = state.paths.clone()?;
+    let port = local_port(state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = local::supervisor_key(&paths)?;
+        f(&rr_one_core::engine::LocalEngine { port, key: &key })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Live safety state from the engine (replaces the shipped defaults once the engine answers).
+#[tauri::command]
+async fn engine_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    with_engine(&state, |e| e.status()).await
+}
+
+/// First administrator. The engine accepts this only while it has no users at all.
+#[tauri::command]
+async fn engine_bootstrap_admin(state: State<'_, AppState>, username: String, password: String) -> Result<serde_json::Value, String> {
+    with_engine(&state, move |e| e.bootstrap_admin(&username, &password)).await
+}
+
+/// Register and activate the selected profile's account in the engine. The engine only accepts it if the online
+/// connector reports exactly this login and server, as a DEMO account.
+#[tauri::command]
+async fn engine_use_demo_account(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let setup = connector_setup(&state)?.ok_or("the RR MT5 Connector build was not found")?;
+    let profile = setup.profile.clone().ok_or("select an MT5 profile first")?;
+    let st = conn::read_status(&setup.home);
+    if !(st.running && st.state == "CONNECTED") {
+        return Err("start the MT5 connector and wait until it is CONNECTED".into());
+    }
+    with_engine(&state, move |e| e.use_demo_account(profile.expected_login, &profile.server)).await
+}
+
 // ---- MT5 Manager ------------------------------------------------------------------------------------------------
 #[derive(Serialize)]
 struct Mt5Overview {
@@ -357,7 +397,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .manage(state)
         .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console,
-            mt5_overview, mt5_detect, mt5_save_profile, mt5_select_profile, mt5_delete_profile, mt5_link])
+            mt5_overview, mt5_detect, mt5_save_profile, mt5_select_profile, mt5_delete_profile, mt5_link,
+            engine_status, engine_bootstrap_admin, engine_use_demo_account])
         .setup(move |app| {
             build_tray(app.handle())?;
             if !start_minimized {
