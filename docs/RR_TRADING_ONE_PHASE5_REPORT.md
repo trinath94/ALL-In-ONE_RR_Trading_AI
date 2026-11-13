@@ -146,7 +146,9 @@ the bundle. The CSP sets `font-src 'self'`.
 
 * **No real Windows or MetaTrader 5 yet:** WebView2, DPAPI at runtime outside CI, and real MT5 are unverified (unchanged from Phase 4).
 * **LIVE setup** is intentionally not available from the desktop. LIVE accounts still go through the engine's existing administrator approval with typed confirmation. The PC LIVE lock stays locked.
-* **The frontend has no CI job** (`next build` was verified here only). Adding one is planned for Phase 15 (dashboard work).
+* ~~The frontend has no CI job~~: added in Phase 6 (`.github/workflows/frontend.yml`).
+
+**CI for the final Phase 5 commit (`fb0a368`):** desktop run 43453505374 and backend run 43453505160 both passed.
 * **Sandbox image builds** layered the new backend source and the new frontend build onto the existing local images (Docker Hub rate limit). The frontend build was placed in a fresh directory inside the image so no previous file could be served. The committed Dockerfiles are unchanged.
 * **Lost `stack.secrets` with kept data locks the database** (see 5.1). Recovery tooling is Phase 17.
 
