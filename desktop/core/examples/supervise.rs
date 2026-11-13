@@ -3,6 +3,7 @@
 //! cargo run -p rr-one-core --example supervise -- prereqs
 //! cargo run -p rr-one-core --example supervise -- status
 //! cargo run -p rr-one-core --example supervise -- mt5-status | mt5-detect | mt5-link
+//! cargo run -p rr-one-core --example supervise -- engine-status | engine-bootstrap-admin USER | engine-use-demo
 //! cargo run -p rr-one-core --example supervise -- <action_id> ["START TRADING WORKER"]
 use rr_one_core::actions::Action;
 use rr_one_core::health;
@@ -42,6 +43,23 @@ fn main() {
         "mt5-status" => serde_json::to_value(native.as_ref().map(|n| n.ctl.status())).unwrap(),
         "mt5-detect" => serde_json::to_value(native.as_ref().ok_or("no connector").and_then(|n| n.ctl.detect().map_err(|_| "detect failed"))
             .unwrap_or_else(|e| fail(e))).unwrap(),
+        // Same calls as the desktop app's engine commands (local supervisor API).
+        "engine-status" | "engine-bootstrap-admin" | "engine-use-demo" => {
+            let key = local::supervisor_key(&paths).unwrap_or_else(|e| fail(&e));
+            let eng = rr_one_core::engine::LocalEngine { port: settings.gateway_port, key: &key };
+            let r = match cmd.as_str() {
+                "engine-status" => eng.status(),
+                // the password comes from the environment, never from argv
+                "engine-bootstrap-admin" => eng.bootstrap_admin(args.get(1).map(String::as_str).unwrap_or(""),
+                    &std::env::var("RR_ONE_ADMIN_PASSWORD").unwrap_or_default()),
+                _ => {
+                    let n = native.as_ref().unwrap_or_else(|| fail("no connector"));
+                    let p = n.profile.as_ref().unwrap_or_else(|| fail("select an MT5 profile first"));
+                    eng.use_demo_account(p.expected_login, &p.server)
+                }
+            };
+            r.unwrap_or_else(|e| fail(&e))
+        }
         "mt5-link" => {
             let n = native.as_ref().unwrap_or_else(|| fail("the RR MT5 Connector build was not found"));
             rr_one_core::connector::link(&sup, n).unwrap_or_else(|e| fail(&e))

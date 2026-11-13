@@ -31,6 +31,16 @@ The local stack for **LOCAL WINDOWS MODE** (Docker Desktop + WSL2). It is manage
 * Without the main encryption key they cannot decrypt the trading secret either.
 * `api`, `monitor` and `trading-worker` keep full scope.
 
+**Local supervisor API (Phase 5).** Only `api` receives `RR_SUPERVISOR_KEY`. With it, the desktop app can call
+`/api/v1/local/*` through the loopback gateway:
+* read the live safety state;
+* create the first administrator, only while the engine has no users;
+* register the DEMO account the online connector reports.
+
+Every request is HMAC-signed, with a ±60 s timestamp window and single-use nonces. Without the key the API returns 404,
+so the Ubuntu deployment is unaffected. Nothing in this API can trade, enable auto-trading, change risk settings or
+touch LIVE.
+
 The monitor, analysis and trading roles replace the original single worker loop (decision D1). They reuse the
 same engine functions, so auto-execution still requires all of the following:
 * `auto_trading` is on;
@@ -44,7 +54,7 @@ The trading role also ignores signals created before it started.
 ## Secrets
 
 `compose.yml` requires `RR_ONE_DB_PASSWORD`, `RR_ONE_REDIS_PASSWORD`, `RR_ONE_JWT_SECRET`, `RR_ONE_ENCRYPTION_KEY`,
-`RR_ONE_BRIDGE_SECRET` and `RR_ONE_BRIDGE_READ_KEY`. Each uses `${…:?}` interpolation, so Compose refuses to run if any is missing.
+`RR_ONE_BRIDGE_SECRET`, `RR_ONE_BRIDGE_READ_KEY` and `RR_ONE_SUPERVISOR_KEY`. Each uses `${…:?}` interpolation, so Compose refuses to run if any is missing.
 
 The supervisor generates them once and stores them DPAPI-encrypted in
 `C:\ProgramData\RR Trading One\secrets\stack.secrets`, with a restricted ACL. It passes them to Docker Compose only

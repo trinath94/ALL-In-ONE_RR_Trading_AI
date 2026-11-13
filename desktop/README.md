@@ -70,6 +70,19 @@ expected account login.
 
 **Force-terminate rule:** a process is terminated only if `status.json` proves the PID is our live connector.
 
+## Engine integration (Phase 5)
+
+The Control Centre reads the **live** safety state from the engine's local supervisor API. That state covers mode,
+auto trading, kill switch, risk lock, startup checks, the active account (masked), LIVE approvals, connector and
+roles. The API is HMAC-signed with the stack's supervisor key (`core/src/engine.rs`). While the engine is
+unreachable, the panel says so and shows the shipped defaults.
+
+* **First run:** while the engine has no users, a card creates the administrator. The password goes only to the
+  local engine and is stored there as Argon2id. The engine refuses a second bootstrap.
+* **DEMO account:** **Use as engine DEMO account** registers and activates the selected profile's account. The engine
+  accepts it only if the online connector itself reports exactly that login and server as DEMO. Auto trading stays
+  OFF, and the monitor re-runs its startup checks.
+
 ## Locations
 
 | Purpose | Path |
