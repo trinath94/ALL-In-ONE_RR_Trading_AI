@@ -38,7 +38,7 @@ function renderMt5Status(st) {
     ["Last heartbeat", hb],
     ["LIVE on this PC", d.live_authorized ? "AUTHORISED" : "locked"],
     ["PC emergency stop", d.local_kill_switch ? "ACTIVE" : "off"],
-    ["Messages", [st && st.detail, m.detail, ...(d.warnings || [])].filter(Boolean).join(" · ") || "—"],
+    ["Messages", [...new Set([st && st.detail, m.detail, ...(d.warnings || [])].filter(Boolean))].join(" · ") || "—"],
   ]);
 }
 
