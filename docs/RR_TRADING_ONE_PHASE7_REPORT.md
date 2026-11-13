@@ -28,6 +28,7 @@ and stored records. Nothing is estimated.
 | MT5 connector / Windows connector | 17 / 36 passed |
 | Frontend `next build` (strict TS) | Passed, 25 pages |
 | CI, Phase 7 WIP commits | backend 43459001130 and frontend 43459289662 passed |
+| CI, final Phase 7 commit (`57fef1a`) | frontend 43462611966 passed (the only workflow its paths trigger) |
 
 ## 2. What the library reports (verified against the running engine)
 
