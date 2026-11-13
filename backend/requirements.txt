@@ -1,0 +1,23 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30
+pydantic>=2.8
+pydantic-settings>=2.4
+SQLAlchemy>=2.0.30
+alembic>=1.13
+psycopg[binary]>=3.2
+redis>=5.0
+httpx>=0.27
+anthropic>=2.8
+argon2-cffi>=23.1
+PyJWT>=2.9
+cryptography>=43
+numpy>=2.0
+pandas>=2.2
+psutil>=6.0
+tzdata>=2024.1
+python-multipart>=0.0.9
+# Part 25/26 machine learning (training runs in the learner process; inference is local)
+scikit-learn>=1.5
+scipy>=1.13
+lightgbm>=4.3
+xgboost>=2.0

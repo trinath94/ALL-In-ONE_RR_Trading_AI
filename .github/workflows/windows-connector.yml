@@ -1,0 +1,131 @@
+# Builds and tests the RR MT5 Connector on real Windows (GitHub-hosted windows-latest, 64-bit):
+# unit + UI tests, the original connector tests, the PyInstaller EXE, a packaged self-test (MetaTrader5
+# package import, Windows Credential Manager round-trip, encrypted store, terminal detection) and the
+# Inno Setup installer. Artifacts: RR_MT5_Connector_Setup.exe + SHA256SUMS.txt + self-test report.
+name: windows-connector
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"                    # needed: listing only tags would stop branch pushes from triggering
+    tags:
+      - "connector-v*"          # pushing a tag builds, tests and publishes a GitHub Release
+    paths:
+      - "windows-connector/**"
+      - "mt5-connector/**"
+      - ".github/workflows/windows-connector.yml"
+
+permissions:
+  contents: write               # only used by the release step (tag pushes)
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: windows-connector
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Unit and UI tests
+        run: python -m pytest -q tests
+
+      - name: Original connector tests
+        run: |
+          # these tests sign requests with the engine's own signer (backend/app/core/security.py)
+          python -m pip install "PyJWT>=2.9" "argon2-cffi>=23.1" "pydantic>=2.8" "pydantic-settings>=2.4"
+          python -m pytest -q ..\mt5-connector\tests
+
+      - name: Icon and version resource
+        run: |
+          python packaging\make_icon.py
+          "VERSION=$((python packaging\version_info.py).Trim())" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Build EXE (PyInstaller)
+        run: pyinstaller packaging\rr_mt5_connector.spec --noconfirm --clean --distpath dist --workpath build
+
+      - name: Packaged self-test on Windows
+        env:
+          QT_QPA_PLATFORM: ""
+        run: |
+          $report = "$env:RUNNER_TEMP\selftest.json"
+          $p = Start-Process -FilePath "dist\RR_MT5_Connector\RR_MT5_Connector.exe" -ArgumentList "--selftest `"$report`"" -Wait -PassThru
+          Get-Content $report
+          Copy-Item $report dist\selftest.json
+          if ($p.ExitCode -ne 0) { throw "packaged self-test failed ($($p.ExitCode))" }
+
+      - name: Build installer (Inno Setup)
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc "/DAppVersion=$env:VERSION" packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          $h = (Get-FileHash dist\RR_MT5_Connector_Setup.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  RR_MT5_Connector_Setup.exe" | Out-File -Encoding ascii dist\SHA256SUMS.txt
+          Get-Content dist\SHA256SUMS.txt
+
+      - name: Silent install / uninstall smoke test
+        timeout-minutes: 10
+        run: |
+          # wait for the installer process only: the silent install starts the connector in the tray, and
+          # Start-Process -Wait would also wait for that child
+          $p = Start-Process dist\RR_MT5_Connector_Setup.exe -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=""' -PassThru
+          $p.WaitForExit()
+          if ($p.ExitCode -ne 0) { throw "silent install failed ($($p.ExitCode))" }
+          $exe = "$env:ProgramFiles\RR MT5 Connector\RR_MT5_Connector.exe"
+          if (-not (Test-Path $exe)) { throw "not installed at $exe" }
+          Start-Sleep -Seconds 5
+          $running = Get-Process -Name RR_MT5_Connector -ErrorAction SilentlyContinue
+          "connector running after install: $([bool]$running)"
+          Stop-Process -Name RR_MT5_Connector -Force -ErrorAction SilentlyContinue
+          $u = Start-Process "$env:ProgramFiles\RR MT5 Connector\unins000.exe" -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -PassThru
+          $u.WaitForExit()
+          if ($u.ExitCode -ne 0) { throw "silent uninstall failed ($($u.ExitCode))" }
+          Start-Sleep -Seconds 3
+          if (Test-Path $exe) { throw "uninstall left $exe behind" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RR_MT5_Connector-${{ env.VERSION }}
+          path: |
+            windows-connector/dist/RR_MT5_Connector_Setup.exe
+            windows-connector/dist/SHA256SUMS.txt
+            windows-connector/dist/selftest.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish GitHub Release (new version on main, or a connector-v* tag)
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/connector-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "connector-v$env:VERSION"
+          if ("${{ github.ref_type }}" -eq "tag" -and "${{ github.ref_name }}" -ne $tag) {
+            throw "tag ${{ github.ref_name }} does not match app version $env:VERSION"
+          }
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "Release $tag already exists; bump rr_connector.__version__ to publish a new one."
+            exit 0
+          }
+          gh release create $tag `
+            dist\RR_MT5_Connector_Setup.exe dist\SHA256SUMS.txt dist\selftest.json `
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" `
+            --title "RR MT5 Connector $env:VERSION" --notes-file RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+          "Published https://github.com/${{ github.repository }}/releases/tag/$tag"

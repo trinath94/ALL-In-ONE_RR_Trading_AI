@@ -1,0 +1,3784 @@
+{
+ "count": 215,
+ "source_commit": "0293bb3",
+ "strategies": {
+  "combo_bos_fvg": {
+   "category": "combinations",
+   "code_hash": "05393fd6ed30fbb9",
+   "component": "smc_ict",
+   "name": "BOS + FVG",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_breakout_atr": {
+   "category": "combinations",
+   "code_hash": "12056aee7884cb19",
+   "component": "trend",
+   "name": "Breakout + ATR",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_ema200_rsi": {
+   "category": "combinations",
+   "code_hash": "6fd5288b2c5edad9",
+   "component": "trend",
+   "name": "EMA 200 + RSI",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_ema_macd": {
+   "category": "combinations",
+   "code_hash": "823f414ecff2aae1",
+   "component": "trend",
+   "name": "EMA + MACD",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_fib_structure": {
+   "category": "combinations",
+   "code_hash": "8dc497973a7a1e48",
+   "component": "mtf",
+   "name": "Fibonacci + Market Structure",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_ict_smt": {
+   "category": "combinations",
+   "code_hash": "187d5ac0d4b6601b",
+   "component": "smc_ict",
+   "name": "ICT + SMT Divergence",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "peer_symbols"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_ob_fvg": {
+   "category": "combinations",
+   "code_hash": "f640523adce3ae08",
+   "component": "smc_ict",
+   "name": "Order Block + FVG",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_rsi_bb": {
+   "category": "combinations",
+   "code_hash": "f2df0d776dd7fd7e",
+   "component": "smc_ict",
+   "name": "RSI + Bollinger Bands",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_smc_ict": {
+   "category": "combinations",
+   "code_hash": "c8af86a622c3836b",
+   "component": "smc_ict",
+   "name": "SMC + ICT",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "combo_supertrend_adx": {
+   "category": "combinations",
+   "code_hash": "0032db625e93b546",
+   "component": "trend",
+   "name": "Supertrend + ADX",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_sweep_choch": {
+   "category": "combinations",
+   "code_hash": "720410bc24a87889",
+   "component": "smc_ict",
+   "name": "Liquidity Sweep + CHOCH",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_sweep_ob": {
+   "category": "combinations",
+   "code_hash": "0dd17f471e77cd2d",
+   "component": "smc_ict",
+   "name": "Liquidity Sweep + Order Block",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_trend_pullback_momentum": {
+   "category": "combinations",
+   "code_hash": "f0f5691d7de38f40",
+   "component": "trend",
+   "name": "Trend + Pullback + Momentum",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "combo_vwap_vp": {
+   "category": "combinations",
+   "code_hash": "5edc001e42fd6b7c",
+   "component": "smc_ict",
+   "name": "VWAP + Volume Profile",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "combo_wyckoff_vp": {
+   "category": "combinations",
+   "code_hash": "21f54075202d08ab",
+   "component": "smc_ict",
+   "name": "Wyckoff + Volume Profile",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_382": {
+   "category": "fibonacci",
+   "code_hash": "e509f2c17be07fb8",
+   "component": "indicator",
+   "name": "Fibonacci 38.2% Retracement",
+   "params": {
+    "tol": 0.03
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_50": {
+   "category": "fibonacci",
+   "code_hash": "a80ed484058d88a7",
+   "component": "indicator",
+   "name": "Fibonacci 50% Retracement",
+   "params": {
+    "tol": 0.03
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_618": {
+   "category": "fibonacci",
+   "code_hash": "9a92c0d4ce55aff4",
+   "component": "indicator",
+   "name": "Fibonacci 61.8% Retracement",
+   "params": {
+    "tol": 0.03
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_705_ote": {
+   "category": "fibonacci",
+   "code_hash": "340d4ab0ae6aa4af",
+   "component": "smc_ict",
+   "name": "Fibonacci 70.5% OTE",
+   "params": {
+    "tol": 0.03
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_786": {
+   "category": "fibonacci",
+   "code_hash": "80b34d0fd3a08fdb",
+   "component": "indicator",
+   "name": "Fibonacci 78.6% Retracement",
+   "params": {
+    "tol": 0.03
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_confluence": {
+   "category": "fibonacci",
+   "code_hash": "44eb6b88aa47f005",
+   "component": "indicator",
+   "name": "Fibonacci Confluence",
+   "params": {
+    "tol": 0.1
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_extension_targets": {
+   "category": "fibonacci",
+   "code_hash": "078dbb7df80f06ba",
+   "component": "indicator",
+   "name": "Fibonacci Extension Targets",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_fvg": {
+   "category": "fibonacci",
+   "code_hash": "8c0e44d296770926",
+   "component": "smc_ict",
+   "name": "Fibonacci + FVG",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_ob": {
+   "category": "fibonacci",
+   "code_hash": "0b86efd33c5546d7",
+   "component": "smc_ict",
+   "name": "Fibonacci + Order Block",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "fib_trend_continuation": {
+   "category": "fibonacci",
+   "code_hash": "d2f62dc2404eea64",
+   "component": "trend",
+   "name": "Fibonacci Trend Continuation",
+   "params": {},
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ict_2022_model": {
+   "category": "ict",
+   "code_hash": "55581d911b7b8c14",
+   "component": "smc_ict",
+   "name": "ICT 2022 Model",
+   "params": {
+    "rr": 3.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_2023_model": {
+   "category": "ict",
+   "code_hash": "d981c096539860ef",
+   "component": "smc_ict",
+   "name": "ICT 2023 Model",
+   "params": {
+    "rr": 2.5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_asian_range": {
+   "category": "ict",
+   "code_hash": "7a749ac6e90ebe91",
+   "component": "session_volatility",
+   "name": "ICT Asian Range",
+   "params": {
+    "edge": 0.15,
+    "max_range_atr": 3.0,
+    "min_bars": 8
+   },
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION",
+    "LOW_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_ce": {
+   "category": "ict",
+   "code_hash": "5fe4740386044e35",
+   "component": "smc_ict",
+   "name": "ICT Consequent Encroachment",
+   "params": {
+    "max_age": 30,
+    "tol": 0.15
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ict_daily_bias": {
+   "category": "ict",
+   "code_hash": "4d53f39eced77e31",
+   "component": "market_structure",
+   "name": "ICT Daily Bias",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_judas_swing": {
+   "category": "ict",
+   "code_hash": "6e79c75a69d6a68a",
+   "component": "smc_ict",
+   "name": "ICT Judas Swing",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_killzones": {
+   "category": "ict",
+   "code_hash": "f4f60fe0e9dfc32f",
+   "component": "session_volatility",
+   "name": "ICT Kill Zones",
+   "params": {
+    "mult": 1.5,
+    "rr": 2.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_liquidity_raid": {
+   "category": "ict",
+   "code_hash": "3e787a8beaba97e9",
+   "component": "liquidity",
+   "name": "ICT Liquidity Raid",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_london": {
+   "category": "ict",
+   "code_hash": "8883ba538bd2d959",
+   "component": "session_volatility",
+   "name": "ICT London Session",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_macro": {
+   "category": "ict",
+   "code_hash": "222d43752f14a421",
+   "component": "session_volatility",
+   "name": "ICT Macro Times",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M1",
+    "M5"
+   ]
+  },
+  "ict_market_maker": {
+   "category": "ict",
+   "code_hash": "170f74cc3ffe48fe",
+   "component": "smc_ict",
+   "name": "ICT Market Maker Model",
+   "params": {
+    "leg_bars": 60,
+    "min_leg_atr": 6.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ict_new_york": {
+   "category": "ict",
+   "code_hash": "210d4e1ee34be70a",
+   "component": "session_volatility",
+   "name": "ICT New York Session",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_opening_range": {
+   "category": "ict",
+   "code_hash": "39c401c30c1dff28",
+   "component": "session_volatility",
+   "name": "ICT Opening Range",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_ote": {
+   "category": "ict",
+   "code_hash": "3355c87599ba45ca",
+   "component": "smc_ict",
+   "name": "ICT Optimal Trade Entry (OTE)",
+   "params": {
+    "hi": 0.79,
+    "lo": 0.62,
+    "max_age": 40,
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ict_po3": {
+   "category": "ict",
+   "code_hash": "91ba1f15e6cfd289",
+   "component": "smc_ict",
+   "name": "ICT Power of Three (PO3)",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_silver_bullet": {
+   "category": "ict",
+   "code_hash": "886a0abe73fe9e9e",
+   "component": "smc_ict",
+   "name": "ICT Silver Bullet",
+   "params": {
+    "rr": 2.0,
+    "windows": [
+     "SB_LONDON",
+     "SB_NY_AM",
+     "SB_NY_PM"
+    ]
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_smt": {
+   "category": "ict",
+   "code_hash": "9e1f87e9cc665db1",
+   "component": "smc_ict",
+   "name": "ICT SMT Divergence",
+   "params": {
+    "inverse": false,
+    "lookback": 20
+   },
+   "regimes": [],
+   "requires": [
+    "peer_symbols"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ict_turtle_soup": {
+   "category": "ict",
+   "code_hash": "0f5f4978123b4808",
+   "component": "liquidity",
+   "name": "ICT Turtle Soup",
+   "params": {
+    "lookback": 20,
+    "min_age": 4,
+    "rr": 2.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ict_unicorn": {
+   "category": "ict",
+   "code_hash": "865ef268e4c39209",
+   "component": "smc_ict",
+   "name": "ICT Unicorn Model",
+   "params": {
+    "max_age": 40,
+    "rr": 2.5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "ict_weekly_bias": {
+   "category": "ict",
+   "code_hash": "c868cbf10b02d21e",
+   "component": "market_structure",
+   "name": "ICT Weekly Bias",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_anchored_vwap": {
+   "category": "indicators",
+   "code_hash": "9717fd1dd1a52889",
+   "component": "volume",
+   "name": "Anchored VWAP",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_aroon": {
+   "category": "indicators",
+   "code_hash": "d505e502d400d022",
+   "component": "indicator",
+   "name": "Aroon Indicator",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_atr_breakout": {
+   "category": "indicators",
+   "code_hash": "760dfeb6bf4180a4",
+   "component": "indicator",
+   "name": "ATR Breakout",
+   "params": {
+    "k": 1.5,
+    "rr": 2.0,
+    "sl_atr": 1.0
+   },
+   "regimes": [
+    "BREAKOUT",
+    "HIGH_VOLATILITY",
+    "STRONG_BULL",
+    "STRONG_BEAR"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_bb_squeeze": {
+   "category": "indicators",
+   "code_hash": "7adf94df44aaaba2",
+   "component": "indicator",
+   "name": "Bollinger Squeeze",
+   "params": {},
+   "regimes": [
+    "CONSOLIDATION",
+    "LOW_VOLATILITY",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_bollinger": {
+   "category": "indicators",
+   "code_hash": "f7d0a777ca3d4f99",
+   "component": "indicator",
+   "name": "Bollinger Bands",
+   "params": {},
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_camarilla": {
+   "category": "indicators",
+   "code_hash": "19ea77b1b662d922",
+   "component": "indicator",
+   "name": "Camarilla Pivot",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15",
+    "M30"
+   ]
+  },
+  "ind_cci": {
+   "category": "indicators",
+   "code_hash": "9837e215c4009978",
+   "component": "indicator",
+   "name": "CCI Strategy",
+   "params": {},
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION",
+    "LOW_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_donchian_breakout": {
+   "category": "indicators",
+   "code_hash": "5a98361a7e952aed",
+   "component": "indicator",
+   "name": "Donchian Channel Breakout",
+   "params": {
+    "n": 20,
+    "rr": 2.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_elder_ray": {
+   "category": "indicators",
+   "code_hash": "6ec42d349b1f6736",
+   "component": "indicator",
+   "name": "Elder Ray Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_fib_extension": {
+   "category": "indicators",
+   "code_hash": "98cd25d47509d760",
+   "component": "indicator",
+   "name": "Fibonacci Extension",
+   "params": {
+    "ext": 1.618
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_fib_retracement": {
+   "category": "indicators",
+   "code_hash": "c3610476ca58584b",
+   "component": "indicator",
+   "name": "Fibonacci Retracement",
+   "params": {
+    "hi": 0.618,
+    "lo": 0.382
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_keltner": {
+   "category": "indicators",
+   "code_hash": "f527b7dad22d7858",
+   "component": "indicator",
+   "name": "Keltner Channels",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_macd_cross": {
+   "category": "indicators",
+   "code_hash": "d18699f04744b146",
+   "component": "indicator",
+   "name": "MACD Crossover",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_macd_divergence": {
+   "category": "indicators",
+   "code_hash": "3af30547d170e813",
+   "component": "indicator",
+   "name": "MACD Divergence",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_market_profile": {
+   "category": "indicators",
+   "code_hash": "bf6041ba6e7b135e",
+   "component": "indicator",
+   "name": "Market Profile",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "M30"
+   ]
+  },
+  "ind_mfi": {
+   "category": "indicators",
+   "code_hash": "689b1a73cd8c1b20",
+   "component": "volume",
+   "name": "MFI Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_obv": {
+   "category": "indicators",
+   "code_hash": "30b8d9e6439f62e3",
+   "component": "volume",
+   "name": "OBV Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_pivots": {
+   "category": "indicators",
+   "code_hash": "05992857ca67809f",
+   "component": "indicator",
+   "name": "Pivot Points",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "M30",
+    "H1"
+   ]
+  },
+  "ind_rsi_divergence": {
+   "category": "indicators",
+   "code_hash": "1704b2ee187a49fe",
+   "component": "indicator",
+   "name": "RSI Divergence",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_rsi_obos": {
+   "category": "indicators",
+   "code_hash": "47f47ba7485753ff",
+   "component": "indicator",
+   "name": "RSI Overbought/Oversold",
+   "params": {
+    "hi": 70,
+    "lo": 30,
+    "n": 14,
+    "rr": 1.5
+   },
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION",
+    "LOW_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_stochastic": {
+   "category": "indicators",
+   "code_hash": "0d3421f5a18fd4b6",
+   "component": "indicator",
+   "name": "Stochastic Oscillator",
+   "params": {
+    "hi": 80,
+    "lo": 20,
+    "rr": 1.5
+   },
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION",
+    "LOW_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_tsi": {
+   "category": "indicators",
+   "code_hash": "4ffe1883325ee728",
+   "component": "indicator",
+   "name": "TSI Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_volume_profile": {
+   "category": "indicators",
+   "code_hash": "2a9515953be4e3a7",
+   "component": "volume",
+   "name": "Volume Profile",
+   "params": {
+    "lookback": 100
+   },
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "ind_vwap": {
+   "category": "indicators",
+   "code_hash": "0f3dcc8de7b45a07",
+   "component": "volume",
+   "name": "VWAP Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15",
+    "M30"
+   ]
+  },
+  "ind_williams_r": {
+   "category": "indicators",
+   "code_hash": "669e780c1167bc8a",
+   "component": "indicator",
+   "name": "Williams %R",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_asian_sweep": {
+   "category": "liquidity",
+   "code_hash": "04cd3a6da365dc6e",
+   "component": "liquidity",
+   "name": "Asian High and Low Sweep",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15",
+    "M30"
+   ]
+  },
+  "liq_equal_highs": {
+   "category": "liquidity",
+   "code_hash": "937938f660edfbbe",
+   "component": "liquidity",
+   "name": "Equal Highs",
+   "params": {
+    "strength": 2,
+    "tol_atr": 0.1
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_equal_lows": {
+   "category": "liquidity",
+   "code_hash": "7feed652eb284aa0",
+   "component": "liquidity",
+   "name": "Equal Lows",
+   "params": {
+    "strength": 2,
+    "tol_atr": 0.1
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_external_sweep": {
+   "category": "liquidity",
+   "code_hash": "61b08842f0d3d640",
+   "component": "liquidity",
+   "name": "External Liquidity Sweep",
+   "params": {
+    "lookback": 100
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_grab": {
+   "category": "liquidity",
+   "code_hash": "fe0ad251c99ed953",
+   "component": "liquidity",
+   "name": "Liquidity Grab",
+   "params": {
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_internal_sweep": {
+   "category": "liquidity",
+   "code_hash": "e7eac78870c887a6",
+   "component": "liquidity",
+   "name": "Internal Liquidity Sweep",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_london_sweep": {
+   "category": "liquidity",
+   "code_hash": "f49c9ad17f3e64f9",
+   "component": "liquidity",
+   "name": "London High and Low Sweep",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15",
+    "M30"
+   ]
+  },
+  "liq_ny_sweep": {
+   "category": "liquidity",
+   "code_hash": "e5bb5d609b450645",
+   "component": "liquidity",
+   "name": "New York High and Low Sweep",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15",
+    "M30"
+   ]
+  },
+  "liq_pdh": {
+   "category": "liquidity",
+   "code_hash": "0f19beb55e98397e",
+   "component": "liquidity",
+   "name": "Previous Day High (PDH)",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_pdl": {
+   "category": "liquidity",
+   "code_hash": "bd9d95e2fa22db6f",
+   "component": "liquidity",
+   "name": "Previous Day Low (PDL)",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_pmh": {
+   "category": "liquidity",
+   "code_hash": "74ae0b90ac30d2ee",
+   "component": "liquidity",
+   "name": "Previous Month High (PMH)",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "H4",
+    "D1"
+   ]
+  },
+  "liq_pml": {
+   "category": "liquidity",
+   "code_hash": "4b3de211f30464c3",
+   "component": "liquidity",
+   "name": "Previous Month Low (PML)",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "H4",
+    "D1"
+   ]
+  },
+  "liq_pool": {
+   "category": "liquidity",
+   "code_hash": "a2e1d59d6a46c864",
+   "component": "liquidity",
+   "name": "Liquidity Pool Trading",
+   "params": {
+    "min_pts": 3,
+    "strength": 2,
+    "tol_atr": 0.5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_pwh": {
+   "category": "liquidity",
+   "code_hash": "33e250eeb40ca844",
+   "component": "liquidity",
+   "name": "Previous Week High (PWH)",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_pwl": {
+   "category": "liquidity",
+   "code_hash": "97031b0fe0626771",
+   "component": "liquidity",
+   "name": "Previous Week Low (PWL)",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_range_sweep": {
+   "category": "liquidity",
+   "code_hash": "f0f8d0f36f2be9d1",
+   "component": "liquidity",
+   "name": "Range Liquidity Sweep",
+   "params": {
+    "adx_max": 22,
+    "n": 50
+   },
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_stop_hunt": {
+   "category": "liquidity",
+   "code_hash": "de6bb46bebe50d03",
+   "component": "liquidity",
+   "name": "Stop Hunt Reversal",
+   "params": {
+    "spike_atr": 0.5,
+    "strength": 3,
+    "wick": 0.6
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_swing_high": {
+   "category": "liquidity",
+   "code_hash": "2aac1688f326ab07",
+   "component": "liquidity",
+   "name": "Swing High Liquidity",
+   "params": {
+    "strength": 5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_swing_low": {
+   "category": "liquidity",
+   "code_hash": "dd79a3b635e800d9",
+   "component": "liquidity",
+   "name": "Swing Low Liquidity",
+   "params": {
+    "strength": 5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "liq_trendline": {
+   "category": "liquidity",
+   "code_hash": "38f9b63ad011adc4",
+   "component": "liquidity",
+   "name": "Trendline Liquidity",
+   "params": {
+    "strength": 2
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_ascending_triangle": {
+   "category": "price_action",
+   "code_hash": "ba66f6cd27fbc153",
+   "component": "price_action",
+   "name": "Ascending Triangle",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_bear_flag": {
+   "category": "price_action",
+   "code_hash": "f169bb826b1d81b3",
+   "component": "price_action",
+   "name": "Bear Flag",
+   "params": {
+    "pole_atr": 3.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_breakout": {
+   "category": "price_action",
+   "code_hash": "0fbd21e0339b583b",
+   "component": "price_action",
+   "name": "Breakout Trading",
+   "params": {
+    "lookback": 20,
+    "max_range_atr": 4.0,
+    "rr": 2.0
+   },
+   "regimes": [
+    "CONSOLIDATION",
+    "BREAKOUT",
+    "LOW_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_breakout_retest": {
+   "category": "price_action",
+   "code_hash": "4d5a18d96dbafa39",
+   "component": "price_action",
+   "name": "Breakout and Retest",
+   "params": {
+    "n": 20,
+    "window": 10
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_bull_flag": {
+   "category": "price_action",
+   "code_hash": "efd46616e9f7e6e6",
+   "component": "price_action",
+   "name": "Bull Flag",
+   "params": {
+    "pole_atr": 3.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_candlestick_reversal": {
+   "category": "price_action",
+   "code_hash": "fdd9d6bde901456a",
+   "component": "price_action",
+   "name": "Candlestick Reversal",
+   "params": {
+    "rsi_hi": 65,
+    "rsi_lo": 35
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_channel": {
+   "category": "price_action",
+   "code_hash": "5eebeccab7ece46f",
+   "component": "trend",
+   "name": "Channel Trading",
+   "params": {
+    "rr": 2.0,
+    "tol_atr": 0.3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_descending_triangle": {
+   "category": "price_action",
+   "code_hash": "3173a8adb1c65ab8",
+   "component": "price_action",
+   "name": "Descending Triangle",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_double_bottom": {
+   "category": "price_action",
+   "code_hash": "5e7bb684a60009b1",
+   "component": "price_action",
+   "name": "Double Bottom",
+   "params": {
+    "max_sl_atr": 10.0,
+    "min_gap": 5,
+    "strength": 3,
+    "tol_atr": 0.4
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_double_top": {
+   "category": "price_action",
+   "code_hash": "6dd0a5fd2661fce0",
+   "component": "price_action",
+   "name": "Double Top",
+   "params": {
+    "max_sl_atr": 10.0,
+    "min_gap": 5,
+    "strength": 3,
+    "tol_atr": 0.4
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_engulfing": {
+   "category": "price_action",
+   "code_hash": "4ce096608f0a0d75",
+   "component": "price_action",
+   "name": "Engulfing Candle Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_fakey": {
+   "category": "price_action",
+   "code_hash": "22fd16c51c071f49",
+   "component": "price_action",
+   "name": "Fakey Pattern",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_flag": {
+   "category": "price_action",
+   "code_hash": "19891436b2a4e691",
+   "component": "price_action",
+   "name": "Flag Pattern",
+   "params": {
+    "pole_atr": 3.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_head_shoulders": {
+   "category": "price_action",
+   "code_hash": "8c71c34546125282",
+   "component": "price_action",
+   "name": "Head and Shoulders",
+   "params": {
+    "max_sl_atr": 10.0,
+    "sh_tol_atr": 1.0,
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_inside_bar": {
+   "category": "price_action",
+   "code_hash": "817dc74f33bf1c11",
+   "component": "price_action",
+   "name": "Inside Bar Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_inverse_head_shoulders": {
+   "category": "price_action",
+   "code_hash": "7c813988e6d2669a",
+   "component": "price_action",
+   "name": "Inverse Head and Shoulders",
+   "params": {
+    "max_sl_atr": 10.0,
+    "sh_tol_atr": 1.0,
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_momentum_candle": {
+   "category": "price_action",
+   "code_hash": "f0289164015b59b6",
+   "component": "price_action",
+   "name": "Momentum Candle Strategy",
+   "params": {
+    "mult": 2.0,
+    "rr": 1.5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_outside_bar": {
+   "category": "price_action",
+   "code_hash": "c67d2e3bb5d648e7",
+   "component": "price_action",
+   "name": "Outside Bar Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_pin_bar": {
+   "category": "price_action",
+   "code_hash": "b3e65f1571812624",
+   "component": "price_action",
+   "name": "Pin Bar Strategy",
+   "params": {
+    "lookback": 20,
+    "ratio": 0.6
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_pullback": {
+   "category": "price_action",
+   "code_hash": "8fc3dd23c029ba3c",
+   "component": "trend",
+   "name": "Pullback Trading",
+   "params": {
+    "fast": 20,
+    "rr": 2.0,
+    "slow": 50
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_range": {
+   "category": "price_action",
+   "code_hash": "f912a71b6fa3faa7",
+   "component": "price_action",
+   "name": "Range Trading",
+   "params": {
+    "adx_max": 20,
+    "edge": 0.1,
+    "n": 50
+   },
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION",
+    "LOW_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_retest": {
+   "category": "price_action",
+   "code_hash": "26c3cbd632895174",
+   "component": "price_action",
+   "name": "Retest Trading",
+   "params": {
+    "rr": 2.0,
+    "window": 15
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_reversal": {
+   "category": "price_action",
+   "code_hash": "9918341977971ddc",
+   "component": "price_action",
+   "name": "Reversal Trading",
+   "params": {
+    "ext_atr": 3.0,
+    "rr": 2.0
+   },
+   "regimes": [
+    "REVERSAL",
+    "HIGH_VOLATILITY",
+    "SIDEWAYS"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_supply_demand": {
+   "category": "price_action",
+   "code_hash": "940b8e9cc821faec",
+   "component": "price_action",
+   "name": "Supply and Demand",
+   "params": {
+    "depart_mult": 1.8,
+    "max_age": 60,
+    "max_base": 4,
+    "rr": 2.5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_support_resistance": {
+   "category": "price_action",
+   "code_hash": "da29f841211883b5",
+   "component": "price_action",
+   "name": "Support and Resistance",
+   "params": {
+    "rr": 2.0,
+    "strength": 3,
+    "tol_atr": 0.25
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_symmetrical_triangle": {
+   "category": "price_action",
+   "code_hash": "903c4b9d5a198272",
+   "component": "price_action",
+   "name": "Symmetrical Triangle",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_trendline": {
+   "category": "price_action",
+   "code_hash": "7556639fabcd51f7",
+   "component": "trend",
+   "name": "Trendline Trading",
+   "params": {
+    "rr": 2.0,
+    "strength": 3,
+    "tol_atr": 0.3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_triple_bottom": {
+   "category": "price_action",
+   "code_hash": "a67f264899106bf9",
+   "component": "price_action",
+   "name": "Triple Bottom",
+   "params": {
+    "max_sl_atr": 10.0,
+    "min_gap": 5,
+    "strength": 3,
+    "tol_atr": 0.4
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_triple_top": {
+   "category": "price_action",
+   "code_hash": "a533266ce7178ef2",
+   "component": "price_action",
+   "name": "Triple Top",
+   "params": {
+    "max_sl_atr": 10.0,
+    "min_gap": 5,
+    "strength": 3,
+    "tol_atr": 0.4
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "pa_wedge": {
+   "category": "price_action",
+   "code_hash": "ad187f5e20f4a3de",
+   "component": "price_action",
+   "name": "Wedge Pattern",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_adaptive": {
+   "category": "quantitative",
+   "code_hash": "8d10032dc3f93f0a",
+   "component": "trend",
+   "name": "Adaptive Trading Systems",
+   "params": {
+    "er_range": 0.2,
+    "er_trend": 0.35,
+    "n": 10
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_ai_signal": {
+   "category": "quantitative",
+   "code_hash": "7b712e6cde5024bf",
+   "component": "indicator",
+   "name": "AI Signal Trading",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "claude_agent"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_anti_martingale": {
+   "category": "quantitative",
+   "code_hash": "e22ccfb555633392",
+   "component": "trend",
+   "name": "Anti-Martingale",
+   "params": {
+    "max_steps": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": true,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_breakout": {
+   "category": "quantitative",
+   "code_hash": "719085d03175b1fa",
+   "component": "trend",
+   "name": "Breakout Algorithm",
+   "params": {
+    "buffer_atr": 0.25,
+    "n": 30,
+    "rr": 2.0
+   },
+   "regimes": [
+    "BREAKOUT",
+    "CONSOLIDATION"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_cointegration": {
+   "category": "quantitative",
+   "code_hash": "e3fe6d7bfeff3cee",
+   "component": "indicator",
+   "name": "Cointegration Trading",
+   "params": {
+    "crit": -3.37,
+    "window": 250,
+    "z": 2.0
+   },
+   "regimes": [],
+   "requires": [
+    "peer_symbols"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_dca": {
+   "category": "quantitative",
+   "code_hash": "6653a2ef1b32b91d",
+   "component": "indicator",
+   "name": "DCA (Dollar-Cost Averaging)",
+   "params": {
+    "every": 5,
+    "rr": 2.0,
+    "sl_atr": 4.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": true,
+   "timeframes": [
+    "D1"
+   ]
+  },
+  "quant_factor": {
+   "category": "quantitative",
+   "code_hash": "a28131e8e818b044",
+   "component": "indicator",
+   "name": "Factor Investing",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "portfolio_allocator"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_grid": {
+   "category": "quantitative",
+   "code_hash": "9a36a4d1f5b85aa0",
+   "component": "indicator",
+   "name": "Grid Trading",
+   "params": {
+    "rr": 1.0,
+    "sl_atr": 3.0,
+    "step_atr": 1.0
+   },
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION"
+   ],
+   "requires": [],
+   "risky": true,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_hft": {
+   "category": "quantitative",
+   "code_hash": "25b3ce99a1a603f6",
+   "component": "indicator",
+   "name": "High-Frequency Trading",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "hft_infrastructure",
+    "market_depth"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_market_making": {
+   "category": "quantitative",
+   "code_hash": "8be801d27d03b243",
+   "component": "indicator",
+   "name": "Market Making",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "hft_infrastructure",
+    "market_depth"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_martingale": {
+   "category": "quantitative",
+   "code_hash": "fa1c78b913c9991c",
+   "component": "indicator",
+   "name": "Martingale",
+   "params": {
+    "max_steps": 4
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": true,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_mean_reversion": {
+   "category": "quantitative",
+   "code_hash": "253760afdc5e8ec0",
+   "component": "indicator",
+   "name": "Mean Reversion Algorithm",
+   "params": {
+    "hl_max": 50,
+    "hl_min": 2,
+    "window": 150,
+    "z": 2.0
+   },
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_ml": {
+   "category": "quantitative",
+   "code_hash": "db57f2139a2f593a",
+   "component": "indicator",
+   "name": "Machine Learning Trading",
+   "params": {
+    "threshold": 0.6
+   },
+   "regimes": [],
+   "requires": [
+    "trained_model"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_momentum": {
+   "category": "quantitative",
+   "code_hash": "f1b7e0268230e2de",
+   "component": "trend",
+   "name": "Momentum Algorithm",
+   "params": {
+    "lookback": 50,
+    "sl_atr": 2.0,
+    "threshold": 1.0
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_pairs": {
+   "category": "quantitative",
+   "code_hash": "91488c25c690143a",
+   "component": "indicator",
+   "name": "Pairs Trading",
+   "params": {
+    "window": 120,
+    "z": 2.0
+   },
+   "regimes": [],
+   "requires": [
+    "peer_symbols"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_rebalancing": {
+   "category": "quantitative",
+   "code_hash": "6a96e87f123e52ee",
+   "component": "indicator",
+   "name": "Portfolio Rebalancing",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "portfolio_allocator"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_risk_parity": {
+   "category": "quantitative",
+   "code_hash": "538cd6e36e8412ac",
+   "component": "indicator",
+   "name": "Risk Parity",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "portfolio_allocator"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_stat_arb": {
+   "category": "quantitative",
+   "code_hash": "d16dcc62e128d990",
+   "component": "indicator",
+   "name": "Statistical Arbitrage",
+   "params": {
+    "sl_atr": 2.0,
+    "window": 200,
+    "z": 2.0
+   },
+   "regimes": [],
+   "requires": [
+    "peer_symbols"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_trend_following": {
+   "category": "quantitative",
+   "code_hash": "ea3d73949e8cbec8",
+   "component": "trend",
+   "name": "Trend-Following Algorithm",
+   "params": {
+    "rr": 3.0,
+    "sl_atr": 2.5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "quant_vol_arb": {
+   "category": "quantitative",
+   "code_hash": "b51e5ea0da06c37d",
+   "component": "indicator",
+   "name": "Volatility Arbitrage",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "options_implied_vol"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_bollinger": {
+   "category": "reversal",
+   "code_hash": "0a3a7208dd2752f6",
+   "component": "indicator",
+   "name": "Bollinger Band Reversal",
+   "params": {},
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION",
+    "REVERSAL"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_climax": {
+   "category": "reversal",
+   "code_hash": "dabf2eb82d253da8",
+   "component": "volume",
+   "name": "Climax Reversal",
+   "params": {},
+   "regimes": [
+    "REVERSAL",
+    "SIDEWAYS",
+    "HIGH_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_divergence": {
+   "category": "reversal",
+   "code_hash": "90e47f9c2dba7594",
+   "component": "indicator",
+   "name": "Divergence Reversal",
+   "params": {},
+   "regimes": [
+    "REVERSAL",
+    "SIDEWAYS",
+    "HIGH_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_exhaustion": {
+   "category": "reversal",
+   "code_hash": "eb8f6e9e9facc639",
+   "component": "price_action",
+   "name": "Exhaustion Reversal",
+   "params": {
+    "run": 7
+   },
+   "regimes": [
+    "REVERSAL",
+    "SIDEWAYS",
+    "HIGH_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_failed_breakdown": {
+   "category": "reversal",
+   "code_hash": "967bf88c4a22a17a",
+   "component": "price_action",
+   "name": "Failed Breakdown",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_failed_breakout": {
+   "category": "reversal",
+   "code_hash": "7eb26e0418c86578",
+   "component": "price_action",
+   "name": "Failed Breakout",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_mean_reversion": {
+   "category": "reversal",
+   "code_hash": "75d7206122ae8f61",
+   "component": "indicator",
+   "name": "Mean Reversion",
+   "params": {
+    "n": 50,
+    "z": 2.5
+   },
+   "regimes": [
+    "SIDEWAYS",
+    "CONSOLIDATION"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_parabolic": {
+   "category": "reversal",
+   "code_hash": "2989d2c065d973d4",
+   "component": "indicator",
+   "name": "Parabolic Reversal",
+   "params": {},
+   "regimes": [
+    "REVERSAL",
+    "SIDEWAYS",
+    "HIGH_VOLATILITY"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_sr": {
+   "category": "reversal",
+   "code_hash": "f7402652895ab7bf",
+   "component": "price_action",
+   "name": "Support and Resistance Reversal",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "rev_vwap": {
+   "category": "reversal",
+   "code_hash": "36f90baa3e63d4f7",
+   "component": "volume",
+   "name": "VWAP Reversion",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_asian_breakout": {
+   "category": "sessions",
+   "code_hash": "7253d47cc2ae9ef4",
+   "component": "session_volatility",
+   "name": "Asian Session Breakout",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_daily_open": {
+   "category": "sessions",
+   "code_hash": "1b7ad4d652f3487b",
+   "component": "session_volatility",
+   "name": "Daily Open Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1"
+   ]
+  },
+  "sess_day_of_week": {
+   "category": "sessions",
+   "code_hash": "d89b06df78ce8f3b",
+   "component": "session_volatility",
+   "name": "Day-of-Week Trading",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "D1"
+   ]
+  },
+  "sess_first15": {
+   "category": "sessions",
+   "code_hash": "57187c61cd095e62",
+   "component": "session_volatility",
+   "name": "First 15-Minute Breakout",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M1",
+    "M5"
+   ]
+  },
+  "sess_first30": {
+   "category": "sessions",
+   "code_hash": "c76d06d97b5423ba",
+   "component": "session_volatility",
+   "name": "First 30-Minute Breakout",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_initial_balance": {
+   "category": "sessions",
+   "code_hash": "d0d27bb03968b0fd",
+   "component": "session_volatility",
+   "name": "Initial Balance Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_london_breakout": {
+   "category": "sessions",
+   "code_hash": "04dccaa811da1885",
+   "component": "session_volatility",
+   "name": "London Breakout",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_midnight_open": {
+   "category": "sessions",
+   "code_hash": "7d15ac00e0bccefe",
+   "component": "session_volatility",
+   "name": "Midnight Open Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_news": {
+   "category": "sessions",
+   "code_hash": "504e025752b53cce",
+   "component": "session_volatility",
+   "name": "News Session Trading",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "news_feed"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_ny_breakout": {
+   "category": "sessions",
+   "code_hash": "ac3e11496ab00d67",
+   "component": "session_volatility",
+   "name": "New York Breakout",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_orb": {
+   "category": "sessions",
+   "code_hash": "bafb95b784b154a9",
+   "component": "session_volatility",
+   "name": "Opening Range Breakout (ORB)",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_overlap": {
+   "category": "sessions",
+   "code_hash": "903b88ffd82b16bd",
+   "component": "session_volatility",
+   "name": "London-NY Overlap",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_seasonal": {
+   "category": "sessions",
+   "code_hash": "f4893201ca0a3fa9",
+   "component": "session_volatility",
+   "name": "Seasonal Trading",
+   "params": {
+    "min_hit": 0.7,
+    "min_years": 3,
+    "sl_atr": 2.5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "D1"
+   ]
+  },
+  "sess_tod_reversal": {
+   "category": "sessions",
+   "code_hash": "29bcaeb4b8eede9c",
+   "component": "session_volatility",
+   "name": "Time-of-Day Reversal",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M5",
+    "M15"
+   ]
+  },
+  "sess_weekly_open": {
+   "category": "sessions",
+   "code_hash": "f311233e5390b78e",
+   "component": "session_volatility",
+   "name": "Weekly Open Strategy",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_bos": {
+   "category": "smc",
+   "code_hash": "86bfb758f45ad1b6",
+   "component": "market_structure",
+   "name": "Break of Structure (BOS)",
+   "params": {
+    "body_frac": 0.5,
+    "rr": 2.0,
+    "strength": 3
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_bpr": {
+   "category": "smc",
+   "code_hash": "de4297fbc78acb8a",
+   "component": "smc_ict",
+   "name": "Balanced Price Range (BPR)",
+   "params": {
+    "max_age": 40,
+    "min_atr_frac": 0.1,
+    "rr": 2.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_breaker_block": {
+   "category": "smc",
+   "code_hash": "214c2c1885b90c21",
+   "component": "smc_ict",
+   "name": "Breaker Block",
+   "params": {
+    "max_age": 60,
+    "rr": 2.0,
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_bsl": {
+   "category": "smc",
+   "code_hash": "40d2d99ca11183d4",
+   "component": "liquidity",
+   "name": "Buy-Side Liquidity (BSL)",
+   "params": {
+    "rr": 2.0,
+    "strength": 2,
+    "tol_atr": 0.1
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_choch": {
+   "category": "smc",
+   "code_hash": "e2404885f230b433",
+   "component": "market_structure",
+   "name": "Change of Character (CHOCH)",
+   "params": {
+    "rr": 2.0,
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_displacement": {
+   "category": "smc",
+   "code_hash": "51d2451969975f8c",
+   "component": "smc_ict",
+   "name": "Displacement",
+   "params": {
+    "lookback": 20,
+    "mult": 2.0,
+    "rr": 1.5,
+    "sl_atr": 1.2
+   },
+   "regimes": [
+    "BREAKOUT",
+    "STRONG_BULL",
+    "STRONG_BEAR"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_equilibrium": {
+   "category": "smc",
+   "code_hash": "caf95bb03d2b68df",
+   "component": "smc_ict",
+   "name": "Equilibrium Trading",
+   "params": {
+    "lookback": 100,
+    "rr": 2.0,
+    "strength": 3,
+    "tol": 0.05
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_erl": {
+   "category": "smc",
+   "code_hash": "265ee55ada5b6d03",
+   "component": "liquidity",
+   "name": "External Range Liquidity",
+   "params": {
+    "lookback": 100,
+    "max_age": 40,
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_fvg": {
+   "category": "smc",
+   "code_hash": "9875c98ddc1babed",
+   "component": "smc_ict",
+   "name": "Fair Value Gap (FVG)",
+   "params": {
+    "max_age": 40,
+    "min_atr_frac": 0.2,
+    "rr": 2.0
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_ifvg": {
+   "category": "smc",
+   "code_hash": "fcc8b2ab75729cac",
+   "component": "smc_ict",
+   "name": "Inverse Fair Value Gap (IFVG)",
+   "params": {
+    "max_age": 30,
+    "min_atr_frac": 0.2,
+    "rr": 2.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_inducement": {
+   "category": "smc",
+   "code_hash": "89717a26ec304fb1",
+   "component": "smc_ict",
+   "name": "Inducement",
+   "params": {
+    "major": 5,
+    "minor": 1,
+    "rr": 2.5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_irl": {
+   "category": "smc",
+   "code_hash": "515f1b55d0a5ab8d",
+   "component": "liquidity",
+   "name": "Internal Range Liquidity",
+   "params": {
+    "lookback": 100,
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_liquidity_sweep": {
+   "category": "smc",
+   "code_hash": "8ed56ebaa0ab45f8",
+   "component": "liquidity",
+   "name": "Liquidity Sweep",
+   "params": {
+    "rr": 2.0,
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_mitigation_block": {
+   "category": "smc",
+   "code_hash": "408e9899ceff0f9c",
+   "component": "smc_ict",
+   "name": "Mitigation Block",
+   "params": {
+    "max_age": 60,
+    "rr": 2.0,
+    "strength": 3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_mss": {
+   "category": "smc",
+   "code_hash": "22e41e0bcd7429d4",
+   "component": "market_structure",
+   "name": "Market Structure Shift (MSS)",
+   "params": {
+    "rr": 2.5,
+    "strength": 2,
+    "window": 10
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_order_block": {
+   "category": "smc",
+   "code_hash": "d9ba0e5ff71f15aa",
+   "component": "smc_ict",
+   "name": "Order Block (OB)",
+   "params": {
+    "max_age": 80,
+    "rr": 2.5,
+    "strength": 3
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_premium_discount": {
+   "category": "smc",
+   "code_hash": "90c1b820aab1c82a",
+   "component": "smc_ict",
+   "name": "Premium and Discount Zones",
+   "params": {
+    "lookback": 100,
+    "rr": 2.0,
+    "strength": 3,
+    "threshold": 0.3
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_rejection_block": {
+   "category": "smc",
+   "code_hash": "9977d48b196e5e20",
+   "component": "smc_ict",
+   "name": "Rejection Block",
+   "params": {
+    "max_age": 50,
+    "rr": 2.0,
+    "strength": 3,
+    "wick_ratio": 0.5
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_reversal": {
+   "category": "smc",
+   "code_hash": "a64699e997be481d",
+   "component": "smc_ict",
+   "name": "Smart Money Reversal",
+   "params": {
+    "rr": 3.0,
+    "strength": 2,
+    "window": 15
+   },
+   "regimes": [
+    "REVERSAL",
+    "SIDEWAYS",
+    "WEAK_BULL",
+    "WEAK_BEAR"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "smc_ssl": {
+   "category": "smc",
+   "code_hash": "92dff3324cd37133",
+   "component": "liquidity",
+   "name": "Sell-Side Liquidity (SSL)",
+   "params": {
+    "rr": 2.0,
+    "strength": 2,
+    "tol_atr": 0.1
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_adx": {
+   "category": "trend",
+   "code_hash": "2b6f8a0a655d5f68",
+   "component": "trend",
+   "name": "ADX Trend Strength",
+   "params": {
+    "threshold": 25
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_donchian": {
+   "category": "trend",
+   "code_hash": "a168dfd2026bbd69",
+   "component": "trend",
+   "name": "Donchian Channel Trend",
+   "params": {
+    "entry": 55,
+    "exit": 20,
+    "rr": 3.0
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_ema200": {
+   "category": "trend",
+   "code_hash": "95347655960ffc53",
+   "component": "trend",
+   "name": "EMA 200 Trend Strategy",
+   "params": {},
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_ema_20_50": {
+   "category": "trend",
+   "code_hash": "e563ea53910d2f94",
+   "component": "trend",
+   "name": "EMA 20/50 Crossover",
+   "params": {
+    "fast": 20,
+    "rr": 2.0,
+    "sl_atr": 1.5,
+    "slow": 50
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_ema_50_200": {
+   "category": "trend",
+   "code_hash": "f2e2e2423b7b4053",
+   "component": "trend",
+   "name": "EMA 50/200 Crossover",
+   "params": {
+    "fast": 50,
+    "rr": 2.0,
+    "sl_atr": 2.5,
+    "slow": 200
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "H1",
+    "H4",
+    "D1"
+   ]
+  },
+  "trend_ema_9_21": {
+   "category": "trend",
+   "code_hash": "6d1fde257bb1e444",
+   "component": "trend",
+   "name": "EMA 9/21 Crossover",
+   "params": {
+    "fast": 9,
+    "rr": 2.0,
+    "sl_atr": 1.5,
+    "slow": 21
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_hh_hl": {
+   "category": "trend",
+   "code_hash": "9966fc017dc713ca",
+   "component": "market_structure",
+   "name": "Higher Highs and Higher Lows",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_ichimoku": {
+   "category": "trend",
+   "code_hash": "8c6bc29c86d71d71",
+   "component": "trend",
+   "name": "Ichimoku Cloud",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_lh_ll": {
+   "category": "trend",
+   "code_hash": "b2b3cc1ecf124fdd",
+   "component": "market_structure",
+   "name": "Lower Highs and Lower Lows",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_ma_ribbon": {
+   "category": "trend",
+   "code_hash": "3b95182c5f462ae5",
+   "component": "trend",
+   "name": "Moving Average Ribbon",
+   "params": {
+    "periods": [
+     8,
+     13,
+     21,
+     34,
+     55
+    ],
+    "sl_atr": 2.0
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_macd": {
+   "category": "trend",
+   "code_hash": "e56ad913b3e4bd99",
+   "component": "trend",
+   "name": "MACD Trend Strategy",
+   "params": {},
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_psar": {
+   "category": "trend",
+   "code_hash": "d1544acb4d44a23b",
+   "component": "trend",
+   "name": "Parabolic SAR",
+   "params": {},
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_sma_cross": {
+   "category": "trend",
+   "code_hash": "f0dbdf698b03853b",
+   "component": "trend",
+   "name": "SMA Crossover",
+   "params": {
+    "fast": 20,
+    "rr": 2.0,
+    "sl_atr": 1.5,
+    "slow": 50
+   },
+   "regimes": [
+    "STRONG_BULL",
+    "STRONG_BEAR",
+    "WEAK_BULL",
+    "WEAK_BEAR",
+    "BREAKOUT"
+   ],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_supertrend": {
+   "category": "trend",
+   "code_hash": "f81ac5bdffacd69a",
+   "component": "trend",
+   "name": "Supertrend Strategy",
+   "params": {
+    "mult": 3.0,
+    "n": 10,
+    "rr": 2.0
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "trend_trendline_breakout": {
+   "category": "trend",
+   "code_hash": "5121c5d4ee803792",
+   "component": "trend",
+   "name": "Trendline Breakout",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_absorption": {
+   "category": "volume",
+   "code_hash": "fea6f75ab5e65ce8",
+   "component": "volume",
+   "name": "Absorption Trading",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_accum_dist": {
+   "category": "volume",
+   "code_hash": "242ba314c9c11e90",
+   "component": "volume",
+   "name": "Accumulation and Distribution",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_auction": {
+   "category": "volume",
+   "code_hash": "0a893b5e6769d5e6",
+   "component": "price_action",
+   "name": "Market Auction Theory",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_climax": {
+   "category": "volume",
+   "code_hash": "27e8192c9028dd5d",
+   "component": "volume",
+   "name": "Volume Climax",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_cvd": {
+   "category": "volume",
+   "code_hash": "908f25348bfc171f",
+   "component": "volume",
+   "name": "Cumulative Volume Delta (CVD)",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "order_flow"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_delta_divergence": {
+   "category": "volume",
+   "code_hash": "5269bb51ebe99dc2",
+   "component": "volume",
+   "name": "Delta Divergence",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "order_flow"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_footprint": {
+   "category": "volume",
+   "code_hash": "2289ccfdf7a87646",
+   "component": "volume",
+   "name": "Footprint Chart Trading",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "order_flow"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_iceberg": {
+   "category": "volume",
+   "code_hash": "7a4396ddd3277595",
+   "component": "volume",
+   "name": "Iceberg Order Analysis",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "market_depth"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_open_interest": {
+   "category": "volume",
+   "code_hash": "c7501b7b2f34496a",
+   "component": "volume",
+   "name": "Open Interest Analysis",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "open_interest"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_order_flow": {
+   "category": "volume",
+   "code_hash": "e7bf33c62b95773c",
+   "component": "volume",
+   "name": "Order Flow Trading",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "order_flow"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_volume_imbalance": {
+   "category": "volume",
+   "code_hash": "e0be2ebe65194827",
+   "component": "price_action",
+   "name": "Volume Imbalance",
+   "params": {
+    "max_age": 20
+   },
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_vsa": {
+   "category": "volume",
+   "code_hash": "12c3b30d54c1d1e2",
+   "component": "volume",
+   "name": "Volume Spread Analysis (VSA)",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_wyckoff": {
+   "category": "volume",
+   "code_hash": "0cead21bc1081e89",
+   "component": "volume",
+   "name": "Wyckoff Method",
+   "params": {},
+   "regimes": [],
+   "requires": [
+    "tick_volume"
+   ],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_wyckoff_spring": {
+   "category": "volume",
+   "code_hash": "644971e95a917e78",
+   "component": "volume",
+   "name": "Wyckoff Spring",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  },
+  "vol_wyckoff_upthrust": {
+   "category": "volume",
+   "code_hash": "aeb7724acf5aa355",
+   "component": "volume",
+   "name": "Wyckoff Upthrust",
+   "params": {},
+   "regimes": [],
+   "requires": [],
+   "risky": false,
+   "timeframes": [
+    "M15",
+    "H1",
+    "H4"
+   ]
+  }
+ }
+}

@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+html, body { background: #020304; color: #d7e3ea; }
+body {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+/* Digital grid backdrop (static, no animation cost) */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(34,228,255,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34,228,255,.035) 1px, transparent 1px),
+    radial-gradient(ellipse at top, rgba(47,123,255,.08), transparent 60%);
+  background-size: 32px 32px, 32px 32px, 100% 100%;
+}
+.glass {
+  background: linear-gradient(180deg, rgba(15,20,24,.88), rgba(10,13,16,.92));
+  backdrop-filter: blur(8px);
+  border: 1px solid #1a2329;
+}
+.scan-line::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(57,255,136,.04), transparent);
+  background-size: 100% 6px;
+}
+.tabular { font-variant-numeric: tabular-nums; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #1a2329; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+@keyframes pulse-dot { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .pulse-dot { animation: none; } }
+:focus-visible { outline: 1px solid #22e4ff; outline-offset: 2px; }

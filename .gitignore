@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.env
+*.env.local
+node_modules/
+.next/
+frontend/out/
+*.sqlite3
+*.db
+*.log
+backups/
+secrets/
+.pytest_cache/
+nginx/certs/
+nginx/acme/
+frontend/next-env.d.ts.bak
+*.tsbuildinfo
+# RR MT5 Connector build outputs
+windows-connector/build/
+windows-connector/dist/
+windows-connector/.venv/
+windows-connector/packaging/version_info.txt
