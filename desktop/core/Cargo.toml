@@ -1,0 +1,15 @@
+[package]
+name = "rr-one-core"
+description = "RR Trading One supervisor core: allowlisted actions, paths, settings, health probes (no UI, no shell)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,72 @@
+# RR Trading One desktop shell: core tests on Linux and Windows, then a real Windows build of the Tauri app and
+# its NSIS package (unsigned; signing and the full installer arrive in Phase 16). Artifacts: installer + SHA256SUMS.
+name: desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  core-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Core tests (actions allowlist, paths, settings, health probes)
+        run: cargo test -p rr-one-core --locked
+
+  windows-build:
+    needs: core-tests
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Clippy (deny warnings)
+        run: |
+          rustup component add clippy
+          cargo clippy --workspace --locked -- -D warnings
+      - name: Build app and NSIS package
+        working-directory: desktop/src-tauri
+        run: npx --yes @tauri-apps/cli@2.12.4 build --ci
+      - name: Checksums
+        run: |
+          $files = Get-ChildItem target/release/bundle/nsis/*.exe, target/release/rr-trading-one.exe
+          $files | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Name } |
+            Set-Content -Encoding ascii target/release/SHA256SUMS.txt
+          Get-Content target/release/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rr-trading-one-windows-unsigned
+          path: |
+            desktop/target/release/bundle/nsis/*.exe
+            desktop/target/release/SHA256SUMS.txt
+          if-no-files-found: error

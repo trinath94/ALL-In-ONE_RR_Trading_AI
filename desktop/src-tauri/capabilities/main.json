@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Local Control Centre window only. No remote origin (including the engine console) is granted IPC.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-get-overview",
+    "allow-check-health",
+    "allow-plan-action",
+    "allow-run-action",
+    "allow-open-console"
+  ]
+}
