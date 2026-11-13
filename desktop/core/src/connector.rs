@@ -671,6 +671,7 @@ os.remove(os.path.join(home, "stop.request")); st("STOPPED", "", {"id": p["profi
         let cfg = crate::supervisor::SupervisorConfig {
             compose: crate::compose::Compose { docker: "/nonexistent/docker".into(), file: "/nonexistent/compose.yml".into() },
             gateway_port: 47810, data_dir: t.path().into(), backups_dir: t.path().join("b"), log_file: None, wsl: None,
+            image_tag: "local".into(),
         };
         let sup = crate::supervisor::Supervisor { cfg, runner: &crate::runner::SystemRunner, secrets: &secrets,
             probe: Box::new(|_| unreachable!()), connector: None };

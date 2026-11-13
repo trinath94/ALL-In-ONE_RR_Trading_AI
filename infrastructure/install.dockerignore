@@ -1,0 +1,11 @@
+# Installed as <install folder>\.dockerignore by the RR Trading One installer (desktop/scripts/stage_bundle.py).
+# The install folder is the Docker build context of compose.yml (context: ..). Only the engine sources the images
+# copy are sent to Docker: the desktop app, the MT5 connector and everything else in the folder stay out.
+# (Dockerfiles are read by Docker even when excluded here.) Not used by the repository's own builds.
+*
+!backend
+!frontend
+**/__pycache__
+**/*.pyc
+frontend/node_modules
+frontend/.next

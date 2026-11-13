@@ -49,6 +49,9 @@ pub struct SupervisorConfig {
     pub log_file: Option<PathBuf>,
     /// `Some(path to wsl.exe)` on Windows; WSL2 is then a prerequisite.
     pub wsl: Option<PathBuf>,
+    /// Tag of the locally built engine images (`RR_ONE_IMAGE_TAG`). Installed builds derive it from the installed
+    /// sources, so a new version's images are built by the next Start All instead of reusing the old ones.
+    pub image_tag: String,
 }
 
 pub type Probe = Box<dyn Fn(u16) -> ProbeResult + Send + Sync>;
@@ -108,7 +111,9 @@ fn now_secs() -> u64 {
 
 impl<'a> Supervisor<'a> {
     fn compose(&self, args: Vec<String>, timeout: Duration, stdout_file: Option<PathBuf>) -> Result<CommandOutput, String> {
-        let spec = CommandSpec { program: self.cfg.compose.docker.clone(), args, env: self.secrets.compose_env(), timeout, stdout_file, stdin: None };
+        let mut env = self.secrets.compose_env();
+        env.push(("RR_ONE_IMAGE_TAG".into(), self.cfg.image_tag.clone()));
+        let spec = CommandSpec { program: self.cfg.compose.docker.clone(), args, env, timeout, stdout_file, stdin: None };
         self.runner.run(&spec).map_err(|e| format!("could not run docker: {e}"))
     }
 
@@ -480,6 +485,7 @@ mod tests {
             backups_dir: t.path().join("backups"),
             log_file: Some(t.path().join("supervisor.log")),
             wsl: None,
+            image_tag: "local".into(),
         };
         Env { _t: t, cfg, secrets: StackSecrets::generate().unwrap() }
     }
@@ -533,7 +539,8 @@ mod tests {
         assert!(!rep.ok);
         for c in r.calls.lock().unwrap().iter().filter(|c| c.args.first().map(|a| a == "compose").unwrap_or(false)) {
             assert!(c.args.iter().all(|a| !e.secrets.values().iter().any(|v| a.contains(v))), "secret in argv");
-            assert_eq!(c.env.len(), 7);
+            assert_eq!(c.env.len(), 8, "7 stack secrets + the image tag");
+            assert!(c.env.contains(&("RR_ONE_IMAGE_TAG".to_string(), "local".to_string())));
         }
         let json = serde_json::to_string(&rep).unwrap();
         assert!(!json.contains(&pw) && json.contains("rr:***"));

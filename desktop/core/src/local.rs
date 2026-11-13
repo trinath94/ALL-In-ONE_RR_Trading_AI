@@ -21,6 +21,21 @@ pub fn find_compose_file(install_dir: &Path, override_dir: Option<PathBuf>) -> O
     install_dir.ancestors().take(5).map(|a| a.join("infrastructure").join("compose.yml")).find(|f| f.is_file())
 }
 
+/// Tag for the locally built engine images. An installed copy carries `BUNDLE_MANIFEST.txt` (SHA-256 of every
+/// engine file, written by `desktop/scripts/stage_bundle.py`) in the folder that holds `infrastructure/`; the tag is
+/// derived from it, so different engine sources never share an image tag. A source checkout has no manifest: `local`.
+pub fn image_tag(compose_file: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let manifest = compose_file.parent().and_then(Path::parent).map(|root| root.join("BUNDLE_MANIFEST.txt"));
+    match manifest.and_then(|m| std::fs::read(m).ok()) {
+        Some(bytes) => {
+            let d = Sha256::digest(bytes);
+            format!("b{}", d.iter().take(6).map(|b| format!("{b:02x}")).collect::<String>())
+        }
+        None => "local".into(),
+    }
+}
+
 pub fn find_docker() -> Option<PathBuf> {
     let extra = if cfg!(windows) {
         vec![PathBuf::from(r"C:\Program Files\Docker\Docker\resources\bin")]
@@ -114,6 +129,7 @@ pub fn prepare(paths: &AppPaths, settings: &Settings, runner: &dyn Runner) -> Re
     if created {
         restrict_secrets_dir(runner, &dir)?;
     }
+    let image_tag = image_tag(&file);
     Ok(LocalSetup {
         config: SupervisorConfig {
             compose: Compose { docker, file },
@@ -122,6 +138,7 @@ pub fn prepare(paths: &AppPaths, settings: &Settings, runner: &dyn Runner) -> Re
             backups_dir: paths.backups_dir(),
             log_file: Some(paths.logs_dir().join("supervisor.log")),
             wsl: cfg!(windows).then(|| system32("wsl.exe")),
+            image_tag,
         },
         secrets,
         secrets_created: created,
@@ -154,6 +171,21 @@ mod tests {
         // A relative override is ignored; discovery falls back to the install directory's ancestors.
         assert_eq!(find_compose_file(&deep, Some(PathBuf::from("relative/dir"))), Some(infra.join("compose.yml")));
         assert_eq!(find_compose_file(Path::new("/nonexistent/a"), Some(PathBuf::from("rel"))), None);
+    }
+
+    #[test]
+    fn image_tag_follows_the_installed_sources() {
+        let t = tempfile::tempdir().unwrap();
+        let compose = t.path().join("infrastructure").join("compose.yml");
+        std::fs::create_dir_all(compose.parent().unwrap()).unwrap();
+        std::fs::write(&compose, "x").unwrap();
+        assert_eq!(image_tag(&compose), "local", "source checkout: no manifest");
+        std::fs::write(t.path().join("BUNDLE_MANIFEST.txt"), "aaaa  backend/app/main.py\n").unwrap();
+        let v1 = image_tag(&compose);
+        assert!(v1.len() == 13 && v1.starts_with('b') && v1[1..].chars().all(|c| c.is_ascii_hexdigit()), "{v1}");
+        assert_eq!(image_tag(&compose), v1, "stable for the same install");
+        std::fs::write(t.path().join("BUNDLE_MANIFEST.txt"), "bbbb  backend/app/main.py\n").unwrap();
+        assert_ne!(image_tag(&compose), v1, "an upgrade with different sources gets new images");
     }
 
     #[test]

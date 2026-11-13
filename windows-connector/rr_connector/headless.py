@@ -236,8 +236,35 @@ def run(profile_path: str, adapter=None, finder=None, poll_s: float = 1.0) -> in
     return EXIT_OK
 
 
+def _attach_std_streams() -> None:
+    """The packaged connector is a windowed (GUI-subsystem) executable. When the desktop app starts it with pipes,
+    Windows passes the handles, but a windowed build can still start with ``sys.stdin`` / ``sys.stdout`` set to None.
+    ``--register-stdin`` reads the one-time token from stdin and ``--detect-json`` answers on stdout, so re-attach
+    any missing stream to the handle the parent passed. Without a handle the stream stays None, as before."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+    import msvcrt
+    get = ctypes.windll.kernel32.GetStdHandle
+    get.restype = ctypes.c_void_p
+    invalid = ctypes.c_void_p(-1).value
+    for name, which, flags, mode in (("stdin", -10, os.O_RDONLY, "r"), ("stdout", -11, os.O_WRONLY, "w"),
+                                     ("stderr", -12, os.O_WRONLY, "w")):
+        if getattr(sys, name) is not None:
+            continue
+        handle = get(which)
+        if not handle or handle == invalid:
+            continue
+        try:
+            fd = msvcrt.open_osfhandle(handle, flags)
+            setattr(sys, name, open(fd, mode, encoding="utf-8", buffering=1 if mode == "w" else -1))
+        except OSError:
+            pass
+
+
 def main(argv: list[str]) -> int:
     from rr_connector import logsetup
+    _attach_std_streams()
     home()
     logsetup.setup()
     if argv[0] == "--detect-json":

@@ -1,13 +1,21 @@
-# RR Trading One desktop shell: core tests on Linux and Windows, then a real Windows build of the Tauri app and
-# its NSIS package (unsigned; signing and the full installer arrive in Phase 16). Artifacts: installer + SHA256SUMS.
+# RR Trading One desktop shell: core tests on Linux and Windows, then a real Windows build of the self-contained
+# installer (unsigned; code signing arrives in Phase 16): the Tauri app, the engine sources Start All builds from,
+# and the packaged MT5 connector. The installer is then installed silently on the runner, checked and uninstalled.
+# Artifacts: installer + SHA256SUMS.
 name: desktop
 
 on:
   workflow_dispatch:
   push:
     branches: ["**"]
-    paths:
+    paths:                      # everything the installer carries
       - "desktop/**"
+      - "backend/**"
+      - "frontend/**"
+      - "infrastructure/**"
+      - "docker/frontend.Dockerfile"
+      - "windows-connector/**"
+      - "mt5-connector/**"
       - ".github/workflows/desktop.yml"
 
 permissions:
@@ -50,19 +58,89 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
       - name: Clippy (deny warnings)
         run: |
           rustup component add clippy
           cargo clippy --workspace --locked -- -D warnings
-      - name: Build app and NSIS package
+      - name: Build the MT5 connector (PyInstaller, same spec as the standalone connector)
+        working-directory: windows-connector
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python packaging\make_icon.py
+          python packaging\version_info.py | Out-Null
+          pyinstaller packaging\rr_mt5_connector.spec --noconfirm --clean --distpath dist --workpath build
+      - name: Stage installer contents (tracked files only, with manifest)
+        run: python scripts/stage_bundle.py --connector ..\windows-connector\dist\RR_MT5_Connector
+      - name: Build app and NSIS installer
         working-directory: desktop/src-tauri
-        run: npx --yes @tauri-apps/cli@2.12.4 build --ci
+        run: npx --yes @tauri-apps/cli@2.12.4 build --ci --config tauri.bundle.conf.json
       - name: Checksums
         run: |
           $files = Get-ChildItem target/release/bundle/nsis/*.exe, target/release/rr-trading-one.exe
           $files | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Name } |
             Set-Content -Encoding ascii target/release/SHA256SUMS.txt
           Get-Content target/release/SHA256SUMS.txt
+      - name: Silent install, installed-layout checks, silent uninstall
+        timeout-minutes: 20
+        run: |
+          $setup = (Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1).FullName
+          $p = Start-Process $setup -ArgumentList "/S" -PassThru; $p.WaitForExit()
+          if ($p.ExitCode -ne 0) { throw "silent install failed ($($p.ExitCode))" }
+          $inst = Join-Path $env:ProgramFiles "RR Trading One"
+          "installed to $inst"
+          $need = "rr-trading-one.exe", "BUNDLE_MANIFEST.txt", ".dockerignore", "infrastructure\compose.yml",
+            "infrastructure\nginx.local.conf", "infrastructure\backend.Dockerfile", "infrastructure\windows\uninstall-stop.ps1",
+            "docker\frontend.Dockerfile", "backend\requirements.lock", "backend\app\main.py",
+            "backend\tests\baseline\strategy_inventory.json", "frontend\package-lock.json",
+            "frontend\app\(console)\library\page.tsx", "mt5-connector\RR_MT5_Connector.exe"
+          foreach ($f in $need) { if (-not (Test-Path -LiteralPath (Join-Path $inst $f))) { throw "missing in install folder: $f" } }
+          foreach ($f in "frontend\node_modules", "frontend\.next") { if (Test-Path (Join-Path $inst $f)) { throw "must not ship $f" } }
+          # Every manifest entry is installed with the same hash.
+          $bad = 0
+          Get-Content (Join-Path $inst "BUNDLE_MANIFEST.txt") | Where-Object { $_ -and -not $_.StartsWith("#") } | ForEach-Object {
+            $h, $rel = $_ -split "  ", 2
+            $f = Join-Path $inst ($rel -replace "/", "\")
+            if (-not (Test-Path -LiteralPath $f) -or (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLower() -ne $h) { $bad++; "mismatch: $rel" }
+          }
+          if ($bad) { throw "$bad installed files differ from the manifest" }
+
+          # The packaged connector answers on stdout and reads stdin exactly as the app uses it (windowed build).
+          $exe = Join-Path $inst "mt5-connector\RR_MT5_Connector.exe"
+          $out = "$env:RUNNER_TEMP\detect.json"
+          $c = Start-Process $exe -ArgumentList "--detect-json" -RedirectStandardOutput $out -Wait -PassThru -NoNewWindow
+          "detect exit $($c.ExitCode): $(Get-Content $out -Raw)"
+          if ($c.ExitCode -ne 0) { throw "--detect-json failed" }
+          $null = Get-Content $out -Raw | ConvertFrom-Json
+          $tok = "$env:RUNNER_TEMP\token.txt"; "ci-not-a-real-token" | Set-Content -Encoding ascii $tok
+          $out2 = "$env:RUNNER_TEMP\register.json"
+          $c = Start-Process $exe -ArgumentList "--register-stdin", "http://127.0.0.1:9" -RedirectStandardInput $tok -RedirectStandardOutput $out2 -Wait -PassThru -NoNewWindow
+          $r = Get-Content $out2 -Raw
+          "register exit $($c.ExitCode): $r"
+          $j = $r | ConvertFrom-Json
+          if ($j.ok -ne $false -or -not $j.error) { throw "--register-stdin did not report the unreachable engine on stdout" }
+
+          # The app's own supervisor code, run from the install folder, finds the installed engine and connector.
+          cargo build --release --locked -p rr-one-core --example supervise
+          Copy-Item target/release/examples/supervise.exe $inst
+          $pre = & (Join-Path $inst "supervise.exe") prereqs | ConvertFrom-Json
+          $pre | Format-Table name, ok, detail -AutoSize | Out-String -Width 200
+          $cf = $pre | Where-Object name -eq "compose_file"
+          if (-not $cf.ok -or -not $cf.detail.StartsWith($inst)) { throw "installed compose file not used: $($cf.detail)" }
+          $det = & (Join-Path $inst "supervise.exe") mt5-detect
+          "mt5-detect via the app's launcher: $det"
+          if ($LASTEXITCODE -ne 0) { throw "mt5-detect through the installed connector failed" }
+          Remove-Item (Join-Path $inst "supervise.exe")
+
+          $u = Start-Process (Join-Path $inst "uninstall.exe") -ArgumentList "/S" -PassThru; $u.WaitForExit()
+          for ($i = 0; $i -lt 60 -and (Test-Path (Join-Path $inst "rr-trading-one.exe")); $i++) { Start-Sleep 1 }
+          if (Test-Path (Join-Path $inst "rr-trading-one.exe")) { throw "uninstall left the app behind" }
+          if (Test-Path (Join-Path $inst "mt5-connector")) { throw "uninstall left the connector behind" }
+          "uninstalled"
       - uses: actions/upload-artifact@v4
         with:
           name: rr-trading-one-windows-unsigned

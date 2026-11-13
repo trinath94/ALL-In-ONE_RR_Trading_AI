@@ -19,7 +19,7 @@ x-logging: &logging
 
 x-backend: &backend
   build: {context: .., dockerfile: infrastructure/backend.Dockerfile}
-  image: rr-trading-one/backend:local
+  image: rr-trading-one/backend:${RR_ONE_IMAGE_TAG:-local}
   logging: *logging
   environment: &backend-env
     RR_ENVIRONMENT: production
@@ -106,7 +106,7 @@ services:
 
   frontend:
     build: {context: .., dockerfile: docker/frontend.Dockerfile}
-    image: rr-trading-one/frontend:local
+    image: rr-trading-one/frontend:${RR_ONE_IMAGE_TAG:-local}
     restart: unless-stopped
     logging: *logging
     healthcheck: {test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/login || exit 1"], interval: 10s, timeout: 5s, retries: 6, start_period: 20s}

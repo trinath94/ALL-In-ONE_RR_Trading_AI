@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../target/bundle-src/backend/": "backend/",
+      "../target/bundle-src/frontend/": "frontend/",
+      "../target/bundle-src/infrastructure/": "infrastructure/",
+      "../target/bundle-src/docker/": "docker/",
+      "../target/bundle-src/mt5-connector/": "mt5-connector/",
+      "../target/bundle-src/.dockerignore": ".dockerignore",
+      "../target/bundle-src/BUNDLE_MANIFEST.txt": "BUNDLE_MANIFEST.txt"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
+  }
+}
