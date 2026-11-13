@@ -23,6 +23,7 @@ only where they apply. Phase 1 gaps 7.1, 7.2 and 7.3 are closed.
 | Phase 8 end-to-end from a **fresh install** (real stack, analysis service, headless connector with FakeMT5) | **19 / 19 passed** |
 | Backend suite, including the 215-strategy preservation test | **223 passed** (210 + 13 new) |
 | Frontend `next build` (strict TS) | Passed, 25 pages |
+| CI | `2c7f30b`: backend 43506993224, frontend 43506993245, desktop (installer build + silent install/uninstall) 43506993101. `34a010a`: backend 43507015545, desktop 43507015416. All passed. (`2e09219` changed only this report.) |
 
 ## 2. What was built
 
