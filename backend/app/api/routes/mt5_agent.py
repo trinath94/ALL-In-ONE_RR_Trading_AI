@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import client_ip, current_user, rate_limit, require
 from app.core.config import get_settings
-from app.core.security import encrypt_secret
+from app.core.security import encrypt_read_secret, encrypt_secret
 from app.db.models import User
 from app.db.models_agent import MT5Agent, MT5AgentToken
 from app.db.session import get_db, session_scope
@@ -135,6 +135,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(401, "registration token invalid, expired or already used")
     api_key, bridge_secret = secrets.token_urlsafe(36), secrets.token_urlsafe(48)
+    readonly_secret = secrets.token_urlsafe(48) if get_settings().bridge_read_key else None
     agent = db.scalar(select(MT5Agent).where(MT5Agent.device_id == body.device_id))
     if agent is None:
         agent = MT5Agent(device_id=body.device_id)
@@ -144,6 +145,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     agent.device_info = {k: str(v)[:256] for k, v in list(body.device_info.items())[:20]}
     agent.public_key, agent.api_key_hash = body.public_key, _sha(api_key)
     agent.bridge_secret_enc, agent.app_version = encrypt_secret(bridge_secret), body.app_version
+    agent.bridge_readonly_secret_enc = encrypt_read_secret(readonly_secret) if readonly_secret else None
     agent.enabled, agent.revoked_at, agent.last_ip = True, None, ip
     db.flush()
     tok.used_at, tok.used_by_agent_id = now, agent.id
@@ -151,6 +153,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     system_event(db, "connector", "info", f"RR MT5 Connector registered: {agent.name}")
     db.commit()
     return {"agent_id": agent.id, "name": agent.name, "api_key": api_key, "bridge_secret": bridge_secret,
+            **({"bridge_readonly_secret": readonly_secret} if readonly_secret else {}),
             "ws_path": "/api/v1/mt5/agent/ws", "heartbeat_seconds": 5,
             "bridge_mode": get_settings().bridge_mode}
 
@@ -312,10 +315,9 @@ class TokenIn(BaseModel):
 @router.post("/agent/tokens")
 def create_token(body: TokenIn, request: Request, user: User = Depends(require("system.manage")),
                  db: Session = Depends(get_db)):
-    token = "rrmt5_" + secrets.token_urlsafe(32)
-    exp = datetime.now(UTC) + timedelta(hours=get_settings().agent_token_ttl_hours)
-    db.add(MT5AgentToken(token_hash=_sha(token), label=body.label, created_by=user.id, expires_at=exp))
-    audit(db, user.id, "MT5_AGENT_TOKEN_CREATED", body.label, {"expires_at": exp.isoformat()}, client_ip(request))
+    from app.services.agent_tokens import issue
+    token, exp = issue(db, body.label, user.id, timedelta(hours=get_settings().agent_token_ttl_hours),
+                       client_ip(request))
     db.commit()
     return {"token": token, "expires_at": exp, "note": "Shown once. Enter it in the RR MT5 Connector setup."}
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mt5-detect"
+description = "Enables the mt5_detect command without any pre-configured scope."
+commands.allow = ["mt5_detect"]
+
+[[permission]]
+identifier = "deny-mt5-detect"
+description = "Denies the mt5_detect command without any pre-configured scope."
+commands.deny = ["mt5_detect"]

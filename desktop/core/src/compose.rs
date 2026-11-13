@@ -58,6 +58,12 @@ impl Compose {
         self.with(&["exec", "-T", "postgres", "pg_dump", "-U", "rr", "-d", "rr_trading", "--format=custom", "--no-owner"], &[])
     }
 
+    /// One-time MT5 connector registration token, issued inside the API container (10-minute lifetime).
+    /// `label` must already be validated (profile ids are `[a-z0-9-]{1,32}`).
+    pub fn issue_agent_token(&self, label: &str) -> Vec<String> {
+        self.with(&["exec", "-T", "api", "python", "-m", "app.services.agent_tokens", "--label", label, "--ttl-minutes", "10"], &[])
+    }
+
     pub fn ps(&self) -> Vec<String> {
         self.with(&["ps", "--all", "--format", "json"], &[])
     }
@@ -124,7 +130,7 @@ mod tests {
 
     fn all_argvs() -> Vec<Vec<String>> {
         let svc = Service::ALL;
-        vec![c().up(&svc), c().stop(&svc), c().migrate(), c().pg_dump(), c().ps(), c().version()]
+        vec![c().up(&svc), c().stop(&svc), c().migrate(), c().pg_dump(), c().ps(), c().version(), c().issue_agent_token("demo-1")]
     }
 
     #[test]

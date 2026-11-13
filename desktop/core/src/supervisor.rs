@@ -10,7 +10,7 @@
 //! * Migrations never run without a fresh, non-empty database backup.
 //! * Health is verified with real checks: Compose health status of every service started in the plan, plus the
 //!   engine's `/api/health` through the loopback gateway whenever the API is running.
-//! * The native MT5 connector is supervised from Phase 4; until then its steps are reported as skipped.
+//! * The native MT5 connector (a user-session process, never a container) is driven through [`NativeConnector`].
 
 use crate::actions::{Action, ActionError, Service, Step};
 use crate::compose::{self, Compose, ServiceStatus};
@@ -30,7 +30,14 @@ const T_QUICK: Duration = Duration::from_secs(30);
 const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const WARN_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 pub const KEEP_PRE_MIGRATION_BACKUPS: usize = 10;
-const NATIVE_CONNECTOR_NOTE: &str = "native MT5 connector supervision is delivered in Phase 4";
+const NO_CONNECTOR: &str = "MT5 connector is not available in this installation";
+
+/// The native MT5 connector, as seen by the supervisor (implemented by `connector::LocalConnector`).
+pub trait NativeConnector: Send + Sync {
+    fn start(&self) -> (Outcome, String);
+    fn stop(&self) -> (Outcome, String);
+    fn health(&self) -> (Outcome, String);
+}
 
 #[derive(Debug, Clone)]
 pub struct SupervisorConfig {
@@ -51,6 +58,7 @@ pub struct Supervisor<'a> {
     pub runner: &'a dyn Runner,
     pub secrets: &'a StackSecrets,
     pub probe: Probe,
+    pub connector: Option<&'a dyn NativeConnector>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -100,7 +108,7 @@ fn now_secs() -> u64 {
 
 impl<'a> Supervisor<'a> {
     fn compose(&self, args: Vec<String>, timeout: Duration, stdout_file: Option<PathBuf>) -> Result<CommandOutput, String> {
-        let spec = CommandSpec { program: self.cfg.compose.docker.clone(), args, env: self.secrets.compose_env(), timeout, stdout_file };
+        let spec = CommandSpec { program: self.cfg.compose.docker.clone(), args, env: self.secrets.compose_env(), timeout, stdout_file, stdin: None };
         self.runner.run(&spec).map_err(|e| format!("could not run docker: {e}"))
     }
 
@@ -111,6 +119,19 @@ impl<'a> Supervisor<'a> {
         } else {
             Err(self.secrets.redact(&out.failure_summary()))
         }
+    }
+
+    /// Issue a one-time MT5 connector registration token inside the API container. The token is returned to the
+    /// caller only; it is never logged or placed in a report.
+    pub fn issue_agent_token(&self, label: &str) -> Result<String, String> {
+        if label.is_empty() || label.len() > 32 || !label.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+            return Err("invalid label".into());
+        }
+        let out = self.run_ok(self.cfg.compose.issue_agent_token(label), T_QUICK)?;
+        let v: serde_json::Value = out.stdout.lines().rev().find_map(|l| serde_json::from_str(l.trim()).ok())
+            .ok_or("the engine did not return a token")?;
+        v.get("token").and_then(|t| t.as_str()).filter(|t| t.starts_with("rrmt5_")).map(String::from)
+            .ok_or_else(|| "the engine did not return a token".into())
     }
 
     /// Current container states.
@@ -143,7 +164,7 @@ impl<'a> Supervisor<'a> {
             });
         }
         if let Some(wsl) = &self.cfg.wsl {
-            let spec = CommandSpec { program: wsl.clone(), args: vec!["--status".into()], env: vec![], timeout: T_QUICK, stdout_file: None };
+            let spec = CommandSpec { program: wsl.clone(), args: vec!["--status".into()], env: vec![], timeout: T_QUICK, stdout_file: None, stdin: None };
             let ok = self.runner.run(&spec).map(|o| o.success()).unwrap_or(false);
             checks.push(Check { name: "wsl2", ok, detail: if ok { "WSL available".into() } else { "WSL2 is not installed or not enabled".into() } });
         }
@@ -200,6 +221,13 @@ impl<'a> Supervisor<'a> {
         }
     }
 
+    fn native(&self, f: impl FnOnce(&dyn NativeConnector) -> (Outcome, String)) -> (Outcome, String) {
+        match self.connector {
+            Some(c) => f(c),
+            None => (Outcome::Skipped, NO_CONNECTOR.into()),
+        }
+    }
+
     fn verify(&self, expected: &[Service]) -> (Outcome, String, Option<ProbeResult>) {
         let services = match self.status() {
             Ok(s) => s,
@@ -228,10 +256,18 @@ impl<'a> Supervisor<'a> {
                 problems.push(format!("engine health check: {}", p.detail));
             }
         }
+        let mut connector_note = String::new();
+        if expected.contains(&Service::Mt5Connector) {
+            let (o, d) = self.native(|c| c.health());
+            match o {
+                Outcome::Failed => problems.push(d),
+                _ => connector_note = format!("; {d}"),
+            }
+        }
         let running = services.iter().filter(|x| x.is_running()).count();
         if problems.is_empty() {
             let eng = engine.as_ref().map(|p| format!("; engine: {}", p.detail)).unwrap_or_else(|| "; engine API not running".into());
-            (Outcome::Ok, format!("{running} service(s) running and healthy{eng}"), engine)
+            (Outcome::Ok, format!("{running} service(s) running and healthy{eng}{connector_note}"), engine)
         } else {
             (Outcome::Failed, problems.join("; "), engine)
         }
@@ -250,30 +286,52 @@ impl<'a> Supervisor<'a> {
             }
             Step::StartServices { services } => {
                 let (cs, native) = split(services);
-                if cs.is_empty() {
-                    return (Outcome::Skipped, NATIVE_CONNECTOR_NOTE.into());
-                }
-                match self.run_ok(self.cfg.compose.up(&cs), T_UP) {
-                    Ok(_) => {
-                        expected.extend(cs.iter().copied());
-                        let names: Vec<_> = cs.iter().filter_map(|s| s.compose_name()).collect();
-                        (Outcome::Ok, format!("started {}{}", names.join(", "), if native { format!("; {NATIVE_CONNECTOR_NOTE}") } else { String::new() }))
+                let mut detail = String::new();
+                if !cs.is_empty() {
+                    if let Err(e) = self.run_ok(self.cfg.compose.up(&cs), T_UP) {
+                        return (Outcome::Failed, e);
                     }
-                    Err(e) => (Outcome::Failed, e),
+                    expected.extend(cs.iter().copied());
+                    detail = format!("started {}", cs.iter().filter_map(|s| s.compose_name()).collect::<Vec<_>>().join(", "));
+                }
+                if !native {
+                    return (Outcome::Ok, detail);
+                }
+                let (o, d) = self.native(|c| c.start());
+                if o == Outcome::Ok {
+                    expected.push(Service::Mt5Connector);
+                }
+                let joined = if detail.is_empty() { format!("MT5 connector: {d}") } else { format!("{detail}; MT5 connector: {d}") };
+                match (o, cs.is_empty()) {
+                    (Outcome::Failed, _) => (Outcome::Failed, joined),
+                    (Outcome::Skipped, true) => (Outcome::Skipped, joined),
+                    _ => (Outcome::Ok, joined),
                 }
             }
             Step::StopServices { services } => {
                 let (cs, native) = split(services);
-                if cs.is_empty() {
-                    // Never call `compose stop` without names: that would stop everything.
-                    return (Outcome::Skipped, NATIVE_CONNECTOR_NOTE.into());
+                expected.retain(|s| !services.contains(s));
+                let mut parts = Vec::new();
+                let mut failed = false;
+                // Never call `compose stop` without names: that would stop everything.
+                if !cs.is_empty() {
+                    match self.run_ok(self.cfg.compose.stop(&cs), T_STOP) {
+                        Ok(_) => parts.push(format!("stopped {}", cs.iter().filter_map(|s| s.compose_name()).collect::<Vec<_>>().join(", "))),
+                        Err(e) => {
+                            failed = true;
+                            parts.push(e);
+                        }
+                    }
                 }
-                expected.retain(|s| !cs.contains(s));
-                match self.run_ok(self.cfg.compose.stop(&cs), T_STOP) {
-                    Ok(_) => (Outcome::Ok, format!("stopped {}{}", cs.iter().filter_map(|s| s.compose_name()).collect::<Vec<_>>().join(", "),
-                        if native { format!("; {NATIVE_CONNECTOR_NOTE}") } else { String::new() })),
-                    Err(e) => (Outcome::Failed, e),
+                let mut skipped_only = cs.is_empty();
+                if native {
+                    let (o, d) = self.native(|c| c.stop());
+                    failed |= o == Outcome::Failed;
+                    skipped_only &= o == Outcome::Skipped;
+                    parts.push(format!("MT5 connector: {d}"));
                 }
+                let o = if failed { Outcome::Failed } else if skipped_only { Outcome::Skipped } else { Outcome::Ok };
+                (o, parts.join("; "))
             }
             Step::RunMigrations => {
                 let backup = match self.backup_before_migration() {
@@ -433,7 +491,7 @@ mod tests {
     }
 
     fn sup<'a>(e: &'a Env, r: &'a FakeRunner, probe: Probe) -> Supervisor<'a> {
-        Supervisor { cfg: e.cfg.clone(), runner: r, secrets: &e.secrets, probe }
+        Supervisor { cfg: e.cfg.clone(), runner: r, secrets: &e.secrets, probe, connector: None }
     }
 
     fn fake(script: Script) -> FakeRunner {
@@ -473,7 +531,7 @@ mod tests {
         assert!(!rep.ok);
         for c in r.calls.lock().unwrap().iter().filter(|c| c.args.first().map(|a| a == "compose").unwrap_or(false)) {
             assert!(c.args.iter().all(|a| !e.secrets.values().iter().any(|v| a.contains(v))), "secret in argv");
-            assert_eq!(c.env.len(), 5);
+            assert_eq!(c.env.len(), 6);
         }
         let json = serde_json::to_string(&rep).unwrap();
         assert!(!json.contains(&pw) && json.contains("rr:***"));
@@ -560,6 +618,87 @@ mod tests {
         let rep = sup(&e, &r, unreachable_probe()).execute(Action::SystemHealth, None).unwrap();
         assert!(!rep.ok);
         assert!(rep.steps[0].detail.contains("engine health check"));
+    }
+
+    struct FakeNative {
+        log: Mutex<Vec<String>>,
+        start: Outcome,
+        healthy: bool,
+    }
+
+    impl NativeConnector for FakeNative {
+        fn start(&self) -> (Outcome, String) {
+            self.log.lock().unwrap().push("native-start".into());
+            (self.start, format!("{:?}", self.start))
+        }
+        fn stop(&self) -> (Outcome, String) {
+            self.log.lock().unwrap().push("native-stop".into());
+            (Outcome::Ok, "stopped".into())
+        }
+        fn health(&self) -> (Outcome, String) {
+            if self.healthy { (Outcome::Ok, "MT5 connector running (CONNECTED)".into()) } else { (Outcome::Failed, "MT5 connector not running".into()) }
+        }
+    }
+
+    fn native(start: Outcome, healthy: bool) -> FakeNative {
+        FakeNative { log: Mutex::new(vec![]), start, healthy }
+    }
+
+    #[test]
+    fn start_all_starts_the_native_connector_and_verifies_it() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let n = native(Outcome::Ok, true);
+        let mut s = sup(&e, &r, healthy_probe());
+        s.connector = Some(&n);
+        let rep = s.execute(Action::StartAll, None).unwrap();
+        assert!(rep.ok, "{rep:#?}");
+        assert!(rep.steps.last().unwrap().detail.contains("MT5 connector running"));
+        let n2 = native(Outcome::Ok, false);
+        s.connector = Some(&n2);
+        let rep = s.execute(Action::StartAll, None).unwrap();
+        assert!(!rep.ok, "a connector that is not running fails verification");
+    }
+
+    #[test]
+    fn connector_start_failure_fails_the_step_and_no_profile_is_skipped() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let failing = native(Outcome::Failed, false);
+        let mut s = sup(&e, &r, healthy_probe());
+        s.connector = Some(&failing);
+        let rep = s.execute(Action::StartMt5Connector, None).unwrap();
+        assert!(!rep.ok && rep.steps[0].outcome == Outcome::Failed);
+        let none = native(Outcome::Skipped, false);
+        s.connector = Some(&none);
+        let rep = s.execute(Action::StartMt5Connector, None).unwrap();
+        assert_eq!(rep.steps[0].outcome, Outcome::Skipped);
+    }
+
+    #[test]
+    fn stopping_the_connector_stops_the_trading_worker_first() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let n = native(Outcome::Ok, true);
+        let mut s = sup(&e, &r, healthy_probe());
+        s.connector = Some(&n);
+        let rep = s.execute(Action::StopMt5Connector, None).unwrap();
+        assert!(rep.ok, "{rep:#?}");
+        let stops: Vec<String> = compose_cmds(&r).into_iter().filter(|c| c[0] == "stop").map(|c| c.join(" ")).collect();
+        assert_eq!(stops, vec!["stop -t 30 trading-worker"]);
+        assert_eq!(*n.log.lock().unwrap(), vec!["native-stop"]);
+        assert!(rep.steps[0].detail.find("trading-worker").unwrap() < rep.steps[0].detail.find("MT5 connector").unwrap());
+    }
+
+    #[test]
+    fn agent_token_is_parsed_and_label_validated() {
+        let e = env();
+        let r = fake(Box::new(|s: &CommandSpec| if has(s, "app.services.agent_tokens") { ok("{\"token\": \"rrmt5_abc\", \"expires_at\": \"x\"}") } else { ok("") }));
+        let s = sup(&e, &r, healthy_probe());
+        assert_eq!(s.issue_agent_token("demo-1").unwrap(), "rrmt5_abc");
+        assert!(s.issue_agent_token("demo 1; rm").is_err());
+        let call = r.calls.lock().unwrap().iter().find(|c| has(c, "app.services.agent_tokens")).unwrap().args.clone();
+        assert_eq!(&call[5..], &["exec", "-T", "api", "python", "-m", "app.services.agent_tokens", "--label", "demo-1", "--ttl-minutes", "10"]);
     }
 
     #[test]

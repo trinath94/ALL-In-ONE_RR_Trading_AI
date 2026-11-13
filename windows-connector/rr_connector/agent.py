@@ -127,6 +127,12 @@ def register(store: Store, vault: Vault, identity: Identity, engine_url: str, to
     d = r.json()
     vault.set("api-key", d["api_key"])
     vault.set("bridge-secret", d["bridge_secret"])
+    # Read-only credential (RR Trading One): engine processes that must never trade sign with this one, and the
+    # original connector refuses it for executions. Older engines do not issue one; a stale one is removed.
+    if d.get("bridge_readonly_secret"):
+        vault.set("bridge-readonly-secret", d["bridge_readonly_secret"])
+    else:
+        vault.delete("bridge-readonly-secret")
     store.update(engine_url=engine_url, agent_id=int(d["agent_id"]), agent_name=d.get("name", ""))
     store.event("info", "audit", f"Registered with RR AI Engine {engine_url} as agent {d['agent_id']}")
     return d

@@ -170,7 +170,8 @@ class ConnectorManager:
             self.app = None
             return
         cfg = ConnectorConfig(shared_secret=secret, login=int(att.account["login"]), server=att.account["server"],
-                              journal_path=str(self.journal.path) if hasattr(self.journal, "path") else "")
+                              journal_path=str(self.journal.path) if hasattr(self.journal, "path") else "",
+                              readonly_secret=self.vault.get("bridge-readonly-secret") or None)
         app = create_app(cfg, self.adapter, self.journal, connect=False)
         svc = app.state.svc
         original = svc.execute

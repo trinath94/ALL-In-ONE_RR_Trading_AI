@@ -6,6 +6,7 @@
   <title>RR Trading One</title>
   <link rel="stylesheet" href="style.css">
   <script src="app.js" defer></script>
+  <script src="mt5.js" defer></script>
 </head>
 <body>
   <header class="top">
@@ -30,6 +31,30 @@
       <table class="tbl"><thead><tr><th>Check</th><th>State</th><th>Detail</th><th>Latency</th></tr></thead>
         <tbody id="health"><tr><td colspan="4" class="muted">Not checked yet</td></tr></tbody></table>
       <div class="row end"><button id="btn-console" type="button" class="primary">Open Trading Console</button></div>
+    </section>
+
+    <section class="card" aria-labelledby="h-mt5">
+      <div class="row"><h2 id="h-mt5">MT5 Manager</h2>
+        <div class="btns"><button id="mt5-detect" type="button">Detect terminals</button>
+          <button id="mt5-link" type="button">Link connector</button>
+          <button id="mt5-start" type="button" class="primary">Start connector</button>
+          <button id="mt5-stop" type="button">Stop connector</button></div></div>
+      <p class="muted" id="mt5-note">The connector runs natively in your Windows session and attaches only to the terminal and
+        account of the selected profile. It never asks for or stores your trading password.</p>
+      <dl class="kv" id="mt5-status"></dl>
+      <h3>Profiles</h3>
+      <table class="tbl"><thead><tr><th></th><th>Name</th><th>Server</th><th>Account</th><th>Terminal</th><th></th></tr></thead>
+        <tbody id="mt5-profiles"></tbody></table>
+      <form id="mt5-form" class="form" autocomplete="off">
+        <label>Name <input id="f-name" maxlength="64" required></label>
+        <label>Terminal (terminal64.exe) <input id="f-exe" list="f-exes" maxlength="512" required>
+          <datalist id="f-exes"></datalist></label>
+        <label>Broker server <input id="f-server" maxlength="128" placeholder="e.g. MetaQuotes-Demo" required></label>
+        <label>Account number <input id="f-login" inputmode="numeric" pattern="[0-9]{1,20}" required></label>
+        <label>Port <input id="f-port" inputmode="numeric" value="443" pattern="[0-9]{1,5}"></label>
+        <div class="row end"><button type="submit">Save profile</button></div>
+      </form>
+      <pre class="plan" id="mt5-out" aria-live="polite"></pre>
     </section>
 
     <section class="card" aria-labelledby="h-services">

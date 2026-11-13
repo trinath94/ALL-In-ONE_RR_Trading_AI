@@ -21,6 +21,8 @@ pub struct CommandSpec {
     pub timeout: Duration,
     /// When set, stdout is streamed to this file instead of being captured (used for database dumps).
     pub stdout_file: Option<PathBuf>,
+    /// Data written to the child's stdin (e.g. a one-time token that must not appear in argv). Never logged.
+    pub stdin: Option<String>,
 }
 
 impl fmt::Debug for CommandSpec {
@@ -31,6 +33,7 @@ impl fmt::Debug for CommandSpec {
             .field("env", &self.env.iter().map(|(k, _)| format!("{k}=***")).collect::<Vec<_>>())
             .field("timeout", &self.timeout)
             .field("stdout_file", &self.stdout_file)
+            .field("stdin", &self.stdin.as_ref().map(|_| "***"))
             .finish()
     }
 }
@@ -100,7 +103,8 @@ impl Runner for SystemRunner {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "program path must be absolute"));
         }
         let mut cmd = Command::new(&spec.program);
-        cmd.args(&spec.args).stdin(Stdio::null()).stderr(Stdio::piped());
+        cmd.args(&spec.args).stderr(Stdio::piped());
+        cmd.stdin(if spec.stdin.is_some() { Stdio::piped() } else { Stdio::null() });
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
@@ -119,6 +123,12 @@ impl Runner for SystemRunner {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
         let mut child = cmd.spawn()?;
+        if let (Some(data), Some(mut sin)) = (spec.stdin.clone(), child.stdin.take()) {
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let _ = sin.write_all(data.as_bytes()); // dropped afterwards: the child sees EOF
+            });
+        }
         let out_h = child.stdout.take().map(reader);
         let err_h = child.stderr.take().map(reader);
         let start = Instant::now();
@@ -162,6 +172,7 @@ mod tests {
             env: vec![],
             timeout: Duration::from_secs(5),
             stdout_file: None,
+            stdin: None,
         }
     }
 
@@ -203,6 +214,15 @@ mod tests {
         let out = SystemRunner.run(&spec("/bin/sh", &["-c", "echo boom >&2; exit 3"])).unwrap();
         assert_eq!(out.code, Some(3));
         assert_eq!(out.failure_summary(), "exit 3: boom");
+    }
+
+    #[test]
+    fn stdin_reaches_child_and_is_redacted_in_debug() {
+        let mut s = spec("/bin/cat", &[]);
+        s.stdin = Some("one-time-token-123\n".into());
+        let out = SystemRunner.run(&s).unwrap();
+        assert_eq!(out.stdout, "one-time-token-123\n");
+        assert!(!format!("{s:?}").contains("one-time-token-123"));
     }
 
     #[test]

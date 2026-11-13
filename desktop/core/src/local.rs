@@ -1,6 +1,7 @@
 //! Assemble the supervisor for LOCAL WINDOWS MODE on this machine.
 
 use crate::compose::Compose;
+use crate::connector::{self, ConnectorSetup, Profiles};
 use crate::paths::AppPaths;
 use crate::runner::{which, CommandSpec, Runner};
 use crate::secrets::{self, StackSecrets};
@@ -61,7 +62,7 @@ pub fn restrict_secrets_dir(runner: &dyn Runner, dir: &Path) -> Result<(), Strin
         return Err("unexpected account name".into());
     }
     let spec = CommandSpec { program: system32("icacls.exe"), args: icacls_restrict_args(dir, &account), env: vec![],
-        timeout: Duration::from_secs(30), stdout_file: None };
+        timeout: Duration::from_secs(30), stdout_file: None, stdin: None };
     let out = runner.run(&spec).map_err(|e| e.to_string())?;
     if out.success() { Ok(()) } else { Err(format!("icacls failed: {}", out.failure_summary())) }
 }
@@ -71,6 +72,22 @@ pub struct LocalSetup {
     pub config: SupervisorConfig,
     pub secrets: StackSecrets,
     pub secrets_created: bool,
+    /// None when no connector build is found next to the application.
+    pub connector: Option<ConnectorSetup>,
+}
+
+/// MT5 profiles file in the per-user settings folder.
+pub fn profiles_file(paths: &AppPaths) -> PathBuf {
+    paths.settings_dir.join(connector::PROFILES_FILE)
+}
+
+pub fn connector_setup(paths: &AppPaths, settings: &Settings) -> Result<Option<ConnectorSetup>, String> {
+    let env = |k: &str| std::env::var(k).ok();
+    let Some(launch) = connector::find_launch(&paths.install_dir, env) else { return Ok(None) };
+    let home = connector::connector_home(paths.windows_layout, env).ok_or("cannot locate the user's local app-data folder")?;
+    let profiles = Profiles::load(&profiles_file(paths))?;
+    let engine_url = settings.endpoint().map_err(|e| e.to_string())?.base_url;
+    Ok(Some(ConnectorSetup { launch, home, engine_url, profile: profiles.active_profile().cloned() }))
 }
 
 pub fn prepare(paths: &AppPaths, settings: &Settings, runner: &dyn Runner) -> Result<LocalSetup, String> {
@@ -97,6 +114,7 @@ pub fn prepare(paths: &AppPaths, settings: &Settings, runner: &dyn Runner) -> Re
         },
         secrets,
         secrets_created: created,
+        connector: connector_setup(paths, settings)?,
     })
 }
 

@@ -113,8 +113,9 @@ def current_agent_id() -> int | None:
     if get_settings().bridge_mode != "relay":
         return None
     from app.execution import relay
-    agent = relay.resolve_agent()
-    return agent.id if agent else None
+    with session_scope() as db:      # id only: never decrypts a secret (read-scoped roles lack the trading key)
+        agent = relay.select_agent(db)
+        return agent.id if agent else None
 
 
 def _noop_execute(_signal_id: int) -> None:

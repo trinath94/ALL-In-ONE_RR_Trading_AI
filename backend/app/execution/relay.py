@@ -115,9 +115,21 @@ def select_agent(db):
     return (online or agents)[0]
 
 
-def resolve_agent() -> ResolvedAgent | None:
-    from app.core.security import decrypt_secret
+class ReadCredentialMissing(Exception):
+    """The selected agent has no read-only credential (registered before it existed): re-register it."""
+
+
+def resolve_agent(scope: str = "full") -> ResolvedAgent | None:
+    """The agent to talk to and the secret to sign with. ``scope="read"`` uses only the read-only secret and never
+    touches the trading secret (fails closed if the agent has none)."""
+    from app.core.security import decrypt_read_secret, decrypt_secret
     from app.db.session import session_scope
     with session_scope() as db:
         a = select_agent(db)
-        return ResolvedAgent(a.id, decrypt_secret(a.bridge_secret_enc)) if a else None
+        if a is None:
+            return None
+        if scope == "read":
+            if not a.bridge_readonly_secret_enc:
+                raise ReadCredentialMissing(f"agent {a.id} has no read-only credential; register the connector again")
+            return ResolvedAgent(a.id, decrypt_read_secret(a.bridge_readonly_secret_enc))
+        return ResolvedAgent(a.id, decrypt_secret(a.bridge_secret_enc))

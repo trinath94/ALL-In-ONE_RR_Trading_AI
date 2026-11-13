@@ -45,16 +45,26 @@ class BridgeConfig:
     ca_bundle: str | None = None
     timeout: float = 10.0
     relay_agent_id: int | None = None   # set in relay mode (RR MT5 Connector desktop agent)
+    read_only: bool = False             # RR Trading One: this process may never execute (see Settings.bridge_scope)
 
     @classmethod
     def from_settings(cls) -> "BridgeConfig":
         s = get_settings()
+        if s.bridge_scope not in ("full", "read"):
+            raise BridgeError(f"invalid RR_BRIDGE_SCOPE {s.bridge_scope!r}")
+        read = s.bridge_scope == "read"
         if s.bridge_mode == "relay":
             from app.execution import relay
-            agent = relay.resolve_agent()
+            try:
+                agent = relay.resolve_agent("read" if read else "full")
+            except relay.ReadCredentialMissing as exc:
+                raise BridgeError(str(exc)) from exc
             if agent is None:
                 raise BridgeError("no RR MT5 Connector agent is registered (RR_BRIDGE_MODE=relay)")
-            return cls("http://rr-mt5-agent", agent.secret, None, s.bridge_timeout_seconds, relay_agent_id=agent.id)
+            return cls("http://rr-mt5-agent", agent.secret, None, s.bridge_timeout_seconds, relay_agent_id=agent.id,
+                       read_only=read)
+        if read:   # the direct-mode connector has a single shared secret: refuse rather than hand out trading rights
+            raise BridgeError("RR_BRIDGE_SCOPE=read requires RR_BRIDGE_MODE=relay")
         return cls(s.bridge_url.rstrip("/"), s.bridge_shared_secret, s.bridge_ca_bundle, s.bridge_timeout_seconds)
 
 
@@ -140,6 +150,8 @@ class BridgeClient:
 
     # --- writes (idempotent via execution_id) ----------------------------------------------
     def submit(self, command: dict) -> dict:
+        if self.cfg.read_only:
+            raise BridgeError("read-only bridge credential: this process is not permitted to execute")
         if not command.get("execution_id"):
             raise BridgeError("execution_id is required for every trading command")
         return self._request("POST", "/executions", command, retries=2)

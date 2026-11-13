@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mt5-link"
+description = "Enables the mt5_link command without any pre-configured scope."
+commands.allow = ["mt5_link"]
+
+[[permission]]
+identifier = "deny-mt5-link"
+description = "Denies the mt5_link command without any pre-configured scope."
+commands.deny = ["mt5_link"]

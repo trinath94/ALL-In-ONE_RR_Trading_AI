@@ -10,6 +10,12 @@
     "allow-plan-action",
     "allow-run-action",
     "allow-service-status",
-    "allow-open-console"
+    "allow-open-console",
+    "allow-mt5-overview",
+    "allow-mt5-detect",
+    "allow-mt5-save-profile",
+    "allow-mt5-select-profile",
+    "allow-mt5-delete-profile",
+    "allow-mt5-link"
   ]
 }

@@ -36,6 +36,8 @@ class MT5Agent(Base):
     public_key: Mapped[str] = mapped_column(String(128))              # Ed25519, base64 (raw 32 bytes)
     api_key_hash: Mapped[str] = mapped_column(String(64))             # SHA-256 of the agent API key
     bridge_secret_enc: Mapped[str] = mapped_column(Text)              # Fernet(RR_ENCRYPTION_KEY) — per-agent HMAC secret
+    # Fernet(RR_BRIDGE_READ_KEY) — read-only HMAC secret (migration 0004); None when not issued
+    bridge_readonly_secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     app_version: Mapped[str] = mapped_column(String(32), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

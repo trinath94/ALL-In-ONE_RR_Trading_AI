@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mt5-select-profile"
+description = "Enables the mt5_select_profile command without any pre-configured scope."
+commands.allow = ["mt5_select_profile"]
+
+[[permission]]
+identifier = "deny-mt5-select-profile"
+description = "Denies the mt5_select_profile command without any pre-configured scope."
+commands.deny = ["mt5_select_profile"]

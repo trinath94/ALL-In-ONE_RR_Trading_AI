@@ -22,18 +22,21 @@ def _default_backend() -> KeyringBackend | None:
 
 
 class Vault:
-    def __init__(self, backend=None):
+    def __init__(self, backend=None, service: str = SERVICE):
         self.backend = backend or _default_backend() or keyring.get_keyring()
+        # A separate service name isolates another connector instance (RR Trading One's local connector) from
+        # this one, so neither can overwrite the other's registration.
+        self.service = service
 
     def get(self, name: str) -> str | None:
-        return self.backend.get_password(SERVICE, name)
+        return self.backend.get_password(self.service, name)
 
     def set(self, name: str, value: str) -> None:
-        self.backend.set_password(SERVICE, name, value)
+        self.backend.set_password(self.service, name, value)
 
     def delete(self, name: str) -> None:
         try:
-            self.backend.delete_password(SERVICE, name)
+            self.backend.delete_password(self.service, name)
         except Exception:  # noqa: BLE001 - absent entry
             pass
 

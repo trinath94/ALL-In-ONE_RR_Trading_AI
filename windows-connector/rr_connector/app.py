@@ -67,7 +67,7 @@ def parse(argv):
 def forget() -> int:
     import shutil
     vault = Vault()
-    for name in ("api-key", "bridge-secret", "device-key", "config-key"):
+    for name in ("api-key", "bridge-secret", "bridge-readonly-secret", "device-key", "config-key"):
         vault.delete(name)
     startup.set_enabled(False)
     shutil.rmtree(paths.data_dir(), ignore_errors=True)
@@ -122,7 +122,11 @@ def selftest(report_file: str) -> int:
 
 
 def main(argv=None) -> int:
-    args = parse(sys.argv[1:] if argv is None else argv)
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ("--headless", "--register-stdin", "--detect-json"):
+        from rr_connector import headless   # RR Trading One: no UI, supervised by the desktop app
+        return headless.main(argv)
+    args = parse(argv)
     if args.version:
         print(__version__)
         return 0

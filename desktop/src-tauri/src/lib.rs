@@ -11,12 +11,13 @@
 
 use rr_one_core::actions::{Action, Service, START_WORKER_PHRASE};
 use rr_one_core::compose::ServiceStatus;
+use rr_one_core::connector::{self as conn, ConnectorStatus, LocalConnector, Mt5Profile, Profiles};
 use rr_one_core::health::{self, HealthState, ProbeResult};
 use rr_one_core::local;
 use rr_one_core::paths::AppPaths;
 use rr_one_core::runner::SystemRunner;
 use rr_one_core::settings::{OperatingMode, Settings};
-use rr_one_core::supervisor::{PlanReport, Supervisor};
+use rr_one_core::supervisor::{NativeConnector, PlanReport, Supervisor};
 use rr_one_core::{INITIAL_SAFETY_STATE, VERSION};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -131,7 +132,7 @@ fn supervisor_unavailable(state: &AppState) -> Option<String> {
 /// Run `f` with a supervisor for this machine, on a blocking thread, one action at a time.
 async fn with_supervisor<T: Send + 'static>(
     state: &AppState,
-    f: impl FnOnce(&Supervisor<'_>) -> Result<T, String> + Send + 'static,
+    f: impl FnOnce(&Supervisor<'_>, Option<&LocalConnector<'_>>) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let paths = state.paths.clone()?;
     let settings = state.settings.lock().map_err(|_| "settings lock poisoned")?.clone();
@@ -141,13 +142,15 @@ async fn with_supervisor<T: Send + 'static>(
     let res = tauri::async_runtime::spawn_blocking(move || {
         let runner = SystemRunner;
         let setup = local::prepare(&paths, &settings, &runner)?;
+        let native = setup.connector.as_ref().map(|c| LocalConnector { ctl: c.ctl(&runner), profile: c.profile.clone() });
         let sup = Supervisor {
             cfg: setup.config,
             runner: &runner,
             secrets: &setup.secrets,
             probe: Box::new(|port| health::probe_engine(port, PROBE_TIMEOUT)),
+            connector: native.as_ref().map(|n| n as &dyn NativeConnector),
         };
-        f(&sup)
+        f(&sup, native.as_ref())
     })
     .await
     .map_err(|e| e.to_string());
@@ -160,13 +163,97 @@ async fn with_supervisor<T: Send + 'static>(
 async fn run_action(state: State<'_, AppState>, action: String, confirmation: Option<String>) -> Result<PlanReport, String> {
     let a = Action::parse(&action).map_err(|e| e.to_string())?;
     a.plan(confirmation.as_deref()).map_err(|e| e.to_string())?;
-    with_supervisor(&state, move |sup| sup.execute(a, confirmation.as_deref()).map_err(|e| e.to_string())).await
+    with_supervisor(&state, move |sup, _| sup.execute(a, confirmation.as_deref()).map_err(|e| e.to_string())).await
 }
 
 /// Live container states for the Services table.
 #[tauri::command]
 async fn service_status(state: State<'_, AppState>) -> Result<Vec<ServiceStatus>, String> {
-    with_supervisor(&state, |sup| sup.status()).await
+    with_supervisor(&state, |sup, _| sup.status()).await
+}
+
+// ---- MT5 Manager ------------------------------------------------------------------------------------------------
+#[derive(Serialize)]
+struct Mt5Overview {
+    available: bool,
+    unavailable_reason: Option<String>,
+    profiles: Vec<Mt5Profile>,
+    active: Option<String>,
+    status: Option<ConnectorStatus>,
+}
+
+fn profiles_path(state: &AppState) -> Result<std::path::PathBuf, String> {
+    Ok(local::profiles_file(state.paths.as_ref().map_err(|e| e.clone())?))
+}
+
+fn connector_setup(state: &AppState) -> Result<Option<conn::ConnectorSetup>, String> {
+    let paths = state.paths.clone()?;
+    let settings = state.settings.lock().map_err(|_| "settings lock poisoned")?.clone();
+    local::connector_setup(&paths, &settings)
+}
+
+#[tauri::command]
+fn mt5_overview(state: State<'_, AppState>) -> Result<Mt5Overview, String> {
+    let profiles = Profiles::load(&profiles_path(&state)?)?;
+    let setup = connector_setup(&state)?;
+    Ok(Mt5Overview {
+        available: setup.is_some(),
+        unavailable_reason: setup.is_none().then(|| "the RR MT5 Connector build was not found next to the application".into()),
+        active: profiles.active.clone(),
+        profiles: profiles.profiles,
+        status: setup.map(|s| conn::read_status(&s.home)),
+    })
+}
+
+/// Installed MetaTrader 5 terminals (to choose from; never chosen automatically).
+#[tauri::command]
+async fn mt5_detect(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let setup = connector_setup(&state)?.ok_or("the RR MT5 Connector build was not found")?;
+    tauri::async_runtime::spawn_blocking(move || setup.ctl(&SystemRunner).detect()).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn mt5_save_profile(state: State<'_, AppState>, profile: Mt5Profile) -> Result<(), String> {
+    let path = profiles_path(&state)?;
+    let mut p = Profiles::load(&path)?;
+    p.upsert(profile)?;
+    p.save(&path)
+}
+
+#[tauri::command]
+fn mt5_select_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
+    let path = profiles_path(&state)?;
+    let mut p = Profiles::load(&path)?;
+    p.select(&profile_id)?;
+    p.save(&path)
+}
+
+#[tauri::command]
+fn mt5_delete_profile(state: State<'_, AppState>, profile_id: String) -> Result<(), String> {
+    if let Some(s) = connector_setup(&state)? {
+        let st = conn::read_status(&s.home);
+        let runs_it = st.doc.as_ref().and_then(|d| d.pointer("/profile/id")).and_then(|v| v.as_str()) == Some(profile_id.as_str());
+        if st.running && runs_it {
+            return Err("stop the MT5 connector before deleting the profile it is using".into());
+        }
+    }
+    let path = profiles_path(&state)?;
+    let mut p = Profiles::load(&path)?;
+    p.remove(&profile_id);
+    p.save(&path)
+}
+
+/// Link the connector to the local engine: a one-time token is issued inside the API container and handed to the
+/// connector on stdin. Requires the engine to be running and a profile to be selected.
+#[tauri::command]
+async fn mt5_link(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    with_supervisor(&state, |sup, native| {
+        let n = native.ok_or("the RR MT5 Connector build was not found")?;
+        let p = n.profile.as_ref().ok_or("select an MT5 profile first")?;
+        let token = sup.issue_agent_token(&p.profile_id)?;
+        n.ctl.register(&token)
+    })
+    .await
 }
 
 /// Open the existing engine web interface. Only when the engine passes its real health check.
@@ -272,7 +359,8 @@ pub fn run() {
         // One supervisor per user session; a second launch focuses the existing window.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .manage(state)
-        .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console])
+        .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console,
+            mt5_overview, mt5_detect, mt5_save_profile, mt5_select_profile, mt5_delete_profile, mt5_link])
         .setup(move |app| {
             build_tray(app.handle())?;
             if !start_minimized {

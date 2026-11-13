@@ -9,7 +9,8 @@ use rr_one_core::local;
 use rr_one_core::paths::AppPaths;
 use rr_one_core::runner::SystemRunner;
 use rr_one_core::settings::Settings;
-use rr_one_core::supervisor::Supervisor;
+use rr_one_core::connector::LocalConnector;
+use rr_one_core::supervisor::{NativeConnector, Supervisor};
 use std::time::Duration;
 
 fn main() {
@@ -25,11 +26,13 @@ fn main() {
     if setup.secrets_created {
         eprintln!("created stack secrets in {}", paths.secrets_dir().display());
     }
+    let native = setup.connector.as_ref().map(|c| LocalConnector { ctl: c.ctl(&runner), profile: c.profile.clone() });
     let sup = Supervisor {
         cfg: setup.config,
         runner: &runner,
         secrets: &setup.secrets,
         probe: Box::new(|port| health::probe_engine(port, Duration::from_secs(3))),
+        connector: native.as_ref().map(|n| n as &dyn NativeConnector),
     };
     let out = match cmd.as_str() {
         "prereqs" => serde_json::to_value(sup.prerequisites()).unwrap(),

@@ -28,6 +28,8 @@ x-backend: &backend
     RR_JWT_SECRET: ${RR_ONE_JWT_SECRET:?missing}
     RR_ENCRYPTION_KEY: ${RR_ONE_ENCRYPTION_KEY:?missing}
     RR_BRIDGE_SHARED_SECRET: ${RR_ONE_BRIDGE_SECRET:?missing}
+    # Fernet key for read-only bridge credentials (Phase 1 gap 7.4); see x-read-scope below.
+    RR_BRIDGE_READ_KEY: ${RR_ONE_BRIDGE_READ_KEY:?missing}
     # The MT5 connector dials out to the local gateway (decision D4); no inbound port on Windows.
     RR_BRIDGE_MODE: relay
     # Loopback-only HTTP gateway: the browser never leaves 127.0.0.1, so Secure cookies are not required.
@@ -36,6 +38,13 @@ x-backend: &backend
     RR_ANTHROPIC_API_KEY: ${RR_ONE_ANTHROPIC_API_KEY:-}
   depends_on:
     migrate: {condition: service_completed_successfully}
+
+# Services that must never trade: they sign MT5 requests with the read-only credential, which the connector on
+# the PC refuses for executions, and they do not get RR_ENCRYPTION_KEY, so they cannot decrypt the trading secret.
+x-read-scope: &read-scope
+  <<: *backend-env
+  RR_BRIDGE_SCOPE: read
+  RR_ENCRYPTION_KEY: ""
 
 x-role-health: &role-health
   # A role is healthy while it holds its Redis lock (refreshed every cycle, 120 s TTL).
@@ -125,6 +134,7 @@ services:
   analysis:
     <<: *backend
     command: ["python", "-m", "app.workers.roles", "analysis"]
+    environment: *read-scope
     hostname: rr-analysis-role       # stable lock owner across container re-creation (upgrades)
     restart: unless-stopped
     stop_grace_period: 30s
@@ -139,6 +149,7 @@ services:
     <<: *backend
     # Original scheduler, wrapped only to clear a lock this same container left behind (see entry.py).
     command: ["python", "-m", "app.learning_engine.entry"]
+    environment: *read-scope
     hostname: rr-learner
     restart: unless-stopped
     stop_grace_period: 30s

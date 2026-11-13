@@ -1,5 +1,5 @@
-//! Local stack secrets: PostgreSQL and Redis passwords, the engine's JWT secret, its Fernet encryption key and
-//! the bridge secret.
+//! Local stack secrets: PostgreSQL and Redis passwords, the engine's JWT secret, its Fernet encryption key, the
+//! bridge secret and (format 2) the Fernet key for read-only bridge credentials.
 //!
 //! * Generated once from the OS CSPRNG.
 //! * Stored in `ProgramData\RR Trading One\secrets\stack.secrets`, encrypted with Windows DPAPI (current-user
@@ -16,7 +16,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub const FILE_NAME: &str = "stack.secrets";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,6 +28,10 @@ pub struct StackSecrets {
     /// Fernet key (url-safe base64 of 32 bytes). Losing it makes stored broker credentials unrecoverable.
     encryption_key: String,
     bridge_secret: String,
+    /// Fernet key protecting read-only bridge credentials (format 2). Given to the API and the read-scoped
+    /// services (analysis, learner), which do not receive `encryption_key`.
+    #[serde(default)]
+    bridge_read_key: String,
 }
 
 impl fmt::Debug for StackSecrets {
@@ -74,6 +78,10 @@ fn random_alnum(len: usize) -> Result<String, SecretsError> {
     Ok(out)
 }
 
+fn fernet_key() -> Result<String, SecretsError> {
+    Ok(base64::engine::general_purpose::URL_SAFE.encode(random_bytes(32)?))
+}
+
 impl StackSecrets {
     pub fn generate() -> Result<Self, SecretsError> {
         Ok(StackSecrets {
@@ -81,8 +89,9 @@ impl StackSecrets {
             db_password: random_alnum(32)?,
             redis_password: random_alnum(32)?,
             jwt_secret: random_alnum(64)?,
-            encryption_key: base64::engine::general_purpose::URL_SAFE.encode(random_bytes(32)?),
+            encryption_key: fernet_key()?,
             bridge_secret: random_alnum(48)?,
+            bridge_read_key: fernet_key()?,
         })
     }
 
@@ -94,12 +103,14 @@ impl StackSecrets {
             ("RR_ONE_JWT_SECRET".into(), self.jwt_secret.clone()),
             ("RR_ONE_ENCRYPTION_KEY".into(), self.encryption_key.clone()),
             ("RR_ONE_BRIDGE_SECRET".into(), self.bridge_secret.clone()),
+            ("RR_ONE_BRIDGE_READ_KEY".into(), self.bridge_read_key.clone()),
         ]
     }
 
     /// Every secret value, for redacting text that might echo one (e.g. tool error output).
-    pub fn values(&self) -> [&str; 5] {
-        [&self.db_password, &self.redis_password, &self.jwt_secret, &self.encryption_key, &self.bridge_secret]
+    pub fn values(&self) -> [&str; 6] {
+        [&self.db_password, &self.redis_password, &self.jwt_secret, &self.encryption_key, &self.bridge_secret,
+            &self.bridge_read_key]
     }
 
     pub fn redact(&self, text: &str) -> String {
@@ -198,7 +209,15 @@ pub fn load_or_create(dir: &Path, protector: &dyn Protector) -> Result<(StackSec
     match std::fs::read(&path) {
         Ok(sealed) => {
             let plain = protector.unprotect(&sealed).map_err(SecretsError::Undecryptable)?;
-            let s: StackSecrets = serde_json::from_slice(&plain).map_err(|e| SecretsError::Corrupt(e.to_string()))?;
+            let mut s: StackSecrets = serde_json::from_slice(&plain).map_err(|e| SecretsError::Corrupt(e.to_string()))?;
+            if s.version == 1 && s.bridge_read_key.is_empty() {
+                // Format 1 -> 2: add the read-credential key. Every existing value is kept unchanged.
+                s.bridge_read_key = fernet_key()?;
+                s.version = FORMAT_VERSION;
+                let sealed = protector.protect(&serde_json::to_vec(&s).expect("serialise secrets"))
+                    .map_err(SecretsError::Undecryptable)?;
+                replace_private(&path, &sealed)?;
+            }
             if s.version != FORMAT_VERSION || s.values().iter().any(|v| v.len() < 16) {
                 return Err(SecretsError::Corrupt("unexpected format".into()));
             }
@@ -224,6 +243,14 @@ fn create_private_dir(dir: &Path) -> std::io::Result<()> {
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
+}
+
+/// Atomically replace an existing secrets file (format upgrade only): write a private temporary file, then rename.
+fn replace_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("secrets.upgrade");
+    let _ = std::fs::remove_file(&tmp);
+    write_private_new(&tmp, data)?;
+    std::fs::rename(&tmp, path)
 }
 
 /// Create the file exclusively (never overwrite) with owner-only permissions where the OS supports it.
@@ -321,6 +348,26 @@ mod tests {
         std::fs::write(secrets_file(&dir), b"{\"version\":1}").unwrap();
         assert!(matches!(load_or_create(&dir, &PlainFileProtector), Err(SecretsError::Corrupt(_))));
         assert_eq!(std::fs::read(secrets_file(&dir)).unwrap(), b"{\"version\":1}");
+    }
+
+    #[test]
+    fn format_1_file_is_upgraded_keeping_every_existing_value() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("secrets");
+        std::fs::create_dir_all(&dir).unwrap();
+        let v1 = r#"{"version":1,"db_password":"dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb","redis_password":"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+            "jwt_secret":"jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj","encryption_key":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "bridge_secret":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#;
+        std::fs::write(secrets_file(&dir), v1).unwrap();
+        let (s, created) = load_or_create(&dir, &PlainFileProtector).unwrap();
+        assert!(!created);
+        assert_eq!(s.db_password, "dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb", "existing DB password must survive the upgrade");
+        assert_eq!(s.encryption_key, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
+        assert_eq!(base64::engine::general_purpose::URL_SAFE.decode(&s.bridge_read_key).unwrap().len(), 32);
+        let (again, _) = load_or_create(&dir, &PlainFileProtector).unwrap();
+        assert_eq!(again, s, "the upgrade is persisted and happens once");
+        assert!(!dir.join("stack.secrets.upgrade").exists());
+        assert_eq!(s.compose_env().len(), 6);
     }
 
     #[cfg(unix)]

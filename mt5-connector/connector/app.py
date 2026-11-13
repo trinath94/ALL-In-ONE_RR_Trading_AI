@@ -32,6 +32,9 @@ class ConnectorConfig:
     journal_path: str = "journal.sqlite3"
     allowed_ips: list[str] = field(default_factory=list)  # e.g. ["10.0.0.5/32"]
     max_skew: int = 30
+    # Optional second HMAC secret that authorises reads only (RR Trading One: processes that must never trade,
+    # such as the learner and the scanner, hold only this one). None keeps the original single-secret behaviour.
+    readonly_secret: str | None = None
 
     @classmethod
     def from_env(cls) -> "ConnectorConfig":
@@ -50,7 +53,20 @@ class ConnectorConfig:
                    allowed_ips=[s for s in os.environ.get("RR_ALLOWED_IPS", "").split(",") if s])
 
 
-def _verify(cfg: ConnectorConfig, journal: Journal, method: str, path: str, body: bytes, headers) -> None:
+# Requests a read-only credential may make. Everything else (in particular POST /executions) needs the full secret.
+READ_ONLY_ALLOWED = {("POST", "/calc/margin")}
+
+
+def read_only_allowed(method: str, path: str) -> bool:
+    return method.upper() == "GET" or (method.upper(), path.split("?", 1)[0]) in READ_ONLY_ALLOWED
+
+
+def _sig(secret: str, msg: bytes) -> str:
+    return base64.b64encode(hmac.new(secret.encode(), msg, hashlib.sha256).digest()).decode()
+
+
+def _verify(cfg: ConnectorConfig, journal: Journal, method: str, path: str, body: bytes, headers) -> str:
+    """Verify signature, freshness and nonce. Returns the credential scope that signed it: "full" or "read"."""
     ts, nonce, sig = headers.get("x-rr-timestamp"), headers.get("x-rr-nonce"), headers.get("x-rr-signature")
     if not (ts and nonce and sig):
         raise HTTPException(401, "missing signature headers")
@@ -61,17 +77,25 @@ def _verify(cfg: ConnectorConfig, journal: Journal, method: str, path: str, body
         raise HTTPException(401, "bad timestamp") from None
     digest = hashlib.sha256(body).hexdigest()
     msg = f"{method.upper()}\n{path}\n{ts}\n{nonce}\n{digest}".encode()
-    expected = base64.b64encode(hmac.new(cfg.shared_secret.encode(), msg, hashlib.sha256).digest()).decode()
-    if not hmac.compare_digest(expected, sig):
+    if hmac.compare_digest(_sig(cfg.shared_secret, msg), sig):
+        scope = "full"
+    elif cfg.readonly_secret and hmac.compare_digest(_sig(cfg.readonly_secret, msg), sig):
+        scope = "read"
+    else:
         raise HTTPException(401, "bad signature")
+    if scope == "read" and not read_only_allowed(method, path):
+        raise HTTPException(403, "read-only bridge credential: this request requires the trading credential")
     if not journal.use_nonce(nonce):
         raise HTTPException(401, "replayed request")
+    return scope
 
 
 def create_app(cfg: ConnectorConfig, adapter: MT5Adapter, journal: Journal | None = None,
                connect: bool = True) -> FastAPI:
     if len(cfg.shared_secret) < 32:
         raise RuntimeError("Bridge shared secret must be at least 32 characters")
+    if cfg.readonly_secret is not None and (len(cfg.readonly_secret) < 32 or cfg.readonly_secret == cfg.shared_secret):
+        raise RuntimeError("Read-only bridge secret must be at least 32 characters and differ from the shared secret")
     journal = journal or Journal(cfg.journal_path)
     svc = ConnectorService(adapter, journal, Identity(cfg.login, cfg.server))
     app = FastAPI(title="RR MT5 Connector", docs_url=None, redoc_url=None)

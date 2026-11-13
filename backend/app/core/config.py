@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     agent_latest_version: str = ""        # published desktop connector version (update mechanism)
     agent_update_url: str = ""            # HTTPS URL of RR_MT5_Connector_Setup.exe
     agent_update_sha256: str = ""         # SHA-256 of that installer; the agent refuses a mismatching file
+    # RR Trading One: role-scoped bridge credentials. When a read key (Fernet) is configured, registration also
+    # issues a read-only HMAC secret, encrypted with this key. Processes running with bridge_scope="read" sign with
+    # it and the connector refuses it for executions; such processes are not given RR_ENCRYPTION_KEY, so they
+    # cannot decrypt the trading secret either. Defaults keep the original single-secret behaviour.
+    bridge_read_key: str = ""
+    bridge_scope: str = "full"            # full | read
 
     # Scanner
     scan_interval_seconds: int = 60

@@ -75,6 +75,21 @@ def _fernet() -> Fernet:
     return Fernet(key.encode())
 
 
+def encrypt_read_secret(plaintext: str) -> str:
+    """Encrypt a read-only bridge secret with RR_BRIDGE_READ_KEY (see Settings.bridge_read_key)."""
+    key = get_settings().bridge_read_key
+    if not key:
+        raise RuntimeError("RR_BRIDGE_READ_KEY is not configured")
+    return Fernet(key.encode()).encrypt(plaintext.encode()).decode()
+
+
+def decrypt_read_secret(ciphertext: str) -> str:
+    key = get_settings().bridge_read_key
+    if not key:
+        raise RuntimeError("RR_BRIDGE_READ_KEY is not configured")
+    return Fernet(key.encode()).decrypt(ciphertext.encode()).decode()
+
+
 def encrypt_secret(plaintext: str) -> str:
     return _fernet().encrypt(plaintext.encode()).decode()
 
