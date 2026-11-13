@@ -1,0 +1,169 @@
+# RR Trading One - LOCAL WINDOWS MODE stack (Docker Desktop + WSL2).
+#
+# Managed by the RR Trading One desktop supervisor; it always runs compose with project name "rr-trading-one" and
+# passes the secrets below through its own process environment (decrypted from DPAPI just for that call). They
+# are never written to an .env file.
+#
+# Safety properties:
+# * Only the gateway publishes a port, bound to 127.0.0.1: nothing is reachable from the network.
+# * PostgreSQL and Redis sit on an internal-only network; their data lives in named volumes that the supervisor
+#   never removes (it never runs `down -v`).
+# * Worker roles follow decision D1. The trading worker is behind the "trading" profile, so `up` without naming it
+#   never starts it; the supervisor starts it only after the typed confirmation.
+# * The original Ubuntu deployment (../docker-compose.yml) is unchanged and is not used by this file.
+name: rr-trading-one
+
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "5"}
+
+x-backend: &backend
+  build: {context: .., dockerfile: infrastructure/backend.Dockerfile}
+  image: rr-trading-one/backend:local
+  logging: *logging
+  environment: &backend-env
+    RR_ENVIRONMENT: production
+    RR_DATABASE_URL: postgresql+psycopg://rr:${RR_ONE_DB_PASSWORD:?missing}@postgres:5432/rr_trading
+    RR_REDIS_URL: redis://:${RR_ONE_REDIS_PASSWORD:?missing}@redis:6379/0
+    RR_JWT_SECRET: ${RR_ONE_JWT_SECRET:?missing}
+    RR_ENCRYPTION_KEY: ${RR_ONE_ENCRYPTION_KEY:?missing}
+    RR_BRIDGE_SHARED_SECRET: ${RR_ONE_BRIDGE_SECRET:?missing}
+    # The MT5 connector dials out to the local gateway (decision D4); no inbound port on Windows.
+    RR_BRIDGE_MODE: relay
+    # Loopback-only HTTP gateway: the browser never leaves 127.0.0.1, so Secure cookies are not required.
+    RR_COOKIE_SECURE: "false"
+    RR_CORS_ORIGINS: http://127.0.0.1:${RR_ONE_GATEWAY_PORT:-47810}
+    RR_ANTHROPIC_API_KEY: ${RR_ONE_ANTHROPIC_API_KEY:-}
+  depends_on:
+    migrate: {condition: service_completed_successfully}
+
+x-role-health: &role-health
+  # A role is healthy while it holds its Redis lock (refreshed every cycle, 120 s TTL).
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 30s
+
+services:
+  postgres:
+    image: postgres:16.6-alpine3.20
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: rr_trading
+      POSTGRES_USER: rr
+      POSTGRES_PASSWORD: ${RR_ONE_DB_PASSWORD:?missing}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U rr -d rr_trading"], interval: 5s, timeout: 5s, retries: 30}
+    networks: [internal]
+
+  redis:
+    image: redis:7.4.1-alpine3.20
+    restart: unless-stopped
+    logging: *logging
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction"]
+    environment: {REDIS_PASSWORD: "${RR_ONE_REDIS_PASSWORD:?missing}"}
+    volumes: [redisdata:/data]
+    healthcheck: {test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"], interval: 5s, timeout: 5s, retries: 30}
+    networks: [internal]
+
+  migrate:
+    <<: *backend
+    command: ["sh", "-c", "alembic upgrade head && python -m app.cli seed"]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck: {disable: true}
+    networks: [internal]
+
+  api:
+    <<: *backend
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks: [internal, egress]
+
+  frontend:
+    build: {context: .., dockerfile: docker/frontend.Dockerfile}
+    image: rr-trading-one/frontend:local
+    restart: unless-stopped
+    logging: *logging
+    healthcheck: {test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/login || exit 1"], interval: 10s, timeout: 5s, retries: 6, start_period: 20s}
+    networks: [internal]
+
+  gateway:
+    image: nginx:1.27.3-alpine3.20
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      api: {condition: service_healthy}
+      frontend: {condition: service_healthy}
+    ports: ["127.0.0.1:${RR_ONE_GATEWAY_PORT:-47810}:8080"]
+    volumes: [./nginx.local.conf:/etc/nginx/nginx.conf:ro]
+    healthcheck: {test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/health || exit 1"], interval: 10s, timeout: 5s, retries: 6}
+    networks: [internal, gateway]
+
+  monitor:
+    <<: *backend
+    command: ["python", "-m", "app.workers.roles", "monitor"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cpus: "0.5"
+    mem_limit: 768m
+    healthcheck:
+      <<: *role-health
+      test: ["CMD", "python", "-c", "import redis,os,sys;sys.exit(0 if redis.Redis.from_url(os.environ['RR_REDIS_URL']).exists('rr:role:monitor:lock') else 1)"]
+    networks: [internal, egress]
+
+  analysis:
+    <<: *backend
+    command: ["python", "-m", "app.workers.roles", "analysis"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cpus: "2.0"
+    mem_limit: 2g
+    healthcheck:
+      <<: *role-health
+      test: ["CMD", "python", "-c", "import redis,os,sys;sys.exit(0 if redis.Redis.from_url(os.environ['RR_REDIS_URL']).exists('rr:role:analysis:lock') else 1)"]
+    networks: [internal, egress]
+
+  learner:
+    <<: *backend
+    command: ["python", "-m", "app.learning_engine.scheduler"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cpus: "2.0"
+    mem_limit: 3g
+    healthcheck:
+      <<: *role-health
+      interval: 60s
+      test: ["CMD", "python", "-c", "import redis,os,sys;sys.exit(0 if redis.Redis.from_url(os.environ['RR_REDIS_URL']).exists('rr:learner:lock') else 1)"]
+    networks: [internal, egress]
+
+  trading-worker:
+    <<: *backend
+    profiles: ["trading"]          # never started by a plain `up`; only when named explicitly
+    command: ["python", "-m", "app.workers.roles", "trading"]
+    restart: "no"                  # a crashed trading worker stays stopped until the operator starts it again
+    stop_grace_period: 30s
+    cpus: "0.5"
+    mem_limit: 512m
+    healthcheck:
+      <<: *role-health
+      test: ["CMD", "python", "-c", "import redis,os,sys;sys.exit(0 if redis.Redis.from_url(os.environ['RR_REDIS_URL']).exists('rr:role:trading:lock') else 1)"]
+    networks: [internal]
+
+volumes:
+  pgdata: {}
+  redisdata: {}
+
+networks:
+  internal: {internal: true}   # databases and engine services; no route out
+  egress: {}                   # api, monitor, analysis, learner -> AI providers, news, notifications
+  gateway: {}                  # gateway only; publishes 127.0.0.1:<port>

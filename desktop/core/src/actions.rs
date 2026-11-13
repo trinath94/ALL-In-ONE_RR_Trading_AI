@@ -29,7 +29,7 @@ pub enum Service {
     Migrate,
     Api,
     Frontend,
-    Nginx,
+    Gateway,
     Monitor,
     Analysis,
     Learner,
@@ -44,7 +44,7 @@ impl Service {
         Service::Migrate,
         Service::Api,
         Service::Frontend,
-        Service::Nginx,
+        Service::Gateway,
         Service::Monitor,
         Service::Analysis,
         Service::Learner,
@@ -69,7 +69,7 @@ impl Service {
             Service::Migrate => "migrate",
             Service::Api => "api",
             Service::Frontend => "frontend",
-            Service::Nginx => "nginx",
+            Service::Gateway => "gateway",
             Service::Monitor => "monitor",
             Service::Analysis => "analysis",
             Service::Learner => "learner",
@@ -85,7 +85,7 @@ impl Service {
             Service::Migrate => "Database migrations",
             Service::Api => "Engine API",
             Service::Frontend => "Web interface",
-            Service::Nginx => "Local gateway",
+            Service::Gateway => "Local gateway",
             Service::Monitor => "Account monitor & position protection",
             Service::Analysis => "Market analysis (scanner & signals)",
             Service::Learner => "AI Learner",
@@ -104,7 +104,7 @@ pub enum Runtime {
 
 /// Engine services started by "Start Backend" (D1: monitor and analysis are part of the backend; the trading
 /// worker is not).
-pub const BACKEND: &[Service] = &[Service::Api, Service::Frontend, Service::Nginx, Service::Monitor, Service::Analysis];
+pub const BACKEND: &[Service] = &[Service::Api, Service::Frontend, Service::Gateway, Service::Monitor, Service::Analysis];
 const INFRA: &[Service] = &[Service::Postgres, Service::Redis];
 
 /// One step of a plan. Closed set: the Phase 3 executor maps each variant to a fixed argv / API call.
@@ -225,7 +225,7 @@ impl Action {
             // Stopping the backend stops everything that depends on it, trading worker first.
             Action::StopBackend => vec![StopServices {
                 services: stop_order(&[Service::TradingWorker, Service::Learner, Service::Analysis, Service::Monitor,
-                    Service::Nginx, Service::Frontend, Service::Api]),
+                    Service::Gateway, Service::Frontend, Service::Api]),
             }],
             Action::StartMt5Connector => vec![StartServices { services: vec![Service::Mt5Connector] }, VerifyHealth],
             Action::StopMt5Connector => vec![StopServices {
@@ -240,7 +240,9 @@ impl Action {
             ],
             Action::StopTradingWorker => vec![StopServices { services: vec![Service::TradingWorker] }],
             Action::SystemHealth => vec![VerifyHealth],
-            Action::Recovery => vec![VerifyHealth, RestartUnhealthy, VerifyHealth],
+            // RestartUnhealthy inspects state itself; a leading VerifyHealth would abort exactly when recovery is
+            // needed.
+            Action::Recovery => vec![RestartUnhealthy, VerifyHealth],
         })
     }
 }
@@ -260,7 +262,7 @@ pub fn stop_order(services: &[Service]) -> Vec<Service> {
         Service::Analysis,
         Service::Monitor,
         Service::Mt5Connector,
-        Service::Nginx,
+        Service::Gateway,
         Service::Frontend,
         Service::Api,
         Service::Migrate,
@@ -365,6 +367,18 @@ mod tests {
         let api = plan.iter().position(|s| matches!(s, Step::StartServices { services } if services.contains(&Service::Api))).unwrap();
         assert!(infra < mig && mig < api);
         assert_eq!(plan.last(), Some(&Step::VerifyHealth));
+    }
+
+    #[test]
+    fn every_compose_name_exists_in_the_real_compose_file() {
+        let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../infrastructure/compose.yml");
+        let text = std::fs::read_to_string(&f).expect("infrastructure/compose.yml");
+        for s in Service::ALL {
+            if let Some(n) = s.compose_name() {
+                assert!(text.contains(&format!("\n  {n}:\n")), "service {n} missing from {}", f.display());
+            }
+        }
+        assert!(text.contains("profiles: [\"trading\"]"), "trading worker must sit behind a profile");
     }
 
     #[test]

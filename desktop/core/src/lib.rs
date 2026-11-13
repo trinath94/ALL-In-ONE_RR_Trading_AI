@@ -1,14 +1,19 @@
 //! RR Trading One supervisor core.
 //!
-//! Pure logic shared by the desktop shell and its tests: the allowlisted action set, the Windows directory
-//! layout, desktop settings and loopback health probes. It contains no UI, spawns no processes and runs no
-//! shell commands. Process execution (Docker Compose, the native MT5 connector) arrives in Phase 3 and may
-//! only execute the typed [`actions::Step`] values produced here.
+//! Shared by the desktop shell and its tests: the allowlisted action set and its plans, the Windows directory
+//! layout, desktop settings, loopback health probes, stack secrets, and the supervisor that executes plans as
+//! fixed Docker Compose argument vectors (never through a shell). It contains no UI.
 
 pub mod actions;
+pub mod compose;
 pub mod health;
+pub mod local;
 pub mod paths;
+pub mod runner;
+pub mod secrets;
 pub mod settings;
+pub mod supervisor;
+pub mod sys;
 
 use serde::Serialize;
 
