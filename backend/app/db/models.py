@@ -152,6 +152,8 @@ class Symbol(TimestampMixin, Base):
     spec_raw: Mapped[dict] = mapped_column(JSONB, default=dict)
     # RR Trading One (migration 0005): user exclusion and catalogue tracking
     excluded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Broker symbols whose bars are supplied to peer strategies (SMT, pairs, stat-arb) for this symbol (Phase 8).
+    peers: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     missing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -601,6 +603,16 @@ class StrategyExperiment(TimestampMixin, Base):
     stage: Mapped[str] = mapped_column(String(24), default="RESEARCH")
     evidence: Mapped[dict] = mapped_column(JSONB, default=dict)
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+class ScannerSettings(Base):
+    """Scanner timeframes chosen in the console (single row, migration 0006). Absent: RR_SCAN_TIMEFRAMES."""
+    __tablename__ = "scanner_settings"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_scanner_settings_single_row"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    timeframes: Mapped[list] = mapped_column(JSONB)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 from app.db import models_intel  # noqa: E402,F401  (Part 25/26 additive tables)

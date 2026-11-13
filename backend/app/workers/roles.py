@@ -200,11 +200,13 @@ def bridge_connected(r=None) -> bool:
         return False
 
 
-def analysis_cycle(bridge: BridgeClient, agent) -> dict | None:
+def analysis_cycle(bridge: BridgeClient, agent, should_stop=None) -> dict | None:
     if not bridge_connected():
         return None
     try:
-        res = scan_once(bridge, agent, _noop_execute)
+        # should_stop: a stop request cancels the jobs not yet started (Phase 8 scheduler)
+        res = (scan_once(bridge, agent, _noop_execute) if should_stop is None
+               else scan_once(bridge, agent, _noop_execute, should_stop))
         log.info("scan: %s", res)
         return res
     except BridgeUnavailable as exc:
@@ -284,7 +286,7 @@ def run(role: str) -> int:
                     time.sleep(s.bridge_heartbeat_seconds)
                 elif role == "analysis":
                     if time.time() - last_scan > s.scan_interval_seconds:
-                        if analysis_cycle(bridge, agent) is not None:
+                        if analysis_cycle(bridge, agent, should_stop=lambda: stop["flag"]) is not None:
                             last_scan = time.time()
                     time.sleep(1)
                 else:

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -13,19 +13,85 @@ from app.agents.claude_agent import AgentError, ClaudeAgent
 from app.analysis import regime as rg
 from app.analysis import sessions as ss
 from app.core.config import get_settings
-from app.db.models import (AgentConversation, AgentDecision, AnalysisResult, ClosedPosition, Strategy,
+from app.db.models import (AgentConversation, AgentDecision, AnalysisResult, ClosedPosition, ScannerSettings, Strategy,
                            StrategyConfiguration, StrategyPerformance, Symbol, TradeOrder, TradingSignal)
 from app.db.session import session_scope
 from app.execution.bridge import BridgeClient
 from app.notifications.service import notify
 from app.signals.engine import Calibrator, MarketContext, SignalConfig, build_signal
 from app.strategies import registry
-from app.strategies.base import CAP_REAL_VOLUME, CAP_TICK_VOLUME, StrategyContext
-from app.services.events import agent_activity, publish
+from app.strategies.base import CAP_PEERS, CAP_REAL_VOLUME, CAP_TICK_VOLUME, StrategyContext
+from app.services.events import agent_activity, get_redis, publish
+from app.scanner import scheduler as sched
 
 log = logging.getLogger("scanner")
 UTC = timezone.utc
 HTF_OF = {"M1": "M15", "M5": "H1", "M15": "H4", "M30": "H4", "H1": "D1", "H4": "D1", "D1": "W1", "W1": "MN1"}
+# Timeframes the console may select. W1 is excluded: no original strategy declares it (Phase 1 audit), so with
+# timeframe enforcement a W1 scan would run nothing.
+SCANNABLE_TFS = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+EVAL_KEY = "rr:strat:eval:{day}"          # per-day hash "<code>|<outcome>" -> count (Phase 8)
+EVAL_TTL = 9 * 86400
+
+
+def scan_timeframes(db: Session) -> list[str]:
+    """The console's choice (scanner_settings) or, if never set, RR_SCAN_TIMEFRAMES."""
+    row = db.get(ScannerSettings, 1)
+    tfs = list(row.timeframes) if row and row.timeframes else get_settings().timeframes
+    return [t for t in tfs if t in SCANNABLE_TFS] or ["H1"]
+
+
+def applicable(enabled: dict[str, dict], tf: str) -> tuple[dict[str, dict], list[str]]:
+    """Split the enabled strategies into those declaring this timeframe and those that do not (gap 7.1). The filter
+    sits outside the strategy classes, so their code and hashes are unchanged. Disabled by
+    RR_SCAN_ENFORCE_TIMEFRAMES=false (original behaviour: every strategy on every timeframe)."""
+    if not get_settings().scan_enforce_timeframes:
+        return enabled, []
+    metas = registry.all_strategies()
+    keep = {c: p for c, p in enabled.items() if tf in metas[c].timeframes}
+    return keep, sorted(set(enabled) - set(keep))
+
+
+def peer_frames(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, now: datetime) -> tuple[dict, list[str]]:
+    """Bars of the symbol's configured peers (gap 7.2), only peers the same broker still offers. Returns
+    ({peer: df}, [problems])."""
+    from app.signals.engine import TF_MINUTES
+    out, problems = {}, []
+    for name in (sym.peers or [])[:3]:
+        peer = db.scalar(select(Symbol).where(Symbol.broker_connection_id == sym.broker_connection_id,
+                                              Symbol.broker_symbol == name))
+        if peer is None or peer.missing_since is not None:
+            problems.append(f"{name}: not offered by the broker")
+            continue
+        try:
+            pdf = drop_forming_bar(bars_to_df(bridge.rates(name, tf, get_settings().scan_bars)), TF_MINUTES[tf], now)
+        except Exception as exc:  # noqa: BLE001 - a peer failure only makes peer strategies unavailable
+            problems.append(f"{name}: {str(exc)[:120]}")
+            continue
+        if len(pdf):
+            out[name] = pdf[["open", "high", "low", "close", "volume"]]
+        else:
+            problems.append(f"{name}: no bars")
+    return out, problems
+
+
+def record_evaluations(diag: list[dict], not_applicable: list[str]) -> dict:
+    """Count every strategy outcome of one analysis (signal / no_signal / unavailable / error / not_applicable) in
+    Redis per day, for the strategy library. Returns the totals for this analysis."""
+    totals = Counter(d["status"] for d in diag)
+    totals["not_applicable"] += len(not_applicable)
+    try:
+        key = EVAL_KEY.format(day=datetime.now(UTC).strftime("%Y%m%d"))
+        p = get_redis().pipeline()
+        for d in diag:
+            p.hincrby(key, f"{d['strategy']}|{d['status']}", 1)
+        for code in not_applicable:
+            p.hincrby(key, f"{code}|not_applicable", 1)
+        p.expire(key, EVAL_TTL)
+        p.execute()
+    except Exception:  # noqa: BLE001 - statistics never break a scan
+        pass
+    return dict(totals)
 
 
 def bars_to_df(rows: list[dict]) -> pd.DataFrame:
@@ -100,6 +166,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     df = drop_forming_bar(bars_to_df(bridge.rates(sym.broker_symbol, tf, s.scan_bars)), TF_MINUTES[tf], now)
     if len(df) < 120:
         return None
+    enabled, not_applicable = applicable(enabled, tf)
     htf_tf = HTF_OF.get(tf)
     htf = {}
     if htf_tf:
@@ -110,9 +177,16 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     caps = {CAP_TICK_VOLUME}
     if "real_volume" in df and df["real_volume"].sum() > 0:
         caps.add(CAP_REAL_VOLUME)
-    ctx = StrategyContext(df, sym.broker_symbol, tf, htf=htf, point=float(sym.point), data_caps=caps)
+    peers, peer_problems = {}, []
+    metas_all = registry.all_strategies()
+    if sym.peers and any(CAP_PEERS in metas_all[c].requires for c in enabled):
+        peers, peer_problems = peer_frames(db, bridge, sym, tf, now)
+        if peers:
+            caps.add(CAP_PEERS)
+    ctx = StrategyContext(df, sym.broker_symbol, tf, htf=htf, peers=peers, point=float(sym.point), data_caps=caps)
     reg = rg.classify(df)
     sigs, diag = registry.evaluate_all(ctx, enabled)
+    outcomes = record_evaluations(diag, not_applicable)
     from app.news.service import status_for
     news, _ = status_for(db, sym, sym.broker_symbol)
     metas = registry.all_strategies()
@@ -125,7 +199,11 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     ar = AnalysisResult(symbol_id=sym.id, timeframe=tf, bar_time=df.index[-1].to_pydatetime(), regime=reg.primary,
                         structure={"regime": reg.dict(), "htf_bias": mctx.htf_bias, "sessions": mctx.sessions,
                                    "news": news, "atr": mctx.atr, "price": mctx.price,
-                                   "spread_points": round(spread / float(sym.point), 2) if float(sym.point) else None},
+                                   "spread_points": round(spread / float(sym.point), 2) if float(sym.point) else None,
+                                   # Phase 8: what this symbol's feed actually provided and what every strategy did
+                                   "data_caps": sorted(caps), "peers": sorted(peers), "peer_problems": peer_problems,
+                                   "evaluation": outcomes,
+                                   "unavailable": sorted({d["strategy"] for d in diag if d["status"] == "unavailable"})},
                         strategy_outputs=[s.dict() for s in sigs] + [d for d in diag if d["status"] == "error"],
                         score={**res.dict(), "intelligence": intel})
     db.add(ar)
@@ -261,8 +339,20 @@ def claude_review(db: Session, agent: ClaudeAgent, sig: TradingSignal, item: dic
         sig.decision = "WAIT"
 
 
-def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute) -> dict:
+def closed_bar_epoch(bridge: BridgeClient, symbol: str, tf: str, now: datetime) -> int | None:
+    """Time of the latest closed bar, by the same rule as analyse() (a 3-bar request). None if unknown."""
+    from app.signals.engine import TF_MINUTES
+    try:
+        df = drop_forming_bar(bars_to_df(bridge.rates(symbol, tf, 3)), TF_MINUTES[tf], now)
+    except Exception:  # noqa: BLE001 - unknown: the job is treated as due and analyse() reports the problem
+        return None
+    return int(df.index[-1].timestamp()) if len(df) else None
+
+
+def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
+              should_stop=lambda: False) -> dict:
     s = get_settings()
+    rds = get_redis()
     with session_scope() as db:
         from app.services.trading import get_state
         mode = get_state(db).active_mode
@@ -271,30 +361,58 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute) -> 
         calib = calibrator(db)
         symbols = db.scalars(select(Symbol).where(Symbol.scan_enabled.is_(True), Symbol.tradable.is_(True))
                              .order_by(Symbol.priority, Symbol.canonical)).all()
-        sym_ids = [x.id for x in symbols]
-    agent_activity("market_scanner", "processing", f"Scanning {len(sym_ids)} symbols x {s.timeframes}")
-    results = []
+        targets = [(x.id, x.broker_symbol, x.priority) for x in symbols]
+        timeframes = scan_timeframes(db)
+    report = sched.CycleReport(started_at=sched.now_iso(), timeframes=timeframes, symbols=len(targets))
+    agent_activity("market_scanner", "processing", f"Scanning {len(targets)} symbols x {timeframes}")
 
-    def work(sid: int, tf: str):
-        with session_scope() as db:
-            sym = db.get(Symbol, sid)
-            try:
-                item = analyse(db, bridge, sym, tf, enabled, stats, calib, SignalConfig())
-            except Exception as exc:  # noqa: BLE001 - one symbol failing must not stop the scan
-                log.exception("scan %s %s failed", sym.broker_symbol, tf)
-                return {"symbol": sym.broker_symbol, "tf": tf, "error": str(exc)}
-            if not item:
-                return None
-            sig = persist_signal(db, item)
-            return {"signal_id": sig.id if sig else None, "score": item["result"].score, "decision": item["result"].decision,
-                    "symbol": sym.broker_symbol, "tf": tf}
+    # 1. Which jobs are due: a closed bar newer than the last one analysed (or every job, if once-per-bar is off).
+    now = datetime.now(UTC)
+    jobs: list[sched.Job] = []
+    for sid, name, prio in targets:
+        for tf in timeframes:
+            report.jobs_total += 1
+            if should_stop():
+                break
+            bar = closed_bar_epoch(bridge, name, tf, now) if s.scan_once_per_bar else None
+            last = rds.get(sched.last_key(sid, tf)) if s.scan_once_per_bar else None
+            if s.scan_once_per_bar and not sched.is_due(int(last) if last else None, bar):
+                report.not_due += 1
+                continue
+            jobs.append(sched.Job(priority=prio, bar_epoch=bar or 0, tf=tf, symbol_id=sid, symbol=name))
+    report.due = len(jobs)
 
-    with ThreadPoolExecutor(max_workers=s.scan_max_parallel) as ex:
-        futs = [ex.submit(work, sid, tf) for sid in sym_ids for tf in s.timeframes]
-        for f in futs:
-            r = f.result()
-            if r:
-                results.append(r)
+    def work(job: sched.Job):
+        lock = sched.inflight_key(job.symbol_id, job.tf)
+        if not rds.set(lock, "1", nx=True, ex=max(60, s.scan_job_timeout_seconds * 4)):
+            return {"outcome": "skipped_inflight", "symbol": job.symbol, "tf": job.tf}
+        try:
+            with session_scope() as db:
+                sym = db.get(Symbol, job.symbol_id)
+                try:
+                    item = analyse(db, bridge, sym, job.tf, enabled, stats, calib, SignalConfig())
+                except Exception as exc:  # noqa: BLE001 - one symbol failing must not stop the scan
+                    log.exception("scan %s %s failed", sym.broker_symbol, job.tf)
+                    return {"symbol": sym.broker_symbol, "tf": job.tf, "error": str(exc)}
+                if not item:
+                    if job.bar_epoch:
+                        rds.set(sched.last_key(job.symbol_id, job.tf), job.bar_epoch)
+                    return {"outcome": "insufficient_data", "symbol": sym.broker_symbol, "tf": job.tf}
+                sig = persist_signal(db, item)
+                analysed_bar = int(item["analysis"].bar_time.timestamp())
+                out = {"signal_id": sig.id if sig else None, "score": item["result"].score,
+                       "decision": item["result"].decision, "symbol": sym.broker_symbol, "tf": job.tf}
+            # marker after the commit: a crash before it leaves the bar due, so it is retried, never lost
+            rds.set(sched.last_key(job.symbol_id, job.tf), max(analysed_bar, job.bar_epoch))
+            return out
+        finally:
+            rds.delete(lock)
+
+    # 2. Run them in order, within the cycle budget; the rest stay due for the next cycle.
+    results = sched.run_jobs(sched.order(jobs), work, max_workers=s.scan_max_parallel,
+                             budget_s=float(s.scan_cycle_budget_seconds), job_timeout_s=float(s.scan_job_timeout_seconds),
+                             should_stop=should_stop, report=report)
+    results = [x for x in results if x.get("outcome") is None]
     ranked = sorted([r for r in results if r.get("signal_id") and r["decision"] in ("BUY", "SELL")],
                     key=lambda r: r["score"], reverse=True)[: s.claude_max_candidates_per_scan]
     for r in ranked:
@@ -309,8 +427,11 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute) -> 
             elif not s.anthropic_api_key:
                 sig.ai_review = {"decision": "UNREVIEWED", "error": "Claude API key not configured"}
         auto_execute(r["signal_id"])
-    agent_activity("market_scanner", "waiting", f"Scan complete: {len(results)} analyses, {len(ranked)} candidates")
-    return {"analyses": len(results), "candidates": len(ranked), "errors": sum(1 for r in results if r.get("error"))}
+    sched.publish_status(rds, report)
+    agent_activity("market_scanner", "waiting", f"Scan complete: {report.analysed} analyses ({report.not_due} not due, "
+                                                f"{report.deferred} deferred), {len(ranked)} candidates")
+    return {"analyses": report.analysed, "candidates": len(ranked), "errors": report.errors + report.timed_out,
+            "not_due": report.not_due, "deferred": report.deferred, "timed_out": report.timed_out}
 
 
 class _ResultView:

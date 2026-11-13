@@ -64,10 +64,11 @@ def test_library_lists_registry_with_honest_data_status(client):
         counts[r["data_status"]] = counts.get(r["data_status"], 0) + 1
         for k in ("timeframes", "regimes", "requires", "risky", "code_hash", "min_bars", "params", "data_notes"):
             assert k in r
-    # Phase 1 audit: 195 runnable on a standard MT5 feed; 5 peer + 6 engine-side not supplied; 9 MT5 cannot provide
-    assert counts == {"runnable": 195, "not_supplied": 11, "unsupported": 9}
+    # Phase 1 audit: 195 runnable on a standard MT5 feed; 5 peer strategies run where peers are configured (Phase 8);
+    # 6 need engine-side data not supplied; 9 need data MT5 cannot provide
+    assert counts == {"runnable": 195, "per_symbol": 5, "not_supplied": 6, "unsupported": 9}
     r = {x["code"]: x for x in rows}
-    assert r["ict_smt"]["data_status"] == "not_supplied" and "Phase 8" in r["ict_smt"]["data_notes"][0]
+    assert r["ict_smt"]["data_status"] == "per_symbol" and "configured peers" in r["ict_smt"]["data_notes"][0]
     assert r["vol_footprint"]["data_status"] == "unsupported"
     assert r["sess_news"]["data_status"] == "not_supplied"
     # nothing is invented: no trades means no performance and zero observed activity
@@ -83,10 +84,10 @@ def test_summary_matches_registry_facts(client):
     assert all(c["count"] == c["expected"] for c in s["categories"])
     assert s["baseline"]["unchanged"] == 215 and s["baseline"]["modified"] == [] and s["baseline"]["baseline_count"] == 215
     assert s["timeframes"] == {"M1": 2, "M5": 33, "M15": 204, "M30": 7, "H1": 176, "H4": 176, "D1": 6, "W1": 0}
-    assert s["timeframes_enforced"] is False
+    assert s["timeframes_enforced"] is True and "only on the timeframes it declares" in s["timeframes_note"]
     assert s["risky"] == ["quant_anti_martingale", "quant_dca", "quant_grid", "quant_martingale"]
-    assert {d["status"]: d["count"] for d in s["data_status"]} == {"runnable": 195, "per_symbol": 0,
-                                                                     "not_supplied": 11, "unsupported": 9}
+    assert {d["status"]: d["count"] for d in s["data_status"]} == {"runnable": 195, "per_symbol": 5,
+                                                                     "not_supplied": 6, "unsupported": 9}
     assert s["activity"]["analyses"] == 0
 
 

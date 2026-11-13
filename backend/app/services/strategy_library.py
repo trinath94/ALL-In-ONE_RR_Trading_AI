@@ -39,12 +39,13 @@ STATUS_LABEL = {
     "unsupported": "Not runnable: MetaTrader 5 does not provide the data",
 }
 # What the scanner gives strategies today (scanner.service.analyse): tick volume always, real volume when the feed
-# reports it. Every other capability is never set, so strategies needing it never run.
+# reports it, peer bars when the symbol has configured peers (Phase 8). Every other capability is never set, so
+# strategies needing it never run.
 CAPABILITIES = {
     "tick_volume": ("runnable", "tick volume: provided by MT5 for every symbol"),
     "real_volume": ("per_symbol", "real (exchange) volume: only where the broker feed reports it"),
-    "peer_symbols": ("not_supplied", "peer-symbol data: obtainable from MT5, but the scanner does not supply it yet "
-                                     "(planned: Phase 8)"),
+    "peer_symbols": ("per_symbol", "peer-symbol data: supplied for symbols with configured peers the broker offers "
+                                   "(Broker Symbols page)"),
     "news_feed": ("not_supplied", "news feed: the engine has a news service, but the scanner does not pass it to "
                                   "strategies"),
     "trained_model": ("not_supplied", "trained model: no validated model artefact is passed to strategies"),
@@ -130,6 +131,30 @@ def activity(db: Session, days: int = ACTIVITY_DAYS) -> dict:
     return {"days": days, "analyses": analyses, "per_strategy": per}
 
 
+OUTCOMES = ("signal", "no_signal", "unavailable", "error", "not_applicable")
+
+
+def evaluations(days: int = ACTIVITY_DAYS) -> dict[str, dict[str, int]]:
+    """Per-strategy outcome counts over the last `days` days, from the scanner's per-day counters (Phase 8:
+    scanner.service.record_evaluations). Days before Phase 8 or after a Redis reset simply count nothing."""
+    from app.scanner.service import EVAL_KEY
+    from app.services.events import get_redis
+    out: dict[str, dict[str, int]] = {}
+    try:
+        rds = get_redis()
+        today = datetime.now(UTC)
+        for i in range(days):
+            for field, n in rds.hgetall(EVAL_KEY.format(day=(today - timedelta(days=i)).strftime("%Y%m%d"))).items():
+                field = field.decode() if isinstance(field, bytes) else field
+                code, _, outcome = field.rpartition("|")
+                if outcome in OUTCOMES:
+                    d = out.setdefault(code, dict.fromkeys(OUTCOMES, 0))
+                    d[outcome] += int(n)
+    except Exception:  # noqa: BLE001 - statistics are best effort
+        return {}
+    return out
+
+
 def summary(db: Session) -> dict:
     metas = registry.metas()
     eff = effective(db)
@@ -138,6 +163,7 @@ def summary(db: Session) -> dict:
     tf = {t: sum(t in m.timeframes for m in metas) for t in TIMEFRAMES}
     cats = Counter(m.category for m in metas)
     act = activity(db)
+    ev = evaluations()
     return {
         "total": len(metas),
         "expected_total": sum(registry.EXPECTED_COUNTS.values()),
@@ -154,10 +180,13 @@ def summary(db: Session) -> dict:
         "risky": sorted(m.code for m in metas if m.risky),
         "scanned": {mode: len(codes) for mode, codes in eff.items()},
         "timeframes": tf,
-        "timeframes_enforced": False,
-        "timeframes_note": "Declared timeframes are shown as the strategies declare them. The scanner does not filter "
-                           "strategies by timeframe yet (planned: Phase 8).",
+        "timeframes_enforced": get_settings().scan_enforce_timeframes,
+        "timeframes_note": ("The scanner runs each strategy only on the timeframes it declares; on other timeframes it "
+                            "is counted as not applicable." if get_settings().scan_enforce_timeframes else
+                            "Timeframe enforcement is turned off (RR_SCAN_ENFORCE_TIMEFRAMES=false): every enabled "
+                            "strategy runs on every scanned timeframe."),
         "activity": {"days": act["days"], "analyses": act["analyses"],
                      "strategies_with_signals": sum(1 for v in act["per_strategy"].values() if v["signals"]),
                      "strategies_with_errors": sorted(k for k, v in act["per_strategy"].items() if v["errors"])},
+        "evaluations": {o: sum(v[o] for v in ev.values()) for o in OUTCOMES},
     }

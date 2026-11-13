@@ -84,7 +84,7 @@ export default function Library() {
                 <button key={t} onClick={() => setTf(tf === t ? "" : t)} className={"rounded border px-1 py-1 " + (tf === t ? "border-cyan text-cyan" : "border-line")}>
                   <div className="text-dim">{t}</div><b>{sum.timeframes[t]}</b></button>))}
             </div>
-            <div className="mt-2 text-[10px] text-warn">{sum.timeframes_note}</div>
+            <div className={"mt-2 text-[10px] " + (sum.timeframes_enforced ? "text-dim" : "text-warn")}>{sum.timeframes_note}</div>
           </Panel>
         </div>
       )}
@@ -115,7 +115,7 @@ export default function Library() {
             <div className="mt-2 grid grid-cols-[110px_1fr] gap-1 text-[11px]">
               <div className="text-dim">Code</div><div>{cur.code} · v{cur.version}</div>
               <div className="text-dim">Category</div><div>{cur.category} · scores into {cur.component}</div>
-              <div className="text-dim">Timeframes</div><div>{cur.timeframes.join(", ")} <span className="text-dim">(declared; not enforced by the scanner yet)</span></div>
+              <div className="text-dim">Timeframes</div><div>{cur.timeframes.join(", ")} <span className="text-dim">(runs only on these)</span></div>
               <div className="text-dim">Suited regimes</div><div>{cur.regimes.join(", ") || "all"}</div>
               <div className="text-dim">Minimum bars</div><div>{cur.min_bars}</div>
               <div className="text-dim">Data</div><div><Badge tone={DATA[cur.data_status].tone}>{DATA[cur.data_status].short}</Badge>
@@ -124,6 +124,8 @@ export default function Library() {
               <div className="text-dim">Scanned</div><div>DEMO {cur.scanned.DEMO ? "yes" : "no"} · LIVE {cur.scanned.LIVE ? "yes" : "no"} · stage {cur.stage}</div>
               <div className="text-dim">Code hash</div><div>{cur.code_hash} · <span className={cur.baseline === "unchanged" ? "text-neon" : "text-warn"}>{cur.baseline}</span></div>
               <div className="text-dim">Last 7 days</div><div>{cur.activity.signals} signal(s){cur.activity.last_signal_at ? `, last ${fmt.time(cur.activity.last_signal_at)}` : ""}{cur.activity.errors ? `, ${cur.activity.errors} error(s)` : ""}</div>
+              <div className="text-dim">Evaluated (7 d)</div><div>{(() => { const e = cur.evaluations; const tot = Object.values(e).reduce((x: number, y: any) => x + y, 0);
+                return tot ? `${e.signal} signal · ${e.no_signal} no signal · ${e.unavailable} data unavailable · ${e.not_applicable} not applicable (timeframe)${e.error ? ` · ${e.error} errors` : ""}` : "not evaluated by the scanner yet"; })()}</div>
               <div className="text-dim">Open positions</div><div>{cur.active_positions}</div>
             </div>
             <div className="mt-3 text-[10px] uppercase text-dim">Recorded performance</div>

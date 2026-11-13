@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     scan_timeframes: str = "M15,H1,H4"
     scan_max_parallel: int = 4
     scan_bars: int = 500
+    # RR Trading One Phase 8: scheduling. Each symbol/timeframe is analysed once per newly closed bar (the decision
+    # point backtests replicate); strategies run only on the timeframes they declare; a cycle has a time budget, and
+    # jobs that do not fit wait for the next cycle (oldest first) instead of piling up.
+    scan_once_per_bar: bool = True
+    scan_enforce_timeframes: bool = True
+    scan_cycle_budget_seconds: int = 50
+    scan_job_timeout_seconds: int = 45
 
     # News
     news_provider: str = ""  # "" => disconnected (treated as UNKNOWN risk)

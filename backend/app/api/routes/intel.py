@@ -1,6 +1,7 @@
 """Market data, scanner, strategies, backtesting, risk config, portfolio, news, notifications."""
 from __future__ import annotations
 
+import json
 import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -16,14 +17,16 @@ from app.api.deps import current_user, require
 from app.api.routes.trading import bridge_dep, f
 from app.backtesting import engine as bt
 from app.db.models import (AnalysisResult, BacktestJob, BacktestResult, ClosedPosition, EconomicEvent, Notification,
-                           NotificationSetting, OpenPosition, OptimisationResult, RiskConfig, RiskEvaluation, Strategy,
+                           NotificationSetting, OpenPosition, OptimisationResult, RiskConfig, RiskEvaluation, ScannerSettings, Strategy,
                            StrategyConfiguration, StrategyExperiment, StrategyPerformance, StrategyVersion, Symbol, User)
+from app.core.config import get_settings
 from app.db.session import get_db, session_scope
 from app.execution.bridge import BridgeClient, BridgeError
 from app.news import service as news
 from app.notifications.service import KINDS
 from app.risk.engine import RiskParams
 from app.scanner.service import bars_to_df
+from app.scanner import peers as peer_sugg
 from app.services import strategy_library as lib
 from app.services import trading as tr
 from app.services.events import audit
@@ -40,6 +43,7 @@ def symbols(_: User = Depends(current_user), db: Session = Depends(get_db), cate
     q = select(Symbol).order_by(Symbol.priority, Symbol.canonical)
     if category:
         q = q.where(Symbol.category == category)
+    offered = _offered(db)
     return [{"id": s.id, "symbol": s.broker_symbol, "canonical": s.canonical, "category": s.category,
              "description": s.description, "digits": s.digits, "tradable": s.tradable, "scan_enabled": s.scan_enabled,
              "priority": s.priority, "volume_min": f(s.volume_min), "volume_step": f(s.volume_step),
@@ -50,7 +54,19 @@ def symbols(_: User = Depends(current_user), db: Session = Depends(get_db), cate
              "base_currency": s.base_currency, "profit_currency": s.profit_currency,
              "spread_points": (s.spec_raw or {}).get("spread"), "spread_floating": (s.spec_raw or {}).get("spread_float"),
              "sessions": SESSIONS_NOTE, "excluded": s.excluded, "last_seen_at": s.last_seen_at,
-             "missing_since": s.missing_since, "eligible": _eligible(s)} for s in db.scalars(q)]
+             "missing_since": s.missing_since, "eligible": _eligible(s),
+             # Phase 8: peers supplied to peer strategies; suggestions are never applied automatically
+             "peers": list(s.peers or []),
+             "suggested_peers": peer_sugg.suggest(s.canonical, offered.get(s.broker_connection_id, {}))}
+            for s in db.scalars(q)]
+
+
+def _offered(db: Session) -> dict[int, dict[str, str]]:
+    """broker connection -> {canonical: broker symbol} for symbols the broker still offers."""
+    out: dict[int, dict[str, str]] = defaultdict(dict)
+    for s in db.scalars(select(Symbol).where(Symbol.missing_since.is_(None))):
+        out[s.broker_connection_id].setdefault(s.canonical.upper(), s.broker_symbol)
+    return out
 
 
 # MT5 SYMBOL_TRADE_MODE_* values
@@ -82,6 +98,21 @@ class SymbolPatch(BaseModel):
     scan_enabled: bool | None = None
     priority: int | None = Field(default=None, ge=0, le=1000)
     excluded: bool | None = None
+    peers: list[str] | None = Field(default=None, max_length=peer_sugg.MAX_PEERS)
+
+
+def _validate_peers(db: Session, s: Symbol, peers: list[str]) -> list[str]:
+    out = []
+    for name in peers:
+        if name == s.broker_symbol:
+            raise HTTPException(422, "a symbol cannot be its own peer")
+        peer = db.scalar(select(Symbol).where(Symbol.broker_connection_id == s.broker_connection_id,
+                                              Symbol.broker_symbol == name))
+        if peer is None:
+            raise HTTPException(422, f"peer {name!r} is not in this broker's catalogue")
+        if name not in out:
+            out.append(name)
+    return out
 
 
 @router.patch("/symbols/{symbol_id}")
@@ -92,6 +123,8 @@ def patch_symbol(symbol_id: int, body: SymbolPatch, user: User = Depends(require
         raise HTTPException(404)
     if body.scan_enabled and (body.excluded or (body.excluded is None and s.excluded)):
         raise HTTPException(409, "symbol is excluded; remove the exclusion before enabling scanning")
+    if body.peers is not None:
+        body.peers = _validate_peers(db, s, body.peers)
     for k, v in body.model_dump(exclude_none=True).items():
         setattr(s, k, v)
     if s.excluded:
@@ -181,6 +214,89 @@ def scanner(_: User = Depends(current_user), db: Session = Depends(get_db), time
     return sorted(out, key=lambda r: -(r["score"] or 0))
 
 
+@router.get("/scanner/status")
+def scanner_status(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """How the scanner is configured and what its last cycles did (Phase 8). Read from the scanner's own records."""
+    from app.scanner import scheduler as sched
+    from app.scanner.service import SCANNABLE_TFS, enabled_strategies, scan_timeframes
+    from app.services.events import get_redis
+    from app.services.trading import get_state
+    s = get_settings()
+    rds = get_redis()
+
+    def load(raw):
+        try:
+            return json.loads(raw) if raw else None
+        except ValueError:
+            return None
+    mode = get_state(db).active_mode
+    enabled = enabled_strategies(db, mode)
+    metas = registry.all_strategies()
+    tfs = scan_timeframes(db)
+    targets = db.scalars(select(Symbol).where(Symbol.scan_enabled.is_(True), Symbol.tradable.is_(True))
+                         .order_by(Symbol.priority, Symbol.canonical)).all()
+    jobs = []
+    for sym in targets[:300]:
+        for tf in tfs:
+            last = rds.get(sched.last_key(sym.id, tf))
+            jobs.append({"symbol": sym.broker_symbol, "timeframe": tf, "priority": sym.priority,
+                         "last_bar": datetime.fromtimestamp(int(last), UTC) if last else None,
+                         "peers": list(sym.peers or [])})
+    row = db.get(ScannerSettings, 1)
+    return {
+        "settings": {"timeframes": tfs, "source": "console" if row else "RR_SCAN_TIMEFRAMES",
+                     "selectable_timeframes": SCANNABLE_TFS, "interval_seconds": s.scan_interval_seconds,
+                     "cycle_budget_seconds": s.scan_cycle_budget_seconds, "job_timeout_seconds": s.scan_job_timeout_seconds,
+                     "max_parallel": s.scan_max_parallel, "once_per_bar": s.scan_once_per_bar,
+                     "enforce_timeframes": s.scan_enforce_timeframes},
+        "mode": mode,
+        "applicability": [{"timeframe": tf, "enabled": len(enabled),
+                           "applicable": sum(1 for c in enabled if not s.scan_enforce_timeframes or tf in metas[c].timeframes)}
+                          for tf in SCANNABLE_TFS],
+        "symbols": len(targets),
+        "last_cycle": load(rds.get(sched.STATUS_KEY)),
+        "history": [x for x in (load(v) for v in rds.lrange(sched.HISTORY_KEY, 0, 19)) if x],
+        "jobs": jobs,
+    }
+
+
+class ScannerSettingsIn(BaseModel):
+    timeframes: list[str] = Field(min_length=1, max_length=7)
+
+
+@router.put("/scanner/settings")
+def scanner_settings(body: ScannerSettingsIn, user: User = Depends(require("strategy.manage")),
+                     db: Session = Depends(get_db)):
+    from app.scanner.service import SCANNABLE_TFS
+    tfs = [t.upper() for t in body.timeframes]
+    bad = [t for t in tfs if t not in SCANNABLE_TFS]
+    if bad:
+        raise HTTPException(422, f"unsupported timeframes {bad}; choose from {SCANNABLE_TFS} "
+                                 "(W1: no original strategy declares it)")
+    tfs = sorted(set(tfs), key=SCANNABLE_TFS.index)
+    row = db.get(ScannerSettings, 1) or ScannerSettings(id=1, timeframes=tfs)
+    row.timeframes, row.updated_by = tfs, user.id
+    db.add(row)
+    audit(db, user.id, "SCANNER_SETTINGS", "timeframes", {"timeframes": tfs})
+    return {"timeframes": tfs}
+
+
+@router.post("/symbols/peers/apply-suggested")
+def apply_suggested_peers(user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
+    """Set the suggested peers on symbols that have none configured (explicit user action; audited)."""
+    offered = _offered(db)
+    changed = []
+    for s in db.scalars(select(Symbol).where(Symbol.missing_since.is_(None))):
+        if s.peers:
+            continue
+        sugg = peer_sugg.suggest(s.canonical, offered.get(s.broker_connection_id, {}))
+        if sugg:
+            s.peers = sugg
+            changed.append({"symbol": s.broker_symbol, "peers": sugg})
+    audit(db, user.id, "SYMBOL_PEERS_SUGGESTED", "symbols", {"changed": changed})
+    return {"changed": changed}
+
+
 class ScanScopeIn(BaseModel):
     enable: bool
     scope: str = Field(pattern="^(all_eligible|all|categories|symbols)$")
@@ -243,6 +359,7 @@ def strategies(_: User = Depends(current_user), db: Session = Depends(get_db)):
     eff = lib.effective(db)
     base = lib.baseline_status()
     act = lib.activity(db)["per_strategy"]
+    evals = lib.evaluations()
     classes = registry.all_strategies()
     out = []
     for m in registry.metas():
@@ -261,7 +378,8 @@ def strategies(_: User = Depends(current_user), db: Session = Depends(get_db)):
                     "data_status": status, "data_notes": notes, "min_bars": classes[m.code].min_bars,
                     "scanned": {mode: m.code in codes for mode, codes in eff.items()},
                     "baseline": base.get(m.code) if base is not None else "baseline inventory not available",
-                    "activity": act.get(m.code, {"signals": 0, "errors": 0, "last_signal_at": None})})
+                    "activity": act.get(m.code, {"signals": 0, "errors": 0, "last_signal_at": None}),
+                    "evaluations": evals.get(m.code, dict.fromkeys(lib.OUTCOMES, 0))})
     return out
 
 

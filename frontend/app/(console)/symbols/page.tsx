@@ -57,14 +57,19 @@ export default function Symbols() {
             </>}
             <Btn small tone="cyan" busy={busy} disabled={!rows.length} onClick={() => scope(true, { scope: "symbols", symbol_ids: rows.map((s) => s.id) })}>Scan filtered ({rows.length})</Btn>
             <span className="text-dim">Excluded, no-longer-offered and not fully tradable symbols are never enabled.</span>
+            <Btn small tone="cyan" busy={busy} disabled={!n((s) => !s.peers.length && s.suggested_peers.length > 0)}
+              onClick={() => run(() => post("/api/symbols/peers/apply-suggested"), (r) => `Suggested peers set on ${r.changed.length} symbol(s).`)}>
+              Apply suggested peers ({n((s) => !s.peers.length && s.suggested_peers.length > 0)})</Btn>
           </div>
         </Panel>
       )}
-      <Panel right={<div className="flex flex-wrap gap-2">
-        <input className={inputCls + " w-40"} placeholder="search" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select className={inputCls + " w-36"} value={cat} onChange={(e) => setCat(e.target.value)}><option value="">all classes</option>{cats.map((c) => <option key={c}>{c}</option>)}</select>
-        <select className={inputCls + " w-36"} value={view} onChange={(e) => setView(e.target.value)}>
-          {["all", "scanning", "eligible", "excluded", "missing", "untradable"].map((v) => <option key={v}>{v}</option>)}</select></div>}>
+      <Panel title={`Catalogue (${rows.length} of ${(data || []).length})`} className="mt-3">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <div className="w-44"><input className={inputCls} placeholder="search" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+          <div className="w-40"><select className={inputCls} value={cat} onChange={(e) => setCat(e.target.value)}><option value="">all classes</option>{cats.map((c) => <option key={c}>{c}</option>)}</select></div>
+          <div className="w-40"><select className={inputCls} value={view} onChange={(e) => setView(e.target.value)}>
+            {["all", "scanning", "eligible", "excluded", "missing", "untradable"].map((v) => <option key={v}>{v}</option>)}</select></div>
+        </div>
         <Table rows={rows} rowKey={(r) => r.id} empty="No symbols yet: they are discovered automatically once the MT5 connector is linked and the account passes its startup checks."
           cols={[
             { k: "symbol", h: "Symbol", r: (s) => <span title={s.description}>{s.symbol}</span> },
@@ -83,6 +88,12 @@ export default function Symbols() {
                   onClick={() => run(() => patch(`/api/symbols/${s.id}`, { scan_enabled: !s.scan_enabled }), () => `${s.symbol}: scanning ${s.scan_enabled ? "off" : "on"}.`)}>
                   {s.scan_enabled ? "on" : "off"}</Btn>
               : <Badge tone={s.scan_enabled ? "neon" : "dim"}>{s.scan_enabled ? "on" : "off"}</Badge> },
+            { k: "peers", h: "Peers", sort: false, r: (s) => manage
+              ? <div className="w-44"><input className={inputCls} defaultValue={s.peers.join(", ")}
+                  placeholder={s.suggested_peers.length ? `suggested: ${s.suggested_peers.join(", ")}` : "none"}
+                  onBlur={(e) => { const v = e.target.value.split(",").map((x) => x.trim()).filter(Boolean);
+                    if (v.join(",") !== s.peers.join(",")) run(() => patch(`/api/symbols/${s.id}`, { peers: v }), () => `${s.symbol}: peers ${v.join(", ") || "cleared"}.`); }} /></div>
+              : (s.peers.join(", ") || <span className="text-dim">{s.suggested_peers.length ? `suggested: ${s.suggested_peers.join(", ")}` : "—"}</span>) },
             { k: "excluded", h: "Exclude", r: (s) => manage
               ? <Btn small tone={s.excluded ? "warn" : "dim"} onClick={() => run(() => patch(`/api/symbols/${s.id}`, { excluded: !s.excluded }), () => `${s.symbol}: ${s.excluded ? "no longer excluded" : "excluded (scanning off)"}.`)}>
                   {s.excluded ? "excluded" : "exclude"}</Btn>
