@@ -35,7 +35,7 @@ These are the same in-app steps as before; no terminal or environment variables 
 | Verification | Result |
 |---|---|
 | Installed-layout check here: the app's supervisor run from a folder laid out exactly like the installer's, with no source checkout, using real Docker | **17 / 17 passed** |
-| Windows CI: build the installer, **silent install**, every file checked against the manifest, packaged connector stdin/stdout, the app's launcher from the install folder, **silent uninstall** | See section 4 |
+| Windows CI: build the installer, **silent install**, every file checked against the manifest, packaged connector stdin/stdout, the app's launcher from the install folder, **silent uninstall** | **Passed** (run 43503261385) |
 | Desktop core tests | **89 passed** (88 + 1 new); clippy clean with `-D warnings` |
 | Windows connector tests | 36 passed |
 | Tauri 2.12 accepts the release config; resource layout inspected in a built package | Passed |
@@ -145,7 +145,22 @@ Dockerfiles.
 
 The workflow now also runs when the engine, connector or infrastructure change, because the installer carries them.
 
-**Result:** recorded below after the run completes.
+**Result: passed.** Run 43503261385, commit `53299dc`. From its log:
+
+```
+installed to C:\Program Files\RR Trading One
+detect exit 0: []                                     packaged connector answered on stdout (no MT5 on the runner)
+register exit 1: {"ok": false, "error": "Cannot reach the RR AI Engine at http://127.0.0.1:9: [WinError 10061] ..."}
+                                                      token read from stdin, error reported on stdout
+created stack secrets in C:\ProgramData\RR Trading One\secrets
+docker_installed True ... compose_file True C:\Program Files\RR Trading One\infrastructure\compose.yml
+wsl2 True ... gateway_port True
+mt5-detect via the app's launcher: []                 the app's own launcher code ran the installed connector
+uninstalled
+```
+
+Every manifest entry matched its SHA-256 after installation. The installer artifact is 53.8 MB zipped (artifact
+14075378596). The same files were rebuilt by run 43503488436 (documentation-only commit).
 
 ## 5. Not verified / limitations
 
