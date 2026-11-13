@@ -60,6 +60,8 @@ def main() -> int:
     from connector.adapter import MT5Adapter
     from fake_mt5 import FakeMT5
     fake = FakeMT5(login=int(os.environ.get("FAKE_MT5_LOGIN", "1001")), server=os.environ.get("FAKE_MT5_SERVER", "Demo-Server"))
+    for name in filter(None, os.environ.get("FAKE_MT5_DROP", "").split(",")):   # simulate a broker no longer offering it
+        fake.symbols.pop(name, None)
     app_mod.make_adapter = lambda: MT5Adapter(fake)
     terminals.find_terminals = lambda *a, **k: [terminals.Terminal(folder=os.path.dirname(FAKE_EXE), exe=FAKE_EXE,
                                                                    running=True, sources=["test"])]

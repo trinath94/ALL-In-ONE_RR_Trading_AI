@@ -1,0 +1,38 @@
+# Engine web UI (Next.js): reproducible install and strict production build. Also guards that the UI stays local-first
+# (no runtime Google Fonts requests; fonts are bundled).
+name: frontend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Build (strict TypeScript)
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+      - name: No runtime requests to Google Fonts
+        run: |
+          ! grep -rl "fonts.googleapis\|fonts.gstatic" app components lib .next/static .next/server
+          test "$(find .next/static -name '*.woff2' | wc -l)" -gt 0
