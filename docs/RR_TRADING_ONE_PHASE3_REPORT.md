@@ -20,6 +20,7 @@ stack** in this environment, using the same supervisor code the app uses:
 | Desktop core tests (real Windows, CI) | **60 of 61 passed, including the DPAPI round-trip**. The one failure was a CRLF test bug, fixed (see 6). |
 | Phase 2 Windows build (CI, `windows-latest`) | **Passed**: app + unsigned NSIS package built (run 43406772448) |
 | Engine console IPC isolation (real app) | **Proven at runtime**: 3 of 3 IPC calls refused; external navigation blocked |
+| Phase 3 CI (commit `c55dcce`) | **Passed.** Desktop run 43412803479: core tests on Linux and Windows, clippy, Windows build + NSIS. Backend run 43412803742: full suite on PostgreSQL 16 + Redis 7, plus the compose safety checks. |
 
 ## 2. What was built
 

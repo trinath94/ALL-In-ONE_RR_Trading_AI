@@ -34,9 +34,41 @@ Each action expands into a fixed plan of typed steps. No variant carries a comma
 * **Stop plans** are best-effort.
 * **Migrations** never run without a fresh `pg_dump`.
 * **Health** is verified from Compose health states plus the engine's `/api/health`.
-* **The native MT5 connector** is supervised from Phase 4; until then its steps report "skipped".
+* **The native MT5 connector** is a user-session process (see MT5 Manager below). Its steps are skipped, not
+  failed, while no profile is selected or the connector is not yet linked.
 
 `cargo run -p rr-one-core --example supervise -- <action>` runs the same code from a terminal.
+
+## MT5 Manager (Phase 4)
+
+The existing `windows-connector` runs **headless** (`RR_MT5_Connector.exe --headless PROFILE.json`):
+* as a normal process in the signed-in user's session, started by the desktop app;
+* never as a service and never in Session 0;
+* dialling out to the loopback gateway (`ws://127.0.0.1:47810`), so nothing listens on the PC.
+
+It keeps all of the original connector's protections:
+* the execution journal, idempotency, and HMAC and replay checks;
+* the PC-side LIVE lock, lot/position/daily-loss caps and emergency stop.
+
+**Profiles** (`%APPDATA%\RR Trading One\mt5_profiles.json`) name the `terminal64.exe`, the broker server and the
+expected account login.
+* Nothing is selected automatically.
+* A terminal logged in to a different account is disconnected (`PROFILE_MISMATCH`), never traded.
+
+**Linking**
+* A one-time, 10-minute token is issued inside the local `api` container and passed to the connector on stdin.
+* The engine issues the connector two credentials: a trading credential and a **read-only** one.
+
+**Isolation**
+* The connector's data lives in `%LOCALAPPDATA%\RR Trading One\connector`, with its own Credential Manager namespace.
+* A standalone RR MT5 Connector linked to a remote engine is therefore never overwritten.
+
+**Supervision files** in that folder:
+* `status.json`: written every second, login masked, no secrets;
+* `stop.request`: graceful stop;
+* `instance.lock`: single instance.
+
+**Force-terminate rule:** a process is terminated only if `status.json` proves the PID is our live connector.
 
 ## Locations
 

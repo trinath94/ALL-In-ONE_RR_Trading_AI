@@ -14,6 +14,7 @@ from app.services import trading as tr
 from app.workers import main as legacy
 from app.workers import roles
 from tests.test_execution_e2e import allow_unknown_news, stack  # noqa: F401 (fixture)
+from tests.test_mt5_agent import engine  # noqa: F401 (fixture)
 
 UTC = timezone.utc
 
@@ -192,3 +193,15 @@ def test_monitor_cycle_runs_startup_checks_and_never_opens_positions(stack):
     with session_scope() as db:
         assert tr.get_state(db).startup_checks_passed is True
     assert orders() == 0 and not fake.positions
+
+
+def test_relinking_rotates_the_credential_fingerprint(engine, tmp_path, monkeypatch):
+    """Re-linking the same PC keeps the agent id but must change the key the roles reconnect on."""
+    from tests.test_mt5_agent import make_manager, new_token
+    m, *_ = make_manager(tmp_path)
+    m.register(engine, new_token())
+    k1 = roles.current_agent_key()
+    m.register(engine, new_token())          # same device again: credentials rotate
+    k2 = roles.current_agent_key()
+    assert k1 and k2 and k1[0] == k2[0] and k1[1] != k2[1]
+    assert roles.current_agent_id() == k1[0]

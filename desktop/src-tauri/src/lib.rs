@@ -248,10 +248,7 @@ fn mt5_delete_profile(state: State<'_, AppState>, profile_id: String) -> Result<
 #[tauri::command]
 async fn mt5_link(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     with_supervisor(&state, |sup, native| {
-        let n = native.ok_or("the RR MT5 Connector build was not found")?;
-        let p = n.profile.as_ref().ok_or("select an MT5 profile first")?;
-        let token = sup.issue_agent_token(&p.profile_id)?;
-        n.ctl.register(&token)
+        conn::link(sup, native.ok_or("the RR MT5 Connector build was not found")?)
     })
     .await
 }

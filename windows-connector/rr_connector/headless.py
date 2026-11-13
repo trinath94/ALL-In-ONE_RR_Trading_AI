@@ -209,7 +209,6 @@ def run(profile_path: str, adapter=None, finder=None, poll_s: float = 1.0) -> in
             if stop_path.exists():
                 stop_path.unlink(missing_ok=True)
                 break
-            snap = dict(m.snapshot)
             att = m.link.attached
             if att is None and time.monotonic() >= next_try:
                 try:
@@ -217,6 +216,7 @@ def run(profile_path: str, adapter=None, finder=None, poll_s: float = 1.0) -> in
                     att = m.link.attached
                 except ConnectError as exc:
                     state, detail, next_try = exc.code, str(exc), time.monotonic() + 10
+            snap = dict(m.snapshot)           # after the connect attempt: never report a stale state
             if att is not None:
                 login = int((m.snapshot.get("account") or {}).get("login") or att.account.get("login") or 0)
                 if login != profile.expected_login:

@@ -2,6 +2,7 @@
 //!
 //! cargo run -p rr-one-core --example supervise -- prereqs
 //! cargo run -p rr-one-core --example supervise -- status
+//! cargo run -p rr-one-core --example supervise -- mt5-status | mt5-detect | mt5-link
 //! cargo run -p rr-one-core --example supervise -- <action_id> ["START TRADING WORKER"]
 use rr_one_core::actions::Action;
 use rr_one_core::health;
@@ -37,6 +38,14 @@ fn main() {
     let out = match cmd.as_str() {
         "prereqs" => serde_json::to_value(sup.prerequisites()).unwrap(),
         "status" => serde_json::to_value(sup.status().unwrap_or_else(|e| fail(&e))).unwrap(),
+        // Same calls as the desktop app's MT5 Manager.
+        "mt5-status" => serde_json::to_value(native.as_ref().map(|n| n.ctl.status())).unwrap(),
+        "mt5-detect" => serde_json::to_value(native.as_ref().ok_or("no connector").and_then(|n| n.ctl.detect().map_err(|_| "detect failed"))
+            .unwrap_or_else(|e| fail(e))).unwrap(),
+        "mt5-link" => {
+            let n = native.as_ref().unwrap_or_else(|| fail("the RR MT5 Connector build was not found"));
+            rr_one_core::connector::link(&sup, n).unwrap_or_else(|e| fail(&e))
+        }
         id => {
             let action = Action::parse(id).unwrap_or_else(|e| fail(&e.to_string()));
             let rep = sup.execute(action, args.get(1).map(String::as_str)).unwrap_or_else(|e| fail(&e.to_string()));

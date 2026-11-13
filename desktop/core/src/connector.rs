@@ -282,6 +282,22 @@ fn terminate(pid: u32) -> bool {
 }
 
 // ---- control --------------------------------------------------------------------------------------------------
+/// Why a start did not produce a running connector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartError {
+    /// Setup is incomplete: the connector has not been linked to this engine yet.
+    NotLinked(String),
+    Failed(String),
+}
+
+impl std::fmt::Display for StartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StartError::NotLinked(m) | StartError::Failed(m) => f.write_str(m),
+        }
+    }
+}
+
 pub struct ConnectorCtl<'a> {
     pub launch: Launch,
     pub home: PathBuf,
@@ -334,22 +350,23 @@ impl ConnectorCtl<'_> {
     }
 
     /// Start (or confirm) the connector for `profile`. Returns a human-readable state.
-    pub fn start(&self, profile: &Mt5Profile) -> Result<String, String> {
-        profile.validate()?;
-        std::fs::create_dir_all(&self.home).map_err(|e| e.to_string())?;
+    pub fn start(&self, profile: &Mt5Profile) -> Result<String, StartError> {
+        use StartError::Failed;
+        profile.validate().map_err(Failed)?;
+        std::fs::create_dir_all(&self.home).map_err(|e| Failed(e.to_string()))?;
         let st = self.status();
         if st.running {
             let same = st.doc.as_ref().and_then(|d| d.pointer("/profile/id")).and_then(|v| v.as_str()) == Some(&profile.profile_id);
             return if same { Ok(format!("already running ({})", st.state)) } else {
-                Err("the connector is running with another profile; stop it first".into())
+                Err(Failed("the connector is running with another profile; stop it first".into()))
             };
         }
         let mut doc = serde_json::to_value(profile).expect("profile json");
         doc["engine_url"] = serde_json::Value::String(self.engine_url.clone());
         let ppath = self.home.join(RUNTIME_PROFILE);
-        write_atomic(&ppath, doc.to_string().as_bytes()).map_err(|e| e.to_string())?;
+        write_atomic(&ppath, doc.to_string().as_bytes()).map_err(|e| Failed(e.to_string()))?;
         let _ = std::fs::remove_file(self.home.join(STOP_FILE));
-        let pid = self.spawn_detached(&ppath)?;
+        let pid = self.spawn_detached(&ppath).map_err(Failed)?;
         let t0 = Instant::now();
         while t0.elapsed() < START_WAIT {
             std::thread::sleep(Duration::from_millis(250));
@@ -358,17 +375,17 @@ impl ConnectorCtl<'_> {
             if ours && st.running {
                 return Ok(format!("running ({}{})", st.state, if st.detail.is_empty() { String::new() } else { format!(": {}", st.detail) }));
             }
-            if ours && matches!(st.state.as_str(), "NOT_REGISTERED" | "INVALID_PROFILE") {
-                return Err(match st.state.as_str() {
-                    "NOT_REGISTERED" => "the connector is not linked to this engine yet: use Link in MT5 Manager".into(),
-                    _ => format!("invalid MT5 profile: {}", st.detail),
-                });
+            if ours && st.state == "NOT_REGISTERED" {
+                return Err(StartError::NotLinked("not linked to this engine yet: use Link in MT5 Manager".into()));
+            }
+            if ours && st.state == "INVALID_PROFILE" {
+                return Err(Failed(format!("invalid MT5 profile: {}", st.detail)));
             }
             if !pid_alive(pid) && !ours {
-                return Err(format!("the connector exited during start-up (see {})", self.home.join("logs").display()));
+                return Err(Failed(format!("the connector exited during start-up (see {})", self.home.join("logs").display())));
             }
         }
-        Err("the connector did not report status within 25 s".into())
+        Err(Failed("the connector did not report status within 25 s".into()))
     }
 
     fn spawn_detached(&self, profile_path: &Path) -> Result<u32, String> {
@@ -446,6 +463,17 @@ impl ConnectorSetup {
     }
 }
 
+/// Link the selected profile's connector to the local engine. Refused while the connector runs: re-linking rotates
+/// its credentials, and a running connector would keep the old ones in memory.
+pub fn link(sup: &crate::supervisor::Supervisor<'_>, n: &LocalConnector<'_>) -> Result<serde_json::Value, String> {
+    let p = n.profile.as_ref().ok_or("select an MT5 profile first")?;
+    if n.ctl.status().running {
+        return Err("stop the MT5 connector before linking it again".into());
+    }
+    let token = sup.issue_agent_token(&p.profile_id)?;
+    n.ctl.register(&token)
+}
+
 /// The supervisor's view of the connector: starting needs an explicitly selected profile.
 pub struct LocalConnector<'a> {
     pub ctl: ConnectorCtl<'a>,
@@ -459,7 +487,8 @@ impl crate::supervisor::NativeConnector for LocalConnector<'_> {
             None => (Outcome::Skipped, "no MT5 profile selected (choose one in MT5 Manager)".into()),
             Some(p) => match self.ctl.start(p) {
                 Ok(m) => (Outcome::Ok, format!("{} [{}]", m, p.name)),
-                Err(e) => (Outcome::Failed, e),
+                Err(StartError::NotLinked(m)) => (Outcome::Skipped, m),
+                Err(StartError::Failed(m)) => (Outcome::Failed, m),
             },
         }
     }
@@ -620,7 +649,7 @@ os.remove(os.path.join(home, "stop.request")); st("STOPPED", "", {"id": p["profi
         assert!(st.running && st.pid.is_some());
         assert!(ctl.start(&profile()).unwrap().contains("already running"), "idempotent start");
         let other = Mt5Profile { profile_id: "other".into(), ..profile() };
-        assert!(ctl.start(&other).unwrap_err().contains("another profile"));
+        assert!(ctl.start(&other).unwrap_err().to_string().contains("another profile"));
         let pid = st.pid.unwrap();
         assert_eq!(ctl.stop().unwrap(), "stopped");
         assert_eq!(ctl.status().state, "STOPPED");
@@ -634,10 +663,32 @@ os.remove(os.path.join(home, "stop.request")); st("STOPPED", "", {"id": p["profi
 
     #[cfg(unix)]
     #[test]
+    fn linking_is_refused_while_the_connector_runs() {
+        let t = tempfile::tempdir().unwrap();
+        let ctl = fake_ctl(&t.path().join("home"), &t.path().join("fake.py"), vec![]);
+        ctl.start(&profile()).unwrap();
+        let secrets = crate::secrets::StackSecrets::generate().unwrap();
+        let cfg = crate::supervisor::SupervisorConfig {
+            compose: crate::compose::Compose { docker: "/nonexistent/docker".into(), file: "/nonexistent/compose.yml".into() },
+            gateway_port: 47810, data_dir: t.path().into(), backups_dir: t.path().join("b"), log_file: None, wsl: None,
+        };
+        let sup = crate::supervisor::Supervisor { cfg, runner: &crate::runner::SystemRunner, secrets: &secrets,
+            probe: Box::new(|_| unreachable!()), connector: None };
+        let lc = LocalConnector { ctl, profile: Some(profile()) };
+        let err = link(&sup, &lc).unwrap_err();
+        assert!(err.contains("stop the MT5 connector"), "{err}");
+        lc.ctl.stop().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn unregistered_connector_is_reported_not_retried() {
         let t = tempfile::tempdir().unwrap();
         let ctl = fake_ctl(&t.path().join("home"), &t.path().join("fake.py"), vec![("FAKE_NOT_REGISTERED".into(), "1".into())]);
-        assert!(ctl.start(&profile()).unwrap_err().contains("not linked"));
+        assert!(matches!(ctl.start(&profile()).unwrap_err(), StartError::NotLinked(_)));
+        use crate::supervisor::{NativeConnector, Outcome};
+        let lc = LocalConnector { ctl, profile: Some(profile()) };
+        assert_eq!(lc.start().0, Outcome::Skipped, "an unlinked connector is incomplete setup, not a failure");
     }
 
     #[cfg(unix)]

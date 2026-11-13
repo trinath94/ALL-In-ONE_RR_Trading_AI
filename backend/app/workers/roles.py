@@ -110,12 +110,23 @@ def publish_disconnected(reason: str, r=None) -> None:
 
 def current_agent_id() -> int | None:
     """Registered relay agent, if relay mode is active (None in direct mode)."""
+    key = current_agent_key()
+    return key[0] if key else None
+
+
+def current_agent_key() -> tuple[int, str] | None:
+    """(agent id, credential fingerprint). Re-linking the same PC keeps the id but rotates its secrets; the
+    fingerprint (SHA-256 of the stored ciphertexts) changes with them. Never decrypts anything."""
     if get_settings().bridge_mode != "relay":
         return None
+    import hashlib
     from app.execution import relay
-    with session_scope() as db:      # id only: never decrypts a secret (read-scoped roles lack the trading key)
+    with session_scope() as db:
         agent = relay.select_agent(db)
-        return agent.id if agent else None
+        if agent is None:
+            return None
+        material = f"{agent.bridge_secret_enc}|{agent.bridge_readonly_secret_enc or ''}"
+        return agent.id, hashlib.sha256(material.encode()).hexdigest()
 
 
 def _noop_execute(_signal_id: int) -> None:
@@ -218,7 +229,7 @@ def run(role: str) -> int:
     try:
         agent_activity(f"{role}_role", "processing", f"{role} role started (pid {os.getpid()})")
         started_at = datetime.now(UTC)
-        last_ok, clock, last_scan, last_agent_check = [True], {}, 0.0, 0.0
+        last_ok, clock, last_scan, last_agent_check, agent_key = [True], {}, 0.0, 0.0, None
         agent = None
         if role == "analysis" and s.anthropic_api_key:
             from app.agents.claude_agent import ClaudeAgent
@@ -227,11 +238,12 @@ def run(role: str) -> int:
         while not stop["flag"]:
             r.expire(lock_key(role), LOCK_TTL)
             try:
-                # (Re)connect: none registered yet, or the registered relay agent changed (re-registration).
+                # (Re)connect: none registered yet, another agent selected, or the same agent re-linked (its
+                # credentials rotated) — a stale secret would otherwise fail every request with "bad signature".
                 if bridge is not None and time.time() - last_agent_check > 30:
                     last_agent_check = time.time()
-                    if s.bridge_mode == "relay" and current_agent_id() != bridge.cfg.relay_agent_id:
-                        log.info("registered MT5 connector changed; reconnecting")
+                    if s.bridge_mode == "relay" and current_agent_key() != agent_key:
+                        log.info("registered MT5 connector or its credentials changed; reconnecting")
                         bridge.close()
                         bridge, auto = None, None
                 if bridge is None:
@@ -242,6 +254,7 @@ def run(role: str) -> int:
                         time.sleep(5)
                         continue
                     last_agent_check = time.time()
+                    agent_key = current_agent_key()
                     auto = legacy.auto_execute_factory(bridge) if role == "trading" else None
                 if role == "monitor":
                     monitor_cycle(bridge, last_ok, clock)

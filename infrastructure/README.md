@@ -24,6 +24,13 @@ The local stack for **LOCAL WINDOWS MODE** (Docker Desktop + WSL2). It is manage
 | `learner` | Part 25/26 learning jobs | internal + egress | Original scheduler via `app.learning_engine.entry` |
 | `trading-worker` | Auto-execution only | internal | Behind the `trading` **profile**: a plain `up` never starts it. `restart: "no"`. |
 
+**Role-scoped MT5 credentials (Phase 4).** `analysis` and `learner` run with `RR_BRIDGE_SCOPE=read` and **without**
+`RR_ENCRYPTION_KEY`.
+* They sign MT5 requests with the agent's **read-only** secret, which is encrypted with `RR_BRIDGE_READ_KEY`.
+* The original connector on the PC refuses that secret for `POST /executions`.
+* Without the main encryption key they cannot decrypt the trading secret either.
+* `api`, `monitor` and `trading-worker` keep full scope.
+
 The monitor, analysis and trading roles replace the original single worker loop (decision D1). They reuse the
 same engine functions, so auto-execution still requires all of the following:
 * `auto_trading` is on;
@@ -36,8 +43,8 @@ The trading role also ignores signals created before it started.
 
 ## Secrets
 
-`compose.yml` requires `RR_ONE_DB_PASSWORD`, `RR_ONE_REDIS_PASSWORD`, `RR_ONE_JWT_SECRET`, `RR_ONE_ENCRYPTION_KEY`
-and `RR_ONE_BRIDGE_SECRET`. Each uses `${…:?}` interpolation, so Compose refuses to run if any is missing.
+`compose.yml` requires `RR_ONE_DB_PASSWORD`, `RR_ONE_REDIS_PASSWORD`, `RR_ONE_JWT_SECRET`, `RR_ONE_ENCRYPTION_KEY`,
+`RR_ONE_BRIDGE_SECRET` and `RR_ONE_BRIDGE_READ_KEY`. Each uses `${…:?}` interpolation, so Compose refuses to run if any is missing.
 
 The supervisor generates them once and stores them DPAPI-encrypted in
 `C:\ProgramData\RR Trading One\secrets\stack.secrets`, with a restricted ACL. It passes them to Docker Compose only

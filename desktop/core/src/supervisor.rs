@@ -256,12 +256,14 @@ impl<'a> Supervisor<'a> {
                 problems.push(format!("engine health check: {}", p.detail));
             }
         }
+        // The connector's state is always reported; it is a failure only when this plan started it.
         let mut connector_note = String::new();
-        if expected.contains(&Service::Mt5Connector) {
+        if self.connector.is_some() {
             let (o, d) = self.native(|c| c.health());
-            match o {
-                Outcome::Failed => problems.push(d),
-                _ => connector_note = format!("; {d}"),
+            if o == Outcome::Failed && expected.contains(&Service::Mt5Connector) {
+                problems.push(d);
+            } else {
+                connector_note = format!("; {d}");
             }
         }
         let running = services.iter().filter(|x| x.is_running()).count();
@@ -658,6 +660,22 @@ mod tests {
         s.connector = Some(&n2);
         let rep = s.execute(Action::StartAll, None).unwrap();
         assert!(!rep.ok, "a connector that is not running fails verification");
+    }
+
+    #[test]
+    fn system_health_reports_the_connector_without_requiring_it() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let up = native(Outcome::Ok, true);
+        let mut s = sup(&e, &r, healthy_probe());
+        s.connector = Some(&up);
+        let rep = s.execute(Action::SystemHealth, None).unwrap();
+        assert!(rep.ok && rep.steps[0].detail.contains("MT5 connector running"), "{rep:#?}");
+        let down = native(Outcome::Ok, false);
+        s.connector = Some(&down);
+        let rep = s.execute(Action::SystemHealth, None).unwrap();
+        assert!(rep.ok, "not started by this plan: reported, not a failure");
+        assert!(rep.steps[0].detail.contains("MT5 connector not running"));
     }
 
     #[test]

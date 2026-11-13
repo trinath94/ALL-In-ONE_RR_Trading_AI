@@ -53,12 +53,12 @@ def wait(cond, timeout=10.0):
     return False
 
 
-def run_in_thread(profile, fake, kr):
+def run_in_thread(profile, fake, kr, poll_s=0.1):
     from connector.adapter import MT5Adapter
     term = Terminal(folder="C:/MT5", exe=EXE, running=True, sources=["process"])
     box = {}
     t = threading.Thread(target=lambda: box.setdefault("rc", headless.run(profile, MT5Adapter(fake), lambda: [term],
-                                                                          poll_s=0.1)), daemon=True)
+                                                                          poll_s=poll_s)), daemon=True)
     t.start()
     return t, box
 
@@ -127,6 +127,20 @@ def test_connects_to_profile_terminal_and_stops_gracefully(kr, home, tmp_path):
     t.join(timeout=15)
     assert not t.is_alive() and box["rc"] == headless.EXIT_OK
     assert status(home)["state"] == "STOPPED" and not (home / headless.STOP_FILE).exists()
+
+
+def test_first_status_after_connect_is_not_stale(kr, home, tmp_path):
+    """Regression: the first status written must reflect the connect that just happened (was DISCONNECTED)."""
+    from fake_mt5 import FakeMT5
+    registered(kr)
+    t0 = time.time()
+    t, box = run_in_thread(profile_file(tmp_path), FakeMT5(login=1001, server="Demo-Server"), kr, poll_s=3)
+    assert wait(lambda: status(home).get("state") not in (None, ""), timeout=2.5)
+    assert time.time() - t0 < 3, "must be the first write (the next one comes 3 s later)"
+    assert status(home)["state"] == "CONNECTED", status(home)
+    (home / headless.STOP_FILE).touch()
+    t.join(timeout=10)
+    assert box["rc"] == headless.EXIT_OK
 
 
 def test_wrong_account_is_disconnected_not_traded(kr, home, tmp_path):

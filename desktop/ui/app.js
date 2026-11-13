@@ -98,7 +98,7 @@ function renderServices(statuses) {
     const name = composeName(x.id);
     const st = name ? byName.get(name) : null;
     let state = "—", cls = "";
-    if (x.id === "mt5_connector") state = "managed from Phase 4";
+    if (x.id === "mt5_connector") state = "see MT5 Manager";
     else if (st) {
       state = st.State + (st.Health ? ` / ${st.Health}` : "") + (st.State === "exited" ? ` (exit ${st.ExitCode})` : "");
       cls = st.Health === "unhealthy" || st.State === "restarting" || (st.State === "exited" && st.ExitCode !== 0)
