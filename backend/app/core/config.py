@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # it and the connector refuses it for executions; such processes are not given RR_ENCRYPTION_KEY, so they
     # cannot decrypt the trading secret either. Defaults keep the original single-secret behaviour.
     bridge_read_key: str = ""
+    # RR Trading One Phase 9: Fernet key for AI provider API keys stored in the database (ai_providers). Held only by
+    # the api and analysis containers (desktop stack secrets, DPAPI). Without it, provider keys cannot be stored.
+    ai_keys_key: str = ""
+    agent_run_retention_days: int = 30
     bridge_scope: str = "full"            # full | read
     # RR Trading One: key for the local supervisor API (/api/v1/local). Empty = API disabled (404).
     supervisor_key: str = ""

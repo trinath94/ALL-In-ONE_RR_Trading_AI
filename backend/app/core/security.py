@@ -90,6 +90,21 @@ def decrypt_read_secret(ciphertext: str) -> str:
     return Fernet(key.encode()).decrypt(ciphertext.encode()).decode()
 
 
+def encrypt_ai_key(plaintext: str) -> str:
+    """Encrypt an AI provider API key with RR_AI_KEYS_KEY (Phase 9)."""
+    key = get_settings().ai_keys_key
+    if not key:
+        raise RuntimeError("RR_AI_KEYS_KEY is not configured; refusing to store AI provider keys")
+    return Fernet(key.encode()).encrypt(plaintext.encode()).decode()
+
+
+def decrypt_ai_key(ciphertext: str) -> str:
+    key = get_settings().ai_keys_key
+    if not key:
+        raise RuntimeError("RR_AI_KEYS_KEY is not configured")
+    return Fernet(key.encode()).decrypt(ciphertext.encode()).decode()
+
+
 def encrypt_secret(plaintext: str) -> str:
     return _fernet().encrypt(plaintext.encode()).decode()
 

@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import auth, intel, learning, local, mt5_agent, system, trading
+from app.api.routes import ai, auth, intel, learning, local, mt5_agent, system, trading
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -38,5 +38,5 @@ async def unhandled(request: Request, exc: Exception):
 
 
 for r in (auth.router, auth.users, trading.router, intel.router, system.router, learning.learning, learning.intel,
-          mt5_agent.router, local.router):
+          mt5_agent.router, local.router, ai.router):
     app.include_router(r)

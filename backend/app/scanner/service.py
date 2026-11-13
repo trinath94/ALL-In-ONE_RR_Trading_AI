@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
@@ -23,6 +24,8 @@ from app.strategies import registry
 from app.strategies.base import CAP_PEERS, CAP_REAL_VOLUME, CAP_TICK_VOLUME, StrategyContext
 from app.services.events import agent_activity, get_redis, publish
 from app.scanner import scheduler as sched
+from app.orchestration.agents import SPECIALIST_AGENT
+from app.orchestration.orchestrator import Cycle, NullCycle
 
 log = logging.getLogger("scanner")
 UTC = timezone.utc
@@ -159,8 +162,10 @@ def calibrator(db: Session) -> Calibrator:
 
 
 def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: dict[str, dict], stats: dict,
-            calib: Calibrator, cfg: SignalConfig) -> dict | None:
+            calib: Calibrator, cfg: SignalConfig, cycle: Cycle | None = None) -> dict | None:
     s = get_settings()
+    cyc = cycle or NullCycle()
+    ref = f"{sym.broker_symbol}:{tf}"
     now = datetime.now(UTC)
     from app.signals.engine import TF_MINUTES
     df = drop_forming_bar(bars_to_df(bridge.rates(sym.broker_symbol, tf, s.scan_bars)), TF_MINUTES[tf], now)
@@ -170,9 +175,10 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     htf_tf = HTF_OF.get(tf)
     htf = {}
     if htf_tf:
-        h = drop_forming_bar(bars_to_df(bridge.rates(sym.broker_symbol, htf_tf, 300)), TF_MINUTES[htf_tf], now)
-        if len(h):
-            htf[htf_tf] = h
+        with cyc.step("multi_timeframe", ref):
+            h = drop_forming_bar(bars_to_df(bridge.rates(sym.broker_symbol, htf_tf, 300)), TF_MINUTES[htf_tf], now)
+            if len(h):
+                htf[htf_tf] = h
     tick = bridge.tick(sym.broker_symbol)
     caps = {CAP_TICK_VOLUME}
     if "real_volume" in df and df["real_volume"].sum() > 0:
@@ -184,18 +190,28 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
         if peers:
             caps.add(CAP_PEERS)
     ctx = StrategyContext(df, sym.broker_symbol, tf, htf=htf, peers=peers, point=float(sym.point), data_caps=caps)
-    reg = rg.classify(df)
-    sigs, diag = registry.evaluate_all(ctx, enabled)
+    with cyc.step("market_regime", ref):
+        reg = rg.classify(df)
+    cyc.note("market_regime", {f"regime_{reg.primary}": 1})
+    with cyc.step("original_strategy_analysis", ref):
+        sigs, diag = registry.evaluate_all(ctx, enabled)
     outcomes = record_evaluations(diag, not_applicable)
+    cyc.note("original_strategy_analysis", outcomes)
     from app.news.service import status_for
-    news, _ = status_for(db, sym, sym.broker_symbol)
+    with cyc.step("news_events", ref):
+        news, _ = status_for(db, sym, sym.broker_symbol)
+    cyc.note("news_events", {f"news_{news}": 1})
     metas = registry.all_strategies()
     spread = (float(tick.get("ask", 0)) - float(tick.get("bid", 0))) if tick else 0.0
     mctx = MarketContext(sym.broker_symbol, tf, float(tick.get("bid") or df.close.iloc[-1]), df.index[-1].to_pydatetime(),
                          ctx.atr_last(), spread, reg.primary, reg.tags, ctx.htf_bias(), ss.current_sessions(pd.Timestamp(now)),
                          news, {k: metas[k].regimes for k in enabled}, stats)
-    res = build_signal(sigs, mctx, cfg, calib)
-    intel, consensus_rec = _intelligence(db, df, sym, tf, sigs, res, news, tick, mctx, metas, enabled)
+    b = mctx.htf_bias
+    cyc.note("multi_timeframe", {"bias_bullish": int(b > 0), "bias_bearish": int(b < 0), "bias_neutral": int(b == 0)})
+    with cyc.step("signal_quality", ref):
+        res = build_signal(sigs, mctx, cfg, calib)
+    cyc.note("signal_quality", {f"decision_{res.decision}": 1})
+    intel, consensus_rec = _intelligence(db, df, sym, tf, sigs, res, news, tick, mctx, metas, enabled, cyc, ref)
     ar = AnalysisResult(symbol_id=sym.id, timeframe=tf, bar_time=df.index[-1].to_pydatetime(), regime=reg.primary,
                         structure={"regime": reg.dict(), "htf_bias": mctx.htf_bias, "sessions": mctx.sessions,
                                    "news": news, "atr": mctx.atr, "price": mctx.price,
@@ -216,7 +232,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
             "intel": intel, "consensus_record": consensus_rec}
 
 
-def _intelligence(db: Session, df, sym, tf, sigs, res, news, tick, mctx, metas, enabled):
+def _intelligence(db: Session, df, sym, tf, sigs, res, news, tick, mctx, metas, enabled, cyc=None, ref=None):
     """Part 26 enrichment. Advisory by default; with RR_CONSENSUS_MODE=enforce a BUY/SELL that the
     consensus does not support is downgraded to WAIT (never upgraded)."""
     from app.intelligence import anomaly as anomaly_intel
@@ -270,8 +286,16 @@ def _intelligence(db: Session, df, sym, tf, sigs, res, news, tick, mctx, metas, 
         if news == "RESTRICTED":
             gates.append("news restriction window")
         cats = {code: metas[code].category for code in enabled}
-        cons = consensus.run(db, sigs, cats, ri, prob, gates, res.direction,
-                             record={"symbol": sym.broker_symbol, "timeframe": tf})
+        cyc = cyc or NullCycle()
+        with cyc.step("strategy_correlation", ref):
+            cons = consensus.run(db, sigs, cats, ri, prob, gates, res.direction,
+                                 record={"symbol": sym.broker_symbol, "timeframe": tf})
+        cyc.note("strategy_correlation", {f"consensus_{cons['decision']}": 1})
+        for v in cons["specialists"]:
+            agent = SPECIALIST_AGENT.get(v["specialist"])
+            if agent:
+                cyc.add(agent, ref=f"{ref}:{v['specialist']}", out={f"vote_{v['decision']}": 1},
+                        evidence={"timing": "evaluated together inside the consensus step (see strategy_correlation)"})
         rec = cons.pop("record", None)
         out["consensus"] = {k: cons[k] for k in ("decision", "agreement", "conflicts", "weights_version", "explanation")}
         out["consensus"]["specialists"] = [{"specialist": v["specialist"], "decision": v["decision"],
@@ -305,7 +329,7 @@ def persist_signal(db: Session, item: dict) -> TradingSignal | None:
     return sig
 
 
-def claude_review(db: Session, agent: ClaudeAgent, sig: TradingSignal, item: dict, extra: dict) -> None:
+def claude_review(db: Session, agent: ClaudeAgent, sig: TradingSignal, item: dict, extra: dict, cycle=None) -> None:
     r = item["result"]
     if not agent.throttle_ok(item["symbol"].broker_symbol, r.timeframe):
         return
@@ -319,6 +343,8 @@ def claude_review(db: Session, agent: ClaudeAgent, sig: TradingSignal, item: dic
         review, meta = agent.review(candidate)
     except AgentError as exc:
         conv.error = str(exc)
+        if cycle is not None:
+            cycle.add("signal_quality", ref=f"signal:{sig.id}", error=f"AI review: {str(exc)[:200]}")
         notify(db, "CLAUDE_ERROR", "Claude review failed", str(exc))
         agent_activity("claude_agent", "error", str(exc))
         # Without a review the candidate is not auto-executed (conservative)
@@ -326,6 +352,10 @@ def claude_review(db: Session, agent: ClaudeAgent, sig: TradingSignal, item: dic
         return
     conv.response, conv.input_tokens, conv.output_tokens = review.model_dump(), meta["input_tokens"], meta["output_tokens"]
     conv.latency_ms, conv.model = meta["latency_ms"], meta["model"]
+    if cycle is not None:
+        cycle.add("signal_quality", ref=f"signal:{sig.id}", ms=meta["latency_ms"], out={f"ai_review_{review.decision}": 1},
+                  provider=meta.get("provider", "anthropic"), model=meta["model"],
+                  evidence={"ai_output": "schema-validated and boundary-checked (confirm / downgrade / reject only)"})
     prob = extra.get("probability") or {}
     sig.ai_review = {**review.model_dump(), "model_versions": {
         "claude": meta["model"], "consensus": (extra.get("consensus") or {}).get("weights_version"),
@@ -357,13 +387,16 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
         from app.services.trading import get_state
         mode = get_state(db).active_mode
         enabled = enabled_strategies(db, mode)
+        t_stats = time.perf_counter()
         stats = strategy_stats(db)
+        stats_ms = (time.perf_counter() - t_stats) * 1000
         calib = calibrator(db)
         symbols = db.scalars(select(Symbol).where(Symbol.scan_enabled.is_(True), Symbol.tradable.is_(True))
                              .order_by(Symbol.priority, Symbol.canonical)).all()
         targets = [(x.id, x.broker_symbol, x.priority) for x in symbols]
         timeframes = scan_timeframes(db)
     report = sched.CycleReport(started_at=sched.now_iso(), timeframes=timeframes, symbols=len(targets))
+    cycle = Cycle("scan_cycle")
     agent_activity("market_scanner", "processing", f"Scanning {len(targets)} symbols x {timeframes}")
 
     # 1. Which jobs are due: a closed bar newer than the last one analysed (or every job, if once-per-bar is off).
@@ -390,7 +423,7 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
             with session_scope() as db:
                 sym = db.get(Symbol, job.symbol_id)
                 try:
-                    item = analyse(db, bridge, sym, job.tf, enabled, stats, calib, SignalConfig())
+                    item = analyse(db, bridge, sym, job.tf, enabled, stats, calib, SignalConfig(), cycle)
                 except Exception as exc:  # noqa: BLE001 - one symbol failing must not stop the scan
                     log.exception("scan %s %s failed", sym.broker_symbol, job.tf)
                     return {"symbol": sym.broker_symbol, "tf": job.tf, "error": str(exc)}
@@ -413,21 +446,43 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
                              budget_s=float(s.scan_cycle_budget_seconds), job_timeout_s=float(s.scan_job_timeout_seconds),
                              should_stop=should_stop, report=report)
     results = [x for x in results if x.get("outcome") is None]
-    ranked = sorted([r for r in results if r.get("signal_id") and r["decision"] in ("BUY", "SELL")],
-                    key=lambda r: r["score"], reverse=True)[: s.claude_max_candidates_per_scan]
+    if report.due:
+        cycle.add("symbol_scanner", ms=report.duration_s * 1000, started=cycle.started_at,
+                  out={k: getattr(report, k) for k in ("jobs_total", "due", "not_due", "analysed", "deferred",
+                                                        "timed_out", "errors", "insufficient_data")})
+        cycle.add("historical_performance", ref="strategy_stats", ms=stats_ms, out={"strategies_with_evidence": len(stats)},
+                  evidence={"sources": "OOS, walk-forward, paper and live results only (in-sample backtests excluded)"})
+    t_rank = time.perf_counter()
+    eligible = [r for r in results if r.get("signal_id") and r["decision"] in ("BUY", "SELL")]
+    ranked = sorted(eligible, key=lambda r: r["score"], reverse=True)[: s.claude_max_candidates_per_scan]
+    if eligible:
+        cycle.add("strategy_ranking", ref=[r["signal_id"] for r in ranked], ms=(time.perf_counter() - t_rank) * 1000,
+                  out={"candidates": len(eligible), "shortlisted": len(ranked)},
+                  evidence={"rule": f"top {s.claude_max_candidates_per_scan} BUY/SELL by engine score"})
     for r in ranked:
         with session_scope() as db:
             sig = db.get(TradingSignal, r["signal_id"])
             if agent is not None:
                 ar = db.get(AnalysisResult, sig.analysis_id)
                 sym = db.get(Symbol, sig.symbol_id)
+                sp_pts = (ar.structure or {}).get("spread_points")
                 item = {"result": _ResultView(sig, ar), "symbol": sym, "analysis": ar,
-                        "price": float(sig.entry or 0), "spread": 0.0, "regime": _RegimeView(ar)}
-                claude_review(db, agent, sig, item, _review_extra(db, sig, sym, ar, mode))
-            elif not s.anthropic_api_key:
-                sig.ai_review = {"decision": "UNREVIEWED", "error": "Claude API key not configured"}
+                        "price": float(sig.entry or 0),
+                        # gap 7.13: the spread measured at analysis time (was a constant 0.0)
+                        "spread": float(sp_pts) * float(sym.point) if sp_pts is not None else None,
+                        "regime": _RegimeView(ar)}
+                with cycle.step("historical_performance", f"signal:{sig.id}"):
+                    extra = _review_extra(db, sig, sym, ar, mode)
+                claude_review(db, agent, sig, item, extra, cycle)
+            else:
+                sig.ai_review = {"decision": "UNREVIEWED", "error": "no AI provider is configured for candidate review"}
         auto_execute(r["signal_id"])
     sched.publish_status(rds, report)
+    cycle.finish({"analysed": report.analysed, "due": report.due, "candidates": len(ranked),
+                  "timeframes": timeframes, "symbols": report.symbols})
+    if rds.set("rr:agents:prune", "1", nx=True, ex=3600):
+        from app.orchestration.orchestrator import prune
+        prune(s.agent_run_retention_days)
     agent_activity("market_scanner", "waiting", f"Scan complete: {report.analysed} analyses ({report.not_due} not due, "
                                                 f"{report.deferred} deferred), {len(ranked)} candidates")
     return {"analyses": report.analysed, "candidates": len(ranked), "errors": report.errors + report.timed_out,

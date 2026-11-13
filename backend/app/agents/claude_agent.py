@@ -134,7 +134,13 @@ class Discovery(BaseModel):
 
 
 class AgentError(Exception):
-    pass
+    """kind (RR Trading One Phase 9, for the provider gateway): rate_limited | connection | api | refusal |
+    truncated | invalid_output | error. The message is unchanged for existing callers."""
+
+    def __init__(self, message: str, kind: str = "error", retry_after: float | None = None):
+        super().__init__(message)
+        self.kind = kind
+        self.retry_after = retry_after
 
 
 class ClaudeAgent:
@@ -159,22 +165,27 @@ class ClaudeAgent:
                 messages=[{"role": "user", "content": json.dumps(user, default=str, separators=(",", ":"))}],
             )
         except anthropic.RateLimitError as exc:
-            raise AgentError(f"rate limited: {exc}") from exc
+            ra = exc.response.headers.get("retry-after") if getattr(exc, "response", None) is not None else None
+            raise AgentError(f"rate limited: {exc}", "rate_limited", float(ra) if ra and ra.isdigit() else None) from exc
         except anthropic.APIStatusError as exc:
-            raise AgentError(f"API error {exc.status_code}: {exc.message}") from exc
+            raise AgentError(f"API error {exc.status_code}: {exc.message}",
+                             "api" if exc.status_code < 500 else "connection") from exc
         except anthropic.APIConnectionError as exc:
-            raise AgentError(f"connection error: {exc}") from exc
+            raise AgentError(f"connection error: {exc}", "connection") from exc
         meta = {"model": resp.model, "latency_ms": (time.perf_counter() - t0) * 1000,
                 "input_tokens": resp.usage.input_tokens, "output_tokens": resp.usage.output_tokens,
                 "stop_reason": resp.stop_reason}
         if resp.stop_reason == "refusal":
-            raise AgentError("model declined the request (refusal)")
+            raise AgentError("model declined the request (refusal)", "refusal")
         if resp.stop_reason == "max_tokens":
-            raise AgentError("response truncated (max_tokens)")
+            raise AgentError("response truncated (max_tokens)", "truncated")
         text = next((b.text for b in resp.content if b.type == "text"), None)
         if not text:
-            raise AgentError("no text block in response")
-        return json.loads(text), meta
+            raise AgentError("no text block in response", "invalid_output")
+        try:
+            return json.loads(text), meta
+        except ValueError as exc:
+            raise AgentError(f"response is not JSON: {exc}", "invalid_output") from exc
 
     # -- Signal review ----------------------------------------------------------------------
     def throttle_ok(self, symbol: str, timeframe: str) -> bool:
@@ -200,7 +211,15 @@ class ClaudeAgent:
     # -- Strategy discovery / performance review ---------------------------------------------
     def discover(self, performance: dict, registry_summary: list[dict]) -> tuple[Discovery, dict]:
         agent_activity("strategy_optimisation", "analysing", "Claude performance review & strategy discovery")
-        sys = SYSTEM_PROMPT + """
+        data, meta = self._call(DISCOVERY_SYSTEM, {"task": "performance_review_and_discovery", "performance": performance,
+                                                   "registry": registry_summary}, EXPERIMENT_SCHEMA, max_tokens=32000)
+        try:
+            return Discovery.model_validate(data), meta
+        except ValidationError as exc:
+            raise AgentError(f"invalid structured output: {exc}") from exc
+
+
+DISCOVERY_SYSTEM = SYSTEM_PROMPT + """
 
 For this task you act as a quantitative research lead. Using ONLY the performance statistics and strategy registry \
 provided: identify the best and worst performers per regime/timeframe/session (citing sample sizes; treat < 30 trades \
@@ -208,12 +227,6 @@ as inconclusive), strategies that conflict or duplicate each other's logic, cand
 parameter experiments worth testing. Then propose at most 3 new experimental strategies or combinations, each with \
 precise, programmable entry/exit rules and a test plan. Proposals are research only: they are isolated from \
 production and must pass backtest, out-of-sample, walk-forward and paper trading plus administrator approval."""
-        data, meta = self._call(sys, {"task": "performance_review_and_discovery", "performance": performance,
-                                      "registry": registry_summary}, EXPERIMENT_SCHEMA, max_tokens=32000)
-        try:
-            return Discovery.model_validate(data), meta
-        except ValidationError as exc:
-            raise AgentError(f"invalid structured output: {exc}") from exc
 
 
 def enforce_boundaries(candidate: dict, review: Review) -> Review:

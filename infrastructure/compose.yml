@@ -95,6 +95,8 @@ services:
       <<: *backend-env
       # Local supervisor API (/api/v1/local): only the api container holds this key (desktop app <-> engine).
       RR_SUPERVISOR_KEY: ${RR_ONE_SUPERVISOR_KEY:?missing}
+      # Fernet key for AI provider API keys stored in the engine (Phase 9). Only api and analysis hold it.
+      RR_AI_KEYS_KEY: ${RR_ONE_AI_KEYS_KEY:?missing}
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips", "*"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"]
@@ -140,7 +142,10 @@ services:
   analysis:
     <<: *backend
     command: ["python", "-m", "app.workers.roles", "analysis"]
-    environment: *read-scope
+    environment:
+      <<: *read-scope
+      # Candidate review through the AI gateway decrypts the routed provider's key (Phase 9).
+      RR_AI_KEYS_KEY: ${RR_ONE_AI_KEYS_KEY:?missing}
     hostname: rr-analysis-role       # stable lock owner across container re-creation (upgrades)
     restart: unless-stopped
     stop_grace_period: 30s

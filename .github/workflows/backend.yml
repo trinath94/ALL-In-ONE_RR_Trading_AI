@@ -53,7 +53,7 @@ jobs:
         working-directory: .
         run: |
           ! docker compose -f infrastructure/compose.yml config -q 2>/dev/null
-          export RR_ONE_DB_PASSWORD=x RR_ONE_REDIS_PASSWORD=x RR_ONE_JWT_SECRET=x RR_ONE_ENCRYPTION_KEY=x RR_ONE_BRIDGE_SECRET=x RR_ONE_BRIDGE_READ_KEY=x RR_ONE_SUPERVISOR_KEY=x
+          export RR_ONE_DB_PASSWORD=x RR_ONE_REDIS_PASSWORD=x RR_ONE_JWT_SECRET=x RR_ONE_ENCRYPTION_KEY=x RR_ONE_BRIDGE_SECRET=x RR_ONE_BRIDGE_READ_KEY=x RR_ONE_SUPERVISOR_KEY=x RR_ONE_AI_KEYS_KEY=x
           docker compose -f infrastructure/compose.yml config -q
           ! docker compose -f infrastructure/compose.yml config --services | grep -qx trading-worker
           docker compose -f infrastructure/compose.yml --profile trading config --services | grep -qx trading-worker
@@ -61,6 +61,7 @@ jobs:
           docker compose -f infrastructure/compose.yml config --format json | python3 -c 'import json,sys; p=json.load(sys.stdin)["services"]["gateway"]["ports"][0]; assert p["host_ip"]=="127.0.0.1", p'
           docker compose -f infrastructure/compose.yml config --format json | python3 -c 'import json,sys; sv=json.load(sys.stdin)["services"]; [(lambda e: (e.get("RR_BRIDGE_SCOPE")=="read" and not e.get("RR_ENCRYPTION_KEY")) or sys.exit(n+" is not read-scoped"))(sv[n]["environment"]) for n in ("analysis","learner")]; [sv[n]["environment"].get("RR_BRIDGE_SCOPE","full")=="full" and sv[n]["environment"]["RR_ENCRYPTION_KEY"] or sys.exit(n) for n in ("api","monitor")]'
           docker compose -f infrastructure/compose.yml --profile trading config --format json | python3 -c 'import json,sys; sv=json.load(sys.stdin)["services"]; holders=[n for n,v in sv.items() if (v.get("environment") or {}).get("RR_SUPERVISOR_KEY")]; assert holders==["api"], holders'
+          docker compose -f infrastructure/compose.yml --profile trading config --format json | python3 -c 'import json,sys; sv=json.load(sys.stdin)["services"]; holders=sorted(n for n,v in sv.items() if (v.get("environment") or {}).get("RR_AI_KEYS_KEY")); assert holders==["analysis","api"], holders'
       - name: Windows connector suite (offscreen)
         working-directory: windows-connector
         env: {QT_QPA_PLATFORM: offscreen}

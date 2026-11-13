@@ -153,9 +153,11 @@ def decisions(_: User = Depends(current_user), db: Session = Depends(get_db), li
 @router.post("/agent/discover")
 def discover(user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
     """Claude performance review + experimental strategy proposals (stored as RESEARCH only)."""
-    if not get_settings().anthropic_api_key:
-        raise HTTPException(409, "Claude API key not configured")
-    from app.agents.claude_agent import AgentError, ClaudeAgent
+    from app.ai import gateway
+    if not gateway.configured("strategy_discovery"):
+        raise HTTPException(409, "no AI provider is configured for strategy discovery")
+    from app.agents.claude_agent import DISCOVERY_SYSTEM, EXPERIMENT_SCHEMA, Discovery
+    from app.orchestration.orchestrator import record
     from app.strategies import registry
     perf = [{"strategy_id": p.strategy_id, "symbol": p.symbol, "timeframe": p.timeframe, "regime": p.regime,
              "source": p.source, "trades": p.trades, "wins": p.wins, "gross_profit": p.gross_profit,
@@ -165,15 +167,27 @@ def discover(user: User = Depends(require("strategy.manage")), db: Session = Dep
                "regime": c.regime, "closed": c.closed_at} for c in db.scalars(select(ClosedPosition).limit(2000))]
     reg = [{"code": m.code, "name": m.name, "category": m.category, "regimes": m.regimes, "requires": m.requires,
             "description": m.description} for m in registry.metas()]
-    conv = AgentConversation(purpose="DISCOVERY", model=get_settings().claude_model, request={"perf_rows": len(perf)})
+    conv = AgentConversation(purpose="DISCOVERY", model="ai-gateway", request={"perf_rows": len(perf)})
     db.add(conv)
     db.flush()
+    started = datetime.now(timezone.utc)
     try:
-        disc, meta = ClaudeAgent().discover({"strategy_performance": perf, "closed_trades": closed}, reg)
-    except AgentError as exc:
+        disc, meta = gateway.run("strategy_discovery", DISCOVERY_SYSTEM, {
+            "task": "performance_review_and_discovery",
+            "performance": {"strategy_performance": perf, "closed_trades": closed}, "registry": reg},
+            EXPERIMENT_SCHEMA, Discovery, max_tokens=32000)
+    except gateway.GatewayError as exc:
         conv.error = str(exc)
+        record("strategy_discovery", "performance_review_and_discovery", started_at=started, duration_ms=None,
+               status="error", errors=[str(exc)[:300]])
         raise HTTPException(502, str(exc)) from None
     conv.response, conv.input_tokens, conv.output_tokens = disc.model_dump(), meta["input_tokens"], meta["output_tokens"]
+    conv.model = f"{meta['provider']}/{meta['model']}"
+    record("strategy_discovery", "performance_review_and_discovery", started_at=started,
+           duration_ms=meta["latency_ms"], provider=meta["provider"], model=meta["model"],
+           input_refs={"performance_rows": len(perf), "closed_trades": len(closed)},
+           output={"experiments": len(disc.experiments)},
+           evidence={"ai_output": "schema-validated; proposals stored as RESEARCH, isolated from production"})
     for e in disc.experiments:
         db.add(StrategyExperiment(title=e.title[:255], hypothesis=e.hypothesis, proposal=e.model_dump(), stage="RESEARCH"))
     from app.services.events import audit

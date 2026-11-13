@@ -65,6 +65,7 @@ def run_job(job: Job, now: datetime | None = None, force: bool = False) -> dict:
         except Exception as exc:  # noqa: BLE001
             log.exception("job %s failed", job.name)
             box["error"] = repr(exc)[:2000]
+    started_at = datetime.now(UTC)
     agent_activity(job.module, "processing", f"learning job {job.name} started")
     th = threading.Thread(target=target, daemon=True)
     th.start()
@@ -82,7 +83,24 @@ def run_job(job: Job, now: datetime | None = None, force: bool = False) -> dict:
             row.result = {k: v for k, v in res.items() if k != "skipped"} | ({"reason": res["skipped"]} if res.get("skipped") else {})
         status = row.status
     agent_activity(job.module, "approved" if status in ("DONE", "SKIPPED") else "error", f"learning job {job.name}: {status}")
+    _record_agent_run(job, key, status, box, started_at)
     return {"status": status, **box}
+
+
+def _record_agent_run(job: Job, key: str, status: str, box: dict, started_at: datetime) -> None:
+    """Control-room record of the agent this job belongs to (RR Trading One Phase 9)."""
+    from app.orchestration.agents import LEARNER_AGENT
+    from app.orchestration.orchestrator import record
+    agent = LEARNER_AGENT.get(job.name)
+    if agent is None:
+        return
+    res = box.get("result") or {}
+    record(agent, f"learner:{job.name}", started_at=started_at,
+           duration_ms=(datetime.now(UTC) - started_at).total_seconds() * 1000,
+           status={"DONE": "ok", "SKIPPED": "skipped"}.get(status, "error"), input_refs={"job": key},
+           output={k: v for k, v in res.items() if isinstance(v, (int, float, str, bool)) and k != "skipped"},
+           evidence={"skipped_reason": res["skipped"]} if res.get("skipped") else {},
+           errors=[box["error"][:300]] if "error" in box else ([f"{status}"] if status == "TIMEOUT" else []))
 
 
 # ---------------------------------------------------------------- job implementations ------------

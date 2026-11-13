@@ -617,3 +617,4 @@ class ScannerSettings(Base):
 
 from app.db import models_intel  # noqa: E402,F401  (Part 25/26 additive tables)
 from app.db import models_agent  # noqa: E402,F401  (RR MT5 Connector agents, migration 0003)
+from app.db import models_ai  # noqa: E402,F401  (RR Trading One agents + AI gateway, migration 0007)

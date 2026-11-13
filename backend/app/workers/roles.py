@@ -29,17 +29,18 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.db.models import TradingSignal
+from app.db.models import OpenPosition, TradeOrder, TradingSignal
 from app.db.session import session_scope
 from app.execution import manager as em
 from app.execution.bridge import BridgeClient, BridgeError, BridgeUnavailable
 from app.news.service import refresh as refresh_news
 from app.scanner.service import expire_signals, scan_once
 from app.services import trading as tr
+from app.orchestration import orchestrator as orch
 from app.services.events import agent_activity, get_redis
 from app.workers import main as legacy
 
@@ -152,7 +153,19 @@ def monitor_cycle(bridge: BridgeClient, last_ok: list[bool], clock: dict) -> boo
                 tr.sync_positions(db, bridge, acct)
             em.reconcile_unknown(db, bridge)
             expire_signals(db)
-        legacy.manage_positions(bridge)
+        with session_scope() as db:
+            n_open = db.scalar(select(func.count(OpenPosition.id))) or 0
+        if n_open:
+            started, t0 = datetime.now(UTC), time.perf_counter()
+            try:
+                legacy.manage_positions(bridge)
+            except Exception as exc:  # noqa: BLE001 - recorded, then handled by the caller as before
+                orch.record("trade_management", "manage_open_positions", started_at=started, status="error",
+                            duration_ms=(time.perf_counter() - t0) * 1000, input_refs={"open_positions": n_open},
+                            errors=[str(exc)[:300]])
+                raise
+            orch.record("trade_management", "manage_open_positions", started_at=started,
+                        duration_ms=(time.perf_counter() - t0) * 1000, input_refs={"open_positions": n_open})
         refresh_symbol_catalogue(bridge)
         if time.time() - clock.get("news", 0.0) > 3600:
             with session_scope() as db:
@@ -178,11 +191,17 @@ def refresh_symbol_catalogue(bridge: BridgeClient, r=None) -> dict | None:
         key = f"rr:symbols:refreshed:{acct.broker_connection_id}"
         if r.exists(key):
             return None
+        started, t0 = datetime.now(UTC), time.perf_counter()
         try:
             res = tr.discover_symbols(db, bridge, acct.broker_connection_id)
         except BridgeError as exc:
             log.warning("symbol discovery failed: %s", exc)
+            orch.record("broker_discovery", "catalogue_refresh", started_at=started, status="error",
+                        duration_ms=(time.perf_counter() - t0) * 1000, input_refs={"broker_connection": acct.broker_connection_id},
+                        errors=[str(exc)[:300]])
             return None
+        orch.record("broker_discovery", "catalogue_refresh", started_at=started, duration_ms=(time.perf_counter() - t0) * 1000,
+                    input_refs={"broker_connection": acct.broker_connection_id}, output=res)
         r.set(key, "1", ex=max(1, get_settings().symbol_refresh_hours) * 3600)
         log.info("symbol catalogue refreshed: %s", res)
         return res
@@ -233,8 +252,32 @@ def trading_cycle(auto, started_at: datetime) -> int:
     review, the signal state, the Risk Engine and the dedupe key, so calling it twice is harmless."""
     ids = pending_candidates(started_at)
     for sid in ids:
-        auto(sid)
+        before = _execution_state(sid)
+        started, t0 = datetime.now(UTC), time.perf_counter()
+        err = None
+        try:
+            auto(sid)
+        except Exception as exc:  # noqa: BLE001
+            err = str(exc)[:300]
+            raise
+        finally:
+            after = _execution_state(sid)
+            # Recorded only when the attempt changed something (an order, a signal status) or failed; a candidate
+            # re-checked while auto-trading is off is not a new agent run.
+            if err or after != before:
+                orch.record("trade_execution", "execute_candidate", started_at=started,
+                            duration_ms=(time.perf_counter() - t0) * 1000, input_refs={"signal_id": sid},
+                            output={"order_status": after[1], "signal_status": after[2]},
+                            status="error" if err else ("ok" if after[0] else "skipped"), errors=[err] if err else [],
+                            evidence={"gates": "auto-trading, AI confirmation, Risk Engine, idempotency"})
     return len(ids)
+
+
+def _execution_state(signal_id: int) -> tuple:
+    with session_scope() as db:
+        order = db.scalar(select(TradeOrder).where(TradeOrder.signal_id == signal_id).order_by(TradeOrder.id.desc()))
+        sig = db.get(TradingSignal, signal_id)
+        return (order.id if order else None, order.status if order else None, sig.status if sig else None)
 
 
 # ---- process ----------------------------------------------------------------------------------------------------
@@ -256,9 +299,6 @@ def run(role: str) -> int:
         started_at = datetime.now(UTC)
         last_ok, clock, last_scan, last_agent_check, agent_key = [True], {}, 0.0, 0.0, None
         agent = None
-        if role == "analysis" and s.anthropic_api_key:
-            from app.agents.claude_agent import ClaudeAgent
-            agent = ClaudeAgent()
         auto = None
         while not stop["flag"]:
             r.expire(lock_key(role), LOCK_TTL)
@@ -286,6 +326,10 @@ def run(role: str) -> int:
                     time.sleep(s.bridge_heartbeat_seconds)
                 elif role == "analysis":
                     if time.time() - last_scan > s.scan_interval_seconds:
+                        # Reviewer from the AI gateway, re-read each cycle so a provider configured in the console
+                        # applies without a restart (None: candidates stay UNREVIEWED and are never auto-executed).
+                        from app.ai.gateway import make_reviewer
+                        agent = make_reviewer()
                         if analysis_cycle(bridge, agent, should_stop=lambda: stop["flag"]) is not None:
                             last_scan = time.time()
                     time.sleep(1)
