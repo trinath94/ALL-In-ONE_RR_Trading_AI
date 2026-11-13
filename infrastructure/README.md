@@ -9,6 +9,10 @@ The local stack for **LOCAL WINDOWS MODE** (Docker Desktop + WSL2). It is manage
 | `compose.yml` | The stack. Project name `rr-trading-one`. |
 | `nginx.local.conf` | Loopback HTTP gateway: same routing as `nginx/nginx.conf`, without TLS |
 | `backend.Dockerfile` | Backend image built from `backend/requirements.lock`, the pinned versions the 215-strategy preservation suite was verified with |
+| `install.dockerignore` | Installed as `<install folder>\.dockerignore`. The install folder is the build context, and only `backend/` and `frontend/` are sent to Docker. |
+| `windows/uninstall-stop.ps1` | Run by the installer before an upgrade or uninstall. It stops the connector launched from the install folder, then the containers (trading worker first). It never removes containers, volumes or data. |
+
+Engine images are tagged `${RR_ONE_IMAGE_TAG:-local}`. The supervisor sets the tag from the installed `BUNDLE_MANIFEST.txt`, so each installed version builds and runs its own images. A source checkout has no manifest and uses `local`.
 
 ## Services
 

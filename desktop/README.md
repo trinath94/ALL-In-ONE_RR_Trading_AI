@@ -106,6 +106,26 @@ See `infrastructure/README.md`.
 
 **LOCAL mode is the default.** In LOCAL mode the engine address is derived as `http://127.0.0.1:<gateway_port>` (default `47810`) and cannot be set to another host. REMOTE mode is reserved for a future release and requires `https://`.
 
+## Installing (Windows 10/11, 64-bit)
+
+Run `RR Trading One_<version>_x64-setup.exe`. It is one installer for everything:
+
+| What | Where |
+|---|---|
+| The desktop app | `C:\Program Files\RR Trading One\rr-trading-one.exe` (per-machine install, asks for administrator rights once) |
+| The engine sources **Start All** builds the local images from | `backend\`, `frontend\`, `infrastructure\`, `docker\` beside the app, plus `BUNDLE_MANIFEST.txt` (SHA-256 of every file) |
+| The MT5 connector (packaged, no Python needed) | `mt5-connector\RR_MT5_Connector.exe` |
+
+**Docker Desktop** (with WSL 2) is the one thing the installer cannot carry. If it is missing, the installer asks whether to install it with `winget`, under Docker's own licence terms. It never installs it without asking. A silent install answers "no". Windows may need a restart, and Docker Desktop must be opened once to finish its own setup.
+
+**First Start All** builds the engine images on the PC. That takes several minutes and needs internet access for Python and Node packages. Later starts reuse the images.
+
+**Upgrades.** The image tag comes from the installed sources (`RR_ONE_IMAGE_TAG`, derived from `BUNDLE_MANIFEST.txt`). After installing a new version, the next Start All builds and runs the new engine. The data volumes are kept, and migrations run with a backup first.
+
+**Upgrade and uninstall stop the running copy first.** They stop the connector launched from the install folder, then the engine containers, trading worker first. They delete no data: database and cache volumes, `ProgramData`, settings and connector data all stay. A standalone RR MT5 Connector installed elsewhere is never touched.
+
+The installer is not code-signed yet (Phase 16), so Windows SmartScreen warns on first run: choose **More info → Run anyway**.
+
 ## Build and test
 
 Linux needs the webkit2gtk-4.1 development packages. Windows needs WebView2, which ships with Windows 11.
@@ -118,8 +138,32 @@ cd desktop && cargo test -p rr-one-core
 cd desktop && cargo build -p rr-trading-one
 ```
 
+**Installer (Windows).** First build the connector with the standalone connector's spec:
+
 ```bash
-cd desktop/src-tauri && npx --yes @tauri-apps/cli@2.12.4 build
+cd windows-connector && pyinstaller packaging/rr_mt5_connector.spec --noconfirm --distpath dist --workpath build
 ```
 
-CI (`.github/workflows/desktop.yml`) runs the core tests on Linux and Windows, then builds the app and an **unsigned** NSIS package on `windows-latest`. Code signing and the full installer arrive in Phase 16.
+Then stage the installer contents. This copies git-tracked files only and writes the manifest:
+
+```bash
+python desktop/scripts/stage_bundle.py --connector windows-connector/dist/RR_MT5_Connector
+```
+
+Then build with the release-only bundle config:
+
+```bash
+cd desktop/src-tauri && npx --yes @tauri-apps/cli@2.12.4 build --config tauri.bundle.conf.json
+```
+
+Plain `cargo build` and `tauri build` without `--config` need no staging.
+
+CI (`.github/workflows/desktop.yml`) runs the core tests on Linux and Windows. On `windows-latest` it then:
+1. builds the connector and the installer;
+2. **installs it silently**;
+3. checks every installed file against the manifest;
+4. checks the packaged connector's stdin and stdout;
+5. runs the app's own launcher code from the install folder;
+6. **uninstalls it silently**.
+
+The installer is unsigned. Code signing arrives in Phase 16.
