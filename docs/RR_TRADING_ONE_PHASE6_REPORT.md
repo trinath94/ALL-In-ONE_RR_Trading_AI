@@ -24,6 +24,7 @@ The engine now keeps a live catalogue of everything the connected broker offers.
 | MT5 connector / Windows connector / desktop core | **17 / 36 / 88 passed** |
 | Frontend `next build` (strict TS) | Passed, **25 pages** (new `/symbols`) |
 | Broker Symbols page, logged in through the gateway with live data | Rendered; no console errors |
+| CI for the Phase 6 commit (`4b99230`) | backend 43457008514, windows-connector 43457008538, frontend 43457008688 (first run): all passed |
 
 ## 2. What was built
 

@@ -49,6 +49,7 @@ export default function Library() {
   }
   const STAGES = ["RESEARCH", "IMPLEMENTATION", "UNIT_TESTING", "BACKTESTING", "OUT_OF_SAMPLE", "WALK_FORWARD", "PAPER_TRADING", "ADMIN_APPROVAL", "PRODUCTION"];
   const notRunnable = sum ? sum.data_status.filter((d: any) => d.status !== "runnable").reduce((a: number, d: any) => a + d.count, 0) : null;
+  const canSignal = (m: string) => (data || []).filter((s) => s.scanned[m] && s.data_status === "runnable").length;
   const yes = (b: boolean) => b ? <Badge tone="neon">scanned</Badge> : <span className="text-dim">—</span>;
   return (
     <div>
@@ -61,8 +62,8 @@ export default function Library() {
             sub={sum.baseline ? (sum.baseline.modified.length ? `${sum.baseline.modified.length} modified` : "identical to the frozen baseline") : "baseline inventory not shipped"}
             tone={sum.baseline && !sum.baseline.modified.length && !sum.baseline.not_in_baseline.length ? "up" : "warn"} />
           <Stat label="Runnable on MT5 data" value={sum.data_status.find((d: any) => d.status === "runnable").count} sub={`${notRunnable} cannot run today`} />
-          <Stat label="Scanned in DEMO" value={sum.scanned.DEMO} sub="enabled and runnable selection" />
-          <Stat label="Scanned in LIVE" value={sum.scanned.LIVE} sub="risky strategies never included" />
+          <Stat label="Scanned in DEMO" value={sum.scanned.DEMO} sub={`enabled; ${canSignal("DEMO")} can produce signals`} />
+          <Stat label="Scanned in LIVE" value={sum.scanned.LIVE} sub={`${canSignal("LIVE")} can produce signals; never risky`} />
           <Stat label={`Signals (${sum.activity.days} d)`} value={sum.activity.strategies_with_signals}
             sub={`strategies, from ${sum.activity.analyses} stored analyses`} tone={sum.activity.strategies_with_errors.length ? "warn" : "plain"} />
         </div>
@@ -88,15 +89,17 @@ export default function Library() {
         </div>
       )}
       <div className="grid gap-3 xl:grid-cols-[1fr_440px]">
-        <Panel right={<div className="flex flex-wrap gap-2">
-          <input className={inputCls + " w-36"} placeholder="search" value={q} onChange={(e) => setQ(e.target.value)} />
-          <select className={inputCls + " w-32"} value={cat} onChange={(e) => setCat(e.target.value)}><option value="">all categories</option>{cats.map((c) => <option key={c}>{c}</option>)}</select>
-          <select className={inputCls + " w-36"} value={view} onChange={(e) => setView(e.target.value)}>
-            <option value="">all strategies</option><option value="demo">scanned in DEMO</option><option value="live">scanned in LIVE</option>
-            <option value="risky">risky</option><option value="signals">signalled recently</option><option value="errors">errors recently</option>
-            <option value="changed">differs from baseline</option></select>
-          {(cat || ds || tf || view || q) && <Btn small tone="dim" onClick={() => { setCat(""); setDs(""); setTf(""); setView(""); setQ(""); }}>Clear ({rows.length})</Btn>}
-        </div>}>
+        <Panel title={`Strategies (${rows.length} of ${(data || []).length})`}>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <div className="w-44"><input className={inputCls} placeholder="search" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+            <div className="w-40"><select className={inputCls} value={cat} onChange={(e) => setCat(e.target.value)}><option value="">all categories</option>{cats.map((c) => <option key={c}>{c}</option>)}</select></div>
+            <div className="w-48"><select className={inputCls} value={view} onChange={(e) => setView(e.target.value)}>
+              <option value="">all strategies</option><option value="demo">scanned in DEMO</option><option value="live">scanned in LIVE</option>
+              <option value="risky">risky</option><option value="signals">signalled recently</option><option value="errors">errors recently</option>
+              <option value="changed">differs from baseline</option></select></div>
+            {ds && <Badge tone={DATA[ds].tone}>{DATA[ds].short}</Badge>}{tf && <Badge tone="cyan">{tf}</Badge>}
+            {(cat || ds || tf || view || q) && <Btn small tone="dim" onClick={() => { setCat(""); setDs(""); setTf(""); setView(""); setQ(""); }}>Clear filters</Btn>}
+          </div>
           <Table rows={rows} onRow={choose} rowKey={(r) => r.code}
             cols={[{ k: "name", h: "Strategy" }, { k: "category", h: "Category" },
               { k: "data_status", h: "Data", r: (s) => <Badge tone={DATA[s.data_status].tone}>{DATA[s.data_status].short}</Badge> },
@@ -129,7 +132,7 @@ export default function Library() {
               : Object.entries(cur.performance_by_source).map(([src, p]: any) => (
                 <div key={src} className="text-[11px]">{SOURCES[src] || src}: {p.trades} trades, {p.trades ? `${Math.round(100 * p.wins / p.trades)}% wins` : "—"}</div>))}
             {manage && <>
-              <div className="mt-3 flex items-center gap-2"><select className={inputCls + " w-28"} value={mode} onChange={(e) => setMode(e.target.value)}><option>DEMO</option><option>LIVE</option></select>
+              <div className="mt-3 flex items-center gap-2"><div className="w-28"><select className={inputCls} value={mode} onChange={(e) => setMode(e.target.value)}><option>DEMO</option><option>LIVE</option></select></div>
                 <Btn tone="neon" small disabled={mode === "LIVE" && cur.risky} onClick={() => save({ enabled: true })}>Enable</Btn><Btn tone="warn" small onClick={() => save({ enabled: false })}>Disable</Btn></div>
               {cur.data_status !== "runnable" && <div className="mt-1 text-[10px] text-warn">This strategy cannot produce signals until its data is supplied, even if enabled.</div>}
               <div className="mt-3 text-[10px] uppercase text-dim">Parameters (per mode)</div>
