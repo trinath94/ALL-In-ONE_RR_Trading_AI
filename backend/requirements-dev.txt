@@ -1,3 +1,6 @@
+-c requirements.lock
 -r requirements.txt
+# tests/test_mt5_agent.py drives the desktop connector end to end (imports rr_connector)
+-r ../windows-connector/requirements.txt
 pytest>=8
 pytest-asyncio>=0.24
