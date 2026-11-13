@@ -36,6 +36,8 @@ x-backend: &backend
     RR_COOKIE_SECURE: "false"
     RR_CORS_ORIGINS: http://127.0.0.1:${RR_ONE_GATEWAY_PORT:-47810}
     RR_ANTHROPIC_API_KEY: ${RR_ONE_ANTHROPIC_API_KEY:-}
+    # Newly discovered broker symbols are not scanned until the user enables them (Broker Symbols page).
+    RR_NEW_SYMBOLS_SCAN_ENABLED: "false"
   depends_on:
     migrate: {condition: service_completed_successfully}
 

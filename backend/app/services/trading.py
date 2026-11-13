@@ -79,15 +79,24 @@ def canonical(name: str) -> str:
 
 
 def discover_symbols(db: Session, bridge: BridgeClient, broker_connection_id: int) -> dict:
+    from app.core.config import get_settings
     infos = bridge.symbols()
-    seen = 0
+    seen = new = 0
+    now = datetime.now(UTC)
+    names: set[str] = set()
     for info in infos:
         name = info["name"]
+        names.add(name)
         sym = db.scalar(select(Symbol).where(Symbol.broker_connection_id == broker_connection_id,
                                              Symbol.broker_symbol == name))
         if sym is None:
-            sym = Symbol(broker_connection_id=broker_connection_id, broker_symbol=name)
+            # New symbols: scan flag from settings (RR Trading One: off until the user enables them). Existing symbols
+            # keep the user's choice.
+            sym = Symbol(broker_connection_id=broker_connection_id, broker_symbol=name,
+                         scan_enabled=get_settings().new_symbols_scan_enabled)
             db.add(sym)
+            new += 1
+        sym.last_seen_at, sym.missing_since = now, None
         sym.canonical = canonical(name)
         sym.category = categorize(info)
         sym.description = info.get("description", "")[:255]
@@ -108,8 +117,17 @@ def discover_symbols(db: Session, bridge: BridgeClient, broker_connection_id: in
         sym.tradable = sym.trade_mode == 4  # SYMBOL_TRADE_MODE_FULL
         sym.spec_raw = {k: v for k, v in info.items() if isinstance(v, (int, float, str, bool))}
         seen += 1
-    system_event(db, "scanner", "info", f"Discovered {seen} broker symbols")
-    return {"discovered": seen}
+    # Symbols the broker no longer offers: kept (history references them), marked missing and not tradable.
+    missing = 0
+    if names:
+        for sym in db.scalars(select(Symbol).where(Symbol.broker_connection_id == broker_connection_id,
+                                                   Symbol.broker_symbol.notin_(names))):
+            if sym.missing_since is None:
+                sym.missing_since = now
+            sym.tradable = False
+            missing += 1
+    system_event(db, "scanner", "info", f"Discovered {seen} broker symbols ({new} new, {missing} no longer offered)")
+    return {"discovered": seen, "new": new, "missing": missing}
 
 
 def spec_for(sym: Symbol, live: dict | None = None) -> SymbolSpec:

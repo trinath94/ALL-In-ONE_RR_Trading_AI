@@ -153,6 +153,7 @@ def monitor_cycle(bridge: BridgeClient, last_ok: list[bool], clock: dict) -> boo
             em.reconcile_unknown(db, bridge)
             expire_signals(db)
         legacy.manage_positions(bridge)
+        refresh_symbol_catalogue(bridge)
         if time.time() - clock.get("news", 0.0) > 3600:
             with session_scope() as db:
                 refresh_news(db)
@@ -163,6 +164,28 @@ def monitor_cycle(bridge: BridgeClient, last_ok: list[bool], clock: dict) -> boo
     except BridgeUnavailable as exc:
         log.warning("bridge unavailable: %s", exc)
     return True
+
+
+def refresh_symbol_catalogue(bridge: BridgeClient, r=None) -> dict | None:
+    """Discover the active account's broker symbols once its startup checks have passed, then every
+    ``symbol_refresh_hours``. New symbols get the configured default scan flag (RR Trading One: off)."""
+    r = r or get_redis()
+    with session_scope() as db:
+        st = tr.get_state(db)
+        acct = tr.active_account(db)
+        if acct is None or not st.startup_checks_passed:
+            return None
+        key = f"rr:symbols:refreshed:{acct.broker_connection_id}"
+        if r.exists(key):
+            return None
+        try:
+            res = tr.discover_symbols(db, bridge, acct.broker_connection_id)
+        except BridgeError as exc:
+            log.warning("symbol discovery failed: %s", exc)
+            return None
+        r.set(key, "1", ex=max(1, get_settings().symbol_refresh_hours) * 3600)
+        log.info("symbol catalogue refreshed: %s", res)
+        return res
 
 
 # ---- analysis ---------------------------------------------------------------------------------------------------

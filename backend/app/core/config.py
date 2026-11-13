@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     bridge_scope: str = "full"            # full | read
     # RR Trading One: key for the local supervisor API (/api/v1/local). Empty = API disabled (404).
     supervisor_key: str = ""
+    # Whether newly discovered broker symbols start scan-enabled. True keeps the original behaviour; the RR Trading
+    # One local stack sets false (new symbols are scanned only after the user enables them).
+    new_symbols_scan_enabled: bool = True
+    symbol_refresh_hours: int = 6
 
     # Scanner
     scan_interval_seconds: int = 60

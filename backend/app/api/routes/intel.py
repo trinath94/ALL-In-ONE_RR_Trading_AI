@@ -42,7 +42,25 @@ def symbols(_: User = Depends(current_user), db: Session = Depends(get_db), cate
     return [{"id": s.id, "symbol": s.broker_symbol, "canonical": s.canonical, "category": s.category,
              "description": s.description, "digits": s.digits, "tradable": s.tradable, "scan_enabled": s.scan_enabled,
              "priority": s.priority, "volume_min": f(s.volume_min), "volume_step": f(s.volume_step),
-             "contract_size": f(s.contract_size)} for s in db.scalars(q)]
+             "contract_size": f(s.contract_size),
+             # RR Trading One catalogue fields (additive)
+             "volume_max": f(s.volume_max), "tick_size": f(s.tick_size), "tick_value": f(s.tick_value),
+             "point": f(s.point), "stops_level": s.stops_level, "trade_mode": TRADE_MODES.get(s.trade_mode, str(s.trade_mode)),
+             "base_currency": s.base_currency, "profit_currency": s.profit_currency,
+             "spread_points": (s.spec_raw or {}).get("spread"), "spread_floating": (s.spec_raw or {}).get("spread_float"),
+             "sessions": SESSIONS_NOTE, "excluded": s.excluded, "last_seen_at": s.last_seen_at,
+             "missing_since": s.missing_since, "eligible": _eligible(s)} for s in db.scalars(q)]
+
+
+# MT5 SYMBOL_TRADE_MODE_* values
+TRADE_MODES = {0: "DISABLED", 1: "LONG_ONLY", 2: "SHORT_ONLY", 3: "CLOSE_ONLY", 4: "FULL"}
+# The MetaTrader5 Python package exposes no trading-session schedule; nothing is guessed.
+SESSIONS_NOTE = "not provided by the MT5 terminal API"
+
+
+def _eligible(s: Symbol) -> bool:
+    """May be scan-enabled: fully tradable, still offered by the broker, not excluded by the user."""
+    return bool(s.tradable and s.missing_since is None and not s.excluded)
 
 
 @router.post("/symbols/discover")
@@ -51,7 +69,10 @@ def discover(user: User = Depends(require("system.manage")), db: Session = Depen
     acct = tr.active_account(db)
     if not acct:
         raise HTTPException(409, "Configure and activate an account first")
-    res = tr.discover_symbols(db, bridge, acct.broker_connection_id)
+    try:
+        res = tr.discover_symbols(db, bridge, acct.broker_connection_id)
+    except BridgeError as exc:   # connector offline / refused: a clear 502 instead of an internal error
+        raise HTTPException(502, f"MT5 connector unavailable: {exc}") from None
     audit(db, user.id, "SYMBOL_DISCOVERY", "", res)
     return res
 
@@ -59,6 +80,7 @@ def discover(user: User = Depends(require("system.manage")), db: Session = Depen
 class SymbolPatch(BaseModel):
     scan_enabled: bool | None = None
     priority: int | None = Field(default=None, ge=0, le=1000)
+    excluded: bool | None = None
 
 
 @router.patch("/symbols/{symbol_id}")
@@ -67,8 +89,12 @@ def patch_symbol(symbol_id: int, body: SymbolPatch, user: User = Depends(require
     s = db.get(Symbol, symbol_id)
     if not s:
         raise HTTPException(404)
+    if body.scan_enabled and (body.excluded or (body.excluded is None and s.excluded)):
+        raise HTTPException(409, "symbol is excluded; remove the exclusion before enabling scanning")
     for k, v in body.model_dump(exclude_none=True).items():
         setattr(s, k, v)
+    if s.excluded:
+        s.scan_enabled = False
     audit(db, user.id, "SYMBOL_UPDATE", s.broker_symbol, body.model_dump(exclude_none=True))
     return {"ok": True}
 
@@ -152,6 +178,42 @@ def scanner(_: User = Depends(current_user), db: Session = Depends(get_db), time
                     "htf_bias": (a.structure or {}).get("htf_bias"), "news": (a.structure or {}).get("news"),
                     "analysed_at": a.created_at})
     return sorted(out, key=lambda r: -(r["score"] or 0))
+
+
+class ScanScopeIn(BaseModel):
+    enable: bool
+    scope: str = Field(pattern="^(all_eligible|all|categories|symbols)$")
+    categories: list[str] = Field(default_factory=list, max_length=20)
+    symbol_ids: list[int] = Field(default_factory=list, max_length=5000)
+
+
+@router.post("/symbols/scan-scope")
+def scan_scope(body: ScanScopeIn, user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
+    """Bulk scan selection: all eligible symbols, asset classes, or explicit symbols. Enabling never touches excluded,
+    no-longer-offered or not fully tradable symbols; disabling applies to the whole selection."""
+    if body.enable and body.scope == "all":
+        raise HTTPException(422, "use scope 'all_eligible' to enable; 'all' is for disabling")
+    q = select(Symbol)
+    if body.scope == "categories":
+        if not body.categories:
+            raise HTTPException(422, "categories required")
+        q = q.where(Symbol.category.in_(body.categories))
+    elif body.scope == "symbols":
+        if not body.symbol_ids:
+            raise HTTPException(422, "symbol_ids required")
+        q = q.where(Symbol.id.in_(body.symbol_ids))
+    changed, skipped = 0, defaultdict(int)
+    for s in db.scalars(q):
+        if body.enable and not _eligible(s):
+            skipped["excluded" if s.excluded else "no_longer_offered" if s.missing_since else "not_tradable"] += 1
+            continue
+        if s.scan_enabled != body.enable:
+            s.scan_enabled = body.enable
+            changed += 1
+    detail = {"enable": body.enable, "scope": body.scope, "categories": body.categories,
+              "symbols": len(body.symbol_ids), "changed": changed, "skipped": dict(skipped)}
+    audit(db, user.id, "SYMBOL_SCAN_SCOPE", body.scope, detail)
+    return {"changed": changed, "skipped": dict(skipped)}
 
 
 # ---- strategies -----------------------------------------------------------------------------------

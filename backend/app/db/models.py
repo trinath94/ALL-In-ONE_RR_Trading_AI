@@ -150,6 +150,10 @@ class Symbol(TimestampMixin, Base):
     scan_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     priority: Mapped[int] = mapped_column(Integer, default=100)
     spec_raw: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # RR Trading One (migration 0005): user exclusion and catalogue tracking
+    excluded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    missing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # 8. Market data (OHLC cache — source of truth stays the broker)
