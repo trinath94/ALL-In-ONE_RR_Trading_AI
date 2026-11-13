@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     # One local stack sets false (new symbols are scanned only after the user enables them).
     new_symbols_scan_enabled: bool = True
     symbol_refresh_hours: int = 6
+    # Frozen inventory of the 215 original strategies, used by the library view to show baseline integrity. Empty means
+    # backend/tests/baseline/strategy_inventory.json (shipped in the backend image).
+    strategy_baseline_path: str = ""
 
     # Scanner
     scan_interval_seconds: int = 60

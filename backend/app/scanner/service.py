@@ -49,9 +49,13 @@ def enabled_strategies(db: Session, mode: str) -> dict[str, dict]:
     rows = {s.code: s for s in db.scalars(select(Strategy))}
     cfgs = {c.strategy_id: c for c in db.scalars(select(StrategyConfiguration).where(
         StrategyConfiguration.account_mode == mode, StrategyConfiguration.symbol_id.is_(None)))}
-    for code in registry.all_strategies():
+    for code, cls in registry.all_strategies().items():
         s = rows.get(code)
         if s is None or not s.enabled or s.stage != "PRODUCTION":
+            continue
+        if mode == "LIVE" and cls.risky:
+            # Grid / martingale / DCA are blocked for LIVE. Without this, enabling one for DEMO (which sets the shared
+            # enabled flag) also put it in the LIVE scan set whenever no LIVE configuration row existed.
             continue
         cfg = cfgs.get(s.id)
         if cfg is not None and not cfg.enabled:

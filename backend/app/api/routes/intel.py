@@ -24,6 +24,7 @@ from app.news import service as news
 from app.notifications.service import KINDS
 from app.risk.engine import RiskParams
 from app.scanner.service import bars_to_df
+from app.services import strategy_library as lib
 from app.services import trading as tr
 from app.services.events import audit
 from app.strategies import registry
@@ -233,19 +234,40 @@ def strategies(_: User = Depends(current_user), db: Session = Depends(get_db)):
     for codes, in db.execute(select(OpenPosition.strategy_codes)):
         for c in codes or []:
             live[c] += 1
+    # Phase 7 library facts (additive keys; the original keys above are unchanged).
+    by_source: dict[int, dict[str, dict]] = defaultdict(lambda: defaultdict(lambda: {"trades": 0, "wins": 0}))
+    for p in db.scalars(select(StrategyPerformance)):
+        b = by_source[p.strategy_id][p.source]
+        b["trades"] += p.trades
+        b["wins"] += p.wins
+    eff = lib.effective(db)
+    base = lib.baseline_status()
+    act = lib.activity(db)["per_strategy"]
+    classes = registry.all_strategies()
     out = []
     for m in registry.metas():
         s = rows.get(m.code)
         d = perf.get(s.id) if s else None
         tw = sum(t for _, t in d["avg_r"]) if d else 0
+        status, notes = lib.data_status(m.requires)
         out.append({**m.__dict__, "enabled": bool(s and s.enabled), "stage": s.stage if s else "UNREGISTERED",
                     "availability": s.availability if s else "unknown", "active_positions": live.get(m.code, 0),
                     "performance": None if not d or not d["trades"] else {
                         "trades": d["trades"], "win_rate": round(d["wins"] / d["trades"], 4),
                         "profit_factor": round(d["gp"] / d["gl"], 3) if d["gl"] else None,
                         "avg_r": round(sum(r * t for r, t in d["avg_r"]) / tw, 3) if tw else None,
-                        "max_drawdown": d["dd"]}})
+                        "max_drawdown": d["dd"]},
+                    "performance_by_source": {k: dict(v) for k, v in by_source[s.id].items()} if s else {},
+                    "data_status": status, "data_notes": notes, "min_bars": classes[m.code].min_bars,
+                    "scanned": {mode: m.code in codes for mode, codes in eff.items()},
+                    "baseline": base.get(m.code) if base is not None else "baseline inventory not available",
+                    "activity": act.get(m.code, {"signals": 0, "errors": 0, "last_signal_at": None})})
     return out
+
+
+@router.get("/strategies/summary")
+def strategies_summary(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    return lib.summary(db)
 
 
 class StrategyPatch(BaseModel):
