@@ -99,14 +99,14 @@ def candidate_models(seed: int = 0) -> dict:
         import lightgbm as lgb
         cands["lightgbm"] = lgb.LGBMClassifier(n_estimators=200, learning_rate=0.05, num_leaves=15, min_child_samples=30,
                                                subsample=0.8, colsample_bytree=0.8, random_state=seed, verbose=-1)
-    except ImportError:
-        log.info("lightgbm not installed; skipped")
+    except Exception as exc:  # noqa: BLE001 - ImportError, or OSError when its native library (libgomp) is missing
+        log.warning("lightgbm unavailable (%s); skipped", exc)
     try:
         import xgboost as xgb
         cands["xgboost"] = xgb.XGBClassifier(n_estimators=200, learning_rate=0.05, max_depth=3, subsample=0.8,
                                              colsample_bytree=0.8, random_state=seed, eval_metric="logloss", n_jobs=2)
-    except ImportError:
-        log.info("xgboost not installed; skipped")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("xgboost unavailable (%s); skipped", exc)
     return cands
 
 
