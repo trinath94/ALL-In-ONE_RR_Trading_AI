@@ -64,6 +64,7 @@ jobs:
           docker compose -f infrastructure/compose.yml --profile trading config --format json | python3 -c 'import json,sys; sv=json.load(sys.stdin)["services"]; holders=sorted(n for n,v in sv.items() if (v.get("environment") or {}).get("RR_AI_KEYS_KEY")); assert holders==["analysis","api","learner"], holders'
           docker compose -f infrastructure/compose.yml --profile trading config --format json | python3 -c 'import json,sys; sv=json.load(sys.stdin)["services"]; holders=sorted(n for n,v in sv.items() if (v.get("environment") or {}).get("RR_MODEL_SIGNING_KEY")); assert holders==["analysis","api","learner"], holders'
       - name: Installed engine image builds and can train models (all candidate algorithms load)
+        working-directory: .
         run: |
           docker build -q -t rr-backend-ci -f infrastructure/backend.Dockerfile .
           docker run --rm --entrypoint python rr-backend-ci -c "import lightgbm, xgboost; from app.learning_engine.models import candidate_models; c = sorted(candidate_models()); print(c); assert c == ['hist_gradient_boosting', 'lightgbm', 'logistic_regression', 'random_forest', 'xgboost'], c"
