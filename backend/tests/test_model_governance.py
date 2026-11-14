@@ -178,3 +178,21 @@ def test_model_api_reports_signature_and_refuses_promotion(client, signing):
     assert r.status_code == 409 and "unsigned" in r.text
     with session_scope() as db:
         assert db.get(ModelRegistry, mid).status == "VALIDATED"
+
+
+def test_cached_model_is_reverified_when_its_signature_changes(signing):
+    """A model loaded once must not stay usable from the cache after its signature is removed or replaced."""
+    import pandas as pd
+
+    from app.intelligence import probability
+    with session_scope() as db:
+        m = models.train(db, planted(seed=6), horizon=10)
+        sig = {"entry": 1.1, "stop_loss": 1.09, "take_profit": 1.12, "direction": "BUY", "strength": 0.5,
+               "component": "trend", "strategy": "s"}
+        idx = pd.date_range("2026-01-01", periods=300, freq="h", tz="UTC")
+        df = pd.DataFrame({"open": 1.1, "high": 1.101, "low": 1.099, "close": 1.1, "volume": 100}, index=idx)
+        assert probability.estimate(db, df, sig, 1, 10, 0.00001, "EURUSD", "H1", record=False)["available"]
+        for forged in (None, "0" * 64):
+            m.artifact_hmac = forged
+            out = probability.estimate(db, df, sig, 1, 10, 0.00001, "EURUSD", "H1", record=False)
+            assert out["available"] is False and out["status"] == "MODEL_INTEGRITY_FAILED", forged

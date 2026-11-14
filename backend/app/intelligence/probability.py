@@ -44,7 +44,11 @@ def signal_features(df: pd.DataFrame, sig: dict, n_confluent: int) -> pd.DataFra
 
 
 def _artifact(reg: ModelRegistry) -> dict:
-    key = (reg.id, reg.artifact_sha256 or "")
+    # Phase 11 finding: the signature is verified on EVERY use, before the cache is consulted. A cache keyed on row
+    # contents could serve an artefact verified under other rules (signing key added, rotated or removed, or a
+    # signature stripped from an artefact identical to one cached earlier). Only the unpickled object is cached.
+    mreg.require_usable(reg)
+    key = (reg.id, reg.artifact_sha256 or "", reg.artifact_hmac or "")
     if key not in _cache:
         art = mreg.load(reg)
         cal = reg.calibration.get("calibrator", {})
