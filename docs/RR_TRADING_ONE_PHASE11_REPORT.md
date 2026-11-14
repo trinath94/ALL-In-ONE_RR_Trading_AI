@@ -31,6 +31,7 @@ code; Phase 11 fixed what was missing and found two serious defects.
 | Backend suite, including the 215-strategy preservation test | **260 passed** (250 + 10 new) in one full run |
 | Desktop core (secrets format 5 upgrade) | **91 passed**; clippy clean |
 | Frontend `next build` | Passed, 28 pages |
+| CI | backend 43541003935 (`27e47a0`: 260 tests + the image build, where all 5 algorithms load on a normal network); desktop (installer build + silent install/uninstall) 43539694697 (`856e83a`, the same Phase 11 code); frontend 43518897566. All passed. |
 
 ## 2. Defects found
 
@@ -87,6 +88,10 @@ candidate algorithm, and walk-forward never passes. The planted-signal tests sti
 * The first run's training step exposed defect 1.
 * After the fix, a sandbox restart interrupted the run. The rerun resumed on the upgraded install (the 5 upgrade checks had passed and are one-time).
 * Its first two attempts failed on my script: shell quoting, and a lookup by version that matched two different models.
+
+**CI failures on the way (none weakened):**
+* `730b674`: CI caught defect 2 independently (the cache test failed). Fixed in `856e83a`.
+* `856e83a`: all 260 tests passed, but the new image-build step ran from `backend/` instead of the repository root. Fixed in `27e47a0`.
 
 **Sandbox-only:** this sandbox's network blocks Debian's package mirrors, so its copy of the image exposes the OpenMP
 runtime that scikit-learn's wheel already bundles instead of running `apt-get install libgomp1`. The shipped
