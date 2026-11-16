@@ -10,6 +10,7 @@
   <script src="engine.js" defer></script>
   <script src="backup.js" defer></script>
   <script src="wizard.js" defer></script>
+  <script src="security.js" defer></script>
 </head>
 <body>
   <header class="top">
@@ -104,12 +105,12 @@
       <div class="row"><h2 id="h-backup">Backup and Recovery</h2>
         <div class="btns"><button id="bk-refresh" type="button">Refresh</button>
           <button id="bk-now" type="button" class="primary">Back up now</button></div></div>
-      <p class="muted">Backups are PostgreSQL dumps in this computer's backups folder (see Locations): taken on request, before
-        every database migration, and before every restore. Restoring replaces the whole database in one transaction, after a
+      <p class="muted">Backups are PostgreSQL dumps in this computer's backups folder (see Locations), <strong>encrypted</strong>
+        with this installation's backup key: taken on request, before every database migration, and before every restore. Restoring replaces the whole database in one transaction, after a
         safety backup of the current one; afterwards auto trading is OFF and the engine reconciles with the broker before any
         entry. The trading worker is not restarted.</p>
-      <table class="tbl"><thead><tr><th>Backup</th><th>Kind</th><th>Taken</th><th>Size</th><th></th></tr></thead>
-        <tbody id="backups"><tr><td colspan="5" class="muted">Not loaded yet</td></tr></tbody></table>
+      <table class="tbl"><thead><tr><th>Backup</th><th>Kind</th><th>Taken</th><th>Size</th><th>Encrypted</th><th></th></tr></thead>
+        <tbody id="backups"><tr><td colspan="6" class="muted">Not loaded yet</td></tr></tbody></table>
       <div class="confirm" id="bk-confirm" hidden>
         <label for="bk-phrase">Restore <code id="bk-id"></code>? Everything recorded after it is replaced by its contents.
           Type <code>RESTORE DATABASE</code> to continue.</label>
@@ -134,6 +135,27 @@
           <button id="imp-go" type="button" class="danger">Import</button>
           <button id="imp-cancel" type="button">Cancel</button></div>
       </div>
+    </section>
+
+    <section class="card" aria-labelledby="h-security">
+      <h2 id="h-security">Security</h2>
+      <h3>Backup key</h3>
+      <p class="muted">Backups can only be read with this installation's backup key, which is protected by your Windows account.
+        Write it down or store it offline: on a new PC (after a disk failure, for example) it is the only way to restore these
+        backups. Anyone holding it and the backup files can read your database.</p>
+      <div class="row"><input id="key-phrase" placeholder="Type SHOW BACKUP KEY" autocomplete="off" spellcheck="false">
+        <button id="key-show" type="button">Show backup key</button></div>
+      <pre class="plan" id="key-out" aria-live="polite"></pre>
+      <p class="muted">Restoring another installation's backups: add that installation's key (it starts with <code>RRBK1-</code>).</p>
+      <div class="row"><input id="key-add" type="password" placeholder="RRBK1-…" autocomplete="off" spellcheck="false">
+        <button id="key-add-go" type="button">Add backup key</button></div>
+      <h3>Rotate secrets</h3>
+      <p class="muted">Replaces the database and Redis passwords, the session signing key, the bridge secret and the local API key.
+        A backup is taken first; the engine is stopped and started again; <strong>everyone is signed out</strong>. Keys that encrypt
+        stored data (broker passwords, AI keys, models, backups) are not changed. The trading worker is not restarted.</p>
+      <div class="row"><input id="rot-phrase" placeholder="Type ROTATE SECRETS" autocomplete="off" spellcheck="false">
+        <button id="rot-go" type="button" class="danger">Rotate secrets</button></div>
+      <pre class="plan" id="sec-out" aria-live="polite"></pre>
     </section>
 
     <section class="card" aria-labelledby="h-paths">

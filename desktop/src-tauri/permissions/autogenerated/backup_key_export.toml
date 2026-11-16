@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-backup-key-export"
+description = "Enables the backup_key_export command without any pre-configured scope."
+commands.allow = ["backup_key_export"]
+
+[[permission]]
+identifier = "deny-backup-key-export"
+description = "Denies the backup_key_export command without any pre-configured scope."
+commands.deny = ["backup_key_export"]

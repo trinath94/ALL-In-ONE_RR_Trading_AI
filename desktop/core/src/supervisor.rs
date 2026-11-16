@@ -36,6 +36,51 @@ pub const KEEP_MANUAL_BACKUPS: usize = 30;
 /// Phase 18: largest dump accepted for an import.
 const MAX_IMPORT_BYTES: u64 = 50_000_000_000;
 
+/// Phase 21: rotate the access secrets (database and Redis passwords, session signing key, bridge secret, local
+/// supervisor API key). Everyone is signed out. Runs the first half of `rotate_plans` with the current secrets,
+/// changes the database password and saves the new secrets (undone if saving fails), then runs the second half
+/// with the new secrets. Returns one report covering all of it.
+pub fn rotate_secrets(cfg: SupervisorConfig, runner: &dyn Runner, current: &StackSecrets, probe: fn(u16) -> ProbeResult,
+                      connector: Option<&dyn NativeConnector>, save: &dyn Fn(&StackSecrets) -> Result<(), String>,
+                      confirmation: Option<&str>) -> Result<PlanReport, ActionError> {
+    let (before, after) = crate::actions::rotate_plans(confirmation)?;
+    let old = Supervisor { cfg: cfg.clone(), runner, secrets: current, probe: Box::new(probe), connector };
+    let mut rep = old.run_plan("rotate_secrets", before);
+    if !rep.ok {
+        return Ok(rep);
+    }
+    let t0 = Instant::now();
+    let rotated = current.with_rotated_access().map_err(|e| ActionError::Unknown(e.to_string()))?;
+    let core: Result<(), String> = (|| {
+        old.set_db_password(rotated.db_password())?;
+        if let Err(e) = save(&rotated) {
+            // the new password is in the database but could not be saved: put the old one back
+            let undo = old.set_db_password(current.db_password());
+            return Err(format!("the new secrets could not be saved ({e}); {}", match undo {
+                Ok(()) => "the database password was put back, nothing changed".to_string(),
+                Err(u) => format!("putting the database password back also failed ({u})"),
+            }));
+        }
+        Ok(())
+    })();
+    let ok = core.is_ok();
+    rep.steps.push(StepReport { step: Step::RotateAccessSecrets, outcome: if ok { Outcome::Ok } else { Outcome::Failed },
+        detail: core.err().unwrap_or_else(|| "new database and Redis passwords, session signing key, bridge secret and \
+            local API key saved (DPAPI); keys that encrypt stored data unchanged; everyone is signed out".into()),
+        duration_ms: t0.elapsed().as_millis() as u64 });
+    if !ok {
+        rep.ok = false;
+        return Ok(rep);
+    }
+    let new = Supervisor { cfg, runner, secrets: &rotated, probe: Box::new(probe), connector };
+    let second = new.run_plan("rotate_secrets", after);
+    rep.ok = second.ok;
+    rep.steps.extend(second.steps);
+    rep.services = second.services;
+    rep.engine = second.engine;
+    Ok(rep)
+}
+
 /// One backup in the backups folder (Phase 17).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct BackupInfo {
@@ -45,6 +90,8 @@ pub struct BackupInfo {
     /// Unix seconds, from the file name.
     pub created: u64,
     pub bytes: u64,
+    /// Phase 21: encrypted with a backup key (`.rrbk`). Backups made before Phase 21 are plain dumps (`.dump`).
+    pub encrypted: bool,
 }
 const NO_CONNECTOR: &str = "MT5 connector is not available in this installation";
 
@@ -62,6 +109,8 @@ pub struct SupervisorConfig {
     /// Volume that must have free space (application data).
     pub data_dir: PathBuf,
     pub backups_dir: PathBuf,
+    /// Phase 21: owner-only folder where a backup is decrypted for the moment of a restore (deleted afterwards).
+    pub private_dir: PathBuf,
     pub log_file: Option<PathBuf>,
     /// `Some(path to wsl.exe)` on Windows; WSL2 is then a prerequisite.
     pub wsl: Option<PathBuf>,
@@ -134,6 +183,20 @@ impl<'a> Supervisor<'a> {
         env.push(("RR_ONE_IMAGE_TAG".into(), self.cfg.image_tag.clone()));
         let spec = CommandSpec { program: self.cfg.compose.docker.clone(), args, env, timeout, stdout_file, stdin: None };
         self.runner.run(&spec).map_err(|e| format!("could not run docker: {e}"))
+    }
+
+    /// Phase 21: set the database role's password. The SQL goes through stdin, never argv; the password is
+    /// alphanumeric (generated), so quoting it is safe.
+    fn set_db_password(&self, password: &str) -> Result<(), String> {
+        if password.len() < 16 || !password.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err("refusing an unexpected password format".into());
+        }
+        let mut env = self.secrets.compose_env();
+        env.push(("RR_ONE_IMAGE_TAG".into(), self.cfg.image_tag.clone()));
+        let spec = CommandSpec { program: self.cfg.compose.docker.clone(), args: self.cfg.compose.psql_stdin("postgres"),
+            env, timeout: T_QUICK, stdout_file: None, stdin: Some(format!("ALTER ROLE rr WITH PASSWORD '{password}';\n")) };
+        let out = self.runner.run(&spec).map_err(|e| format!("could not run docker: {e}"))?;
+        if out.success() { Ok(()) } else { Err(self.secrets.redact(&out.failure_summary()).replace(password, "***")) }
     }
 
     fn run_ok(&self, args: Vec<String>, timeout: Duration) -> Result<CommandOutput, String> {
@@ -227,28 +290,94 @@ impl<'a> Supervisor<'a> {
             .map_err(|e| format!("database backup failed, migrations not applied: {e}"))
     }
 
-    /// Dump the database to `<prefix>-<unix seconds>.dump` and keep the newest `keep` of that kind.
+    /// Dump the database and encrypt it to `<prefix>-<unix seconds>.rrbk` (Phase 21); keep the newest `keep` of that
+    /// kind. The plain dump exists only in the owner-only private folder, until it is encrypted.
     fn backup(&self, prefix: &str, keep: usize) -> Result<String, String> {
         std::fs::create_dir_all(&self.cfg.backups_dir).map_err(|e| format!("backup directory: {e}"))?;
+        let key = self.secrets.own_backup_key()?;
         let mut ts = now_secs();
-        while self.cfg.backups_dir.join(format!("{prefix}-{ts}.dump")).exists() {
+        while self.backup_path(&format!("{prefix}-{ts}")).is_some() {
             ts += 1; // two backups of one kind within a second never overwrite each other
         }
-        let file = self.cfg.backups_dir.join(format!("{prefix}-{ts}.dump"));
-        let out = self.compose(self.cfg.compose.pg_dump(), T_DUMP, Some(file.clone()))?;
-        let size = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
-        if !out.success() || size == 0 {
-            let _ = std::fs::remove_file(&file);
-            return Err(self.secrets.redact(&out.failure_summary()));
+        let id = format!("{prefix}-{ts}");
+        let plain = self.private_file(&format!("{id}.dump"))?;
+        let res = (|| {
+            let out = self.compose(self.cfg.compose.pg_dump(), T_DUMP, Some(plain.clone()))?;
+            let size = std::fs::metadata(&plain).map(|m| m.len()).unwrap_or(0);
+            if !out.success() || size == 0 {
+                return Err(self.secrets.redact(&out.failure_summary()));
+            }
+            let file = self.cfg.backups_dir.join(format!("{id}.rrbk"));
+            let bytes = crate::backupcrypt::encrypt_file(&plain, &file, &key)?;
+            Ok(format!("backup {} ({} bytes, encrypted)", file.display(), bytes))
+        })();
+        let _ = std::fs::remove_file(&plain);
+        if res.is_ok() {
+            self.prune_backups(prefix, keep);
         }
-        self.prune_backups(prefix, keep);
-        Ok(format!("backup {} ({} bytes)", file.display(), size))
+        res
+    }
+
+    /// A file in the private folder (created owner-only). Leftovers of an interrupted run are removed first.
+    fn private_file(&self, name: &str) -> Result<PathBuf, String> {
+        std::fs::create_dir_all(&self.cfg.private_dir).map_err(|e| format!("private folder: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.cfg.private_dir, std::fs::Permissions::from_mode(0o700));
+        }
+        let p = self.cfg.private_dir.join(name);
+        let _ = std::fs::remove_file(&p);
+        Ok(p)
+    }
+
+    /// The file of a backup id: encrypted (`.rrbk`) or, from before Phase 21, a plain dump (`.dump`).
+    fn backup_path(&self, id: &str) -> Option<PathBuf> {
+        ["rrbk", "dump"].iter().map(|ext| self.cfg.backups_dir.join(format!("{id}.{ext}"))).find(|p| p.is_file())
+    }
+
+    /// A plain PostgreSQL dump of a backup, for a restore: an encrypted backup is decrypted into the private folder
+    /// (the caller removes it: second value true). A plain dump must start with the PostgreSQL header.
+    fn plain_dump(&self, id: &str) -> Result<(PathBuf, bool), String> {
+        let file = self.backup_path(id).ok_or_else(|| format!("{id} is not in the backups folder"))?;
+        if file.extension().and_then(|e| e.to_str()) == Some("rrbk") {
+            let out = self.private_file(&format!("{id}.restore.dump"))?;
+            crate::backupcrypt::decrypt_file(&file, &out, &self.secrets.backup_keys()).map_err(|e| e.to_string())?;
+            return Ok((out, true));
+        }
+        let mut head = [0u8; 5];
+        let valid = std::fs::File::open(&file).and_then(|mut f| { use std::io::Read; f.read_exact(&mut head) }).is_ok()
+            && &head == b"PGDMP";
+        if !valid {
+            return Err(format!("{id} is missing or is not a PostgreSQL custom-format dump"));
+        }
+        Ok((file, false))
+    }
+
+    /// Phase 21: refuse, before any service is stopped, a backup encrypted with a key this installation does not hold.
+    fn check_backup_key(&self, id: &str) -> Result<(), ActionError> {
+        if let Some(kid) = self.backup_path(id).as_deref().and_then(crate::backupcrypt::key_id_of) {
+            if !self.secrets.backup_keys().iter().any(|k| k.id() == kid) {
+                let hex: String = kid.iter().map(|b| format!("{b:02x}")).collect();
+                return Err(ActionError::Backup(crate::backupcrypt::DecryptError::UnknownKey(hex).to_string()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Phase 21: this installation's backup key as text to keep offline (typed phrase required).
+    pub fn export_backup_key(&self, confirmation: Option<&str>) -> Result<serde_json::Value, String> {
+        if confirmation != Some(crate::actions::SHOW_KEY_PHRASE) {
+            return Err(format!("showing the backup key requires typing exactly: {}", crate::actions::SHOW_KEY_PHRASE));
+        }
+        let k = self.secrets.own_backup_key()?;
+        Ok(serde_json::json!({"key": k.export(), "id": k.id_hex()}))
     }
 
     /// Keep only the newest dumps of one kind. Touches nothing but files this supervisor created.
     fn prune_backups(&self, prefix: &str, keep: usize) {
         let mut dumps: Vec<(u64, PathBuf)> = self.backup_files().into_iter().filter(|b| b.kind == prefix)
-            .map(|b| (b.created, self.cfg.backups_dir.join(format!("{}.dump", b.id)))).collect();
+            .filter_map(|b| self.backup_path(&b.id).map(|p| (b.created, p))).collect();
         dumps.sort_by_key(|d| std::cmp::Reverse(d.0));
         for (_, p) in dumps.into_iter().skip(keep) {
             let _ = std::fs::remove_file(p);
@@ -262,13 +391,16 @@ impl<'a> Supervisor<'a> {
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().into_owned();
-                let id = name.strip_suffix(".dump")?.to_string();
+                let (id, encrypted) = match name.strip_suffix(".rrbk") {
+                    Some(id) => (id.to_string(), true),
+                    None => (name.strip_suffix(".dump")?.to_string(), false),
+                };
                 if !valid_backup_id(&id) {
                     return None;
                 }
                 let (kind, ts) = id.rsplit_once('-')?;
                 Some(BackupInfo { id: id.clone(), kind: kind.to_string(), created: ts.parse().ok()?,
-                                  bytes: e.metadata().map(|m| m.len()).unwrap_or(0) })
+                                  bytes: e.metadata().map(|m| m.len()).unwrap_or(0), encrypted })
             })
             .collect();
         out.sort_by_key(|b| std::cmp::Reverse(b.created));
@@ -286,6 +418,7 @@ impl<'a> Supervisor<'a> {
         if !self.backup_files().iter().any(|b| b.id == backup) {
             return Err(ActionError::Unknown(format!("backup {backup} (not in the backups folder)")));
         }
+        self.check_backup_key(backup)?;
         Ok(self.run_plan("restore_backup", plan))
     }
 
@@ -308,11 +441,14 @@ impl<'a> Supervisor<'a> {
         }
         std::fs::create_dir_all(&self.cfg.backups_dir).map_err(|e| format!("backup directory: {e}"))?;
         let mut ts = now_secs();
-        while self.cfg.backups_dir.join(format!("import-{ts}.dump")).exists() {
+        while self.backup_path(&format!("import-{ts}")).is_some() {
             ts += 1;
         }
         let id = format!("import-{ts}");
-        std::fs::copy(source, self.cfg.backups_dir.join(format!("{id}.dump"))).map_err(|e| format!("copy failed: {e}"))?;
+        // Phase 21: kept encrypted like every backup; no plain copy of the server's database is made.
+        let key = self.secrets.own_backup_key()?;
+        crate::backupcrypt::encrypt_file(source, &self.cfg.backups_dir.join(format!("{id}.rrbk")), &key)
+            .map_err(|e| format!("copy failed: {e}"))?;
         Ok(id)
     }
 
@@ -322,6 +458,7 @@ impl<'a> Supervisor<'a> {
         if !self.backup_files().iter().any(|b| b.id == backup) {
             return Err(ActionError::Unknown(format!("import {backup} (not in the backups folder)")));
         }
+        self.check_backup_key(backup)?;
         Ok(self.run_plan("import_database", plan))
     }
 
@@ -342,8 +479,15 @@ impl<'a> Supervisor<'a> {
         if !valid_backup_id(backup) {
             return (Outcome::Failed, "invalid backup id".into());
         }
-        let file = self.cfg.backups_dir.join(format!("{backup}.dump"));
-        if let Err(e) = self.run_ok(self.cfg.compose.copy_into_postgres(&file), T_DUMP) {
+        let (file, temp) = match self.plain_dump(backup) {
+            Ok(x) => x,
+            Err(e) => return (Outcome::Failed, e),
+        };
+        let copied = self.run_ok(self.cfg.compose.copy_into_postgres(&file), T_DUMP);
+        if temp {
+            let _ = std::fs::remove_file(&file);
+        }
+        if let Err(e) = copied {
             return (Outcome::Failed, format!("copy into the database container failed: {e}"));
         }
         let drop_scratch = format!("DROP DATABASE IF EXISTS {SCRATCH_DB}");
@@ -402,14 +546,15 @@ impl<'a> Supervisor<'a> {
         if !valid_backup_id(backup) {
             return (Outcome::Failed, "invalid backup id".into());
         }
-        let file = self.cfg.backups_dir.join(format!("{backup}.dump"));
-        let mut head = [0u8; 5];
-        let valid = std::fs::File::open(&file).and_then(|mut f| { use std::io::Read; f.read_exact(&mut head) }).is_ok()
-            && &head == b"PGDMP";
-        if !valid {
-            return (Outcome::Failed, format!("{backup} is missing or is not a PostgreSQL custom-format dump"));
+        let (file, temp) = match self.plain_dump(backup) {
+            Ok(x) => x,
+            Err(e) => return (Outcome::Failed, format!("{e}; the database is unchanged. Use Start All to start the engine again.")),
+        };
+        let copied = self.run_ok(self.cfg.compose.copy_into_postgres(&file), T_DUMP);
+        if temp {
+            let _ = std::fs::remove_file(&file);
         }
-        if let Err(e) = self.run_ok(self.cfg.compose.copy_into_postgres(&file), T_DUMP) {
+        if let Err(e) = copied {
             return (Outcome::Failed, format!("copy into the database container failed: {e}"));
         }
         let res = self.run_ok(self.cfg.compose.pg_restore_to_sql(), T_DUMP)
@@ -560,6 +705,7 @@ impl<'a> Supervisor<'a> {
             Step::RestoreDatabase { backup } => self.restore_database(backup),
             Step::VerifyDump { backup } => self.verify_dump(backup),
             Step::VerifyRestored { backup } => self.verify_restored(backup),
+            Step::RotateAccessSecrets => (Outcome::Failed, "a rotation runs only through rotate_secrets".into()),
             Step::ResetForNewInstallation => match self.run_ok(self.cfg.compose.psql("rr_trading", RESET_FOR_NEW_INSTALLATION), T_QUICK) {
                 Ok(_) => (Outcome::Ok, "DEMO, auto trading OFF, LIVE approvals cleared, reconciliation required; the server's connectors, link tokens \
                            and sessions revoked (audited)".into()),
@@ -702,6 +848,7 @@ mod tests {
             gateway_port: port,
             data_dir: t.path().to_path_buf(),
             backups_dir: t.path().join("backups"),
+            private_dir: t.path().join("private"),
             log_file: Some(t.path().join("supervisor.log")),
             wsl: None,
             legacy_connector_dir: None,
@@ -1174,5 +1321,173 @@ mod tests {
         let vr = rep.steps.iter().find(|x| matches!(x.step, Step::VerifyRestored { .. })).unwrap();
         assert!(vr.outcome == Outcome::Failed && vr.detail.contains("trade_orders: expected 7, found 6"), "{}", vr.detail);
         assert!(!vr.detail.contains("permissions"), "growth of reference data is not a loss");
+    }
+
+    // ---- Phase 21: encrypted backups -------------------------------------------------------------------------
+    use std::sync::Arc;
+
+    /// Records the content of every file copied into the database container (what a restore actually restores).
+    fn capturing(copied: Arc<Mutex<Vec<Vec<u8>>>>) -> Script {
+        Box::new(move |spec: &CommandSpec| {
+            if let Some(i) = spec.args.iter().position(|a| a == "cp") {
+                copied.lock().unwrap().push(std::fs::read(&spec.args[i + 1]).unwrap_or_default());
+            }
+            if has(spec, "ps") { ok(ALL_HEALTHY) } else { ok("29.0") }
+        })
+    }
+
+    fn secrets_in(dir: &Path) -> StackSecrets {
+        crate::secrets::load_or_create(dir, &crate::secrets::PlainFileProtector).unwrap().0
+    }
+
+    #[test]
+    fn backups_are_encrypted_and_no_plain_dump_is_left_anywhere() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let s = sup(&e, &r, healthy_probe());
+        assert!(s.execute(Action::BackupNow, None).unwrap().ok);
+        let b = s.list_backups();
+        assert!(b.len() == 1 && b[0].kind == "manual" && b[0].encrypted, "{b:?}");
+        let raw = std::fs::read(e.cfg.backups_dir.join(format!("{}.rrbk", b[0].id))).unwrap();
+        assert!(raw.starts_with(crate::backupcrypt::MAGIC) && !raw.windows(10).any(|w| w == b"PGDMP-fake"));
+        let names: Vec<String> = std::fs::read_dir(&e.cfg.backups_dir).unwrap().map(|x| x.unwrap().file_name().to_string_lossy().into()).collect();
+        assert_eq!(names, vec![format!("{}.rrbk", b[0].id)], "only the encrypted file");
+        assert_eq!(std::fs::read_dir(&e.cfg.private_dir).unwrap().count(), 0, "the plain dump was removed");
+    }
+
+    #[test]
+    fn an_encrypted_backup_restores_its_exact_dump_and_the_decrypted_copy_is_removed() {
+        let e = env();
+        let copied = Arc::new(Mutex::new(vec![]));
+        let r = fake(capturing(copied.clone()));
+        let s = sup(&e, &r, healthy_probe());
+        assert!(s.execute(Action::BackupNow, None).unwrap().ok);
+        let id = s.list_backups()[0].id.clone();
+        let rep = s.restore(&id, Some(RESTORE_PHRASE)).unwrap();
+        assert!(rep.ok, "{rep:?}");
+        assert_eq!(copied.lock().unwrap().last().unwrap(), b"PGDMP-fake", "the decrypted dump went into the container");
+        assert_eq!(std::fs::read_dir(&e.cfg.private_dir).unwrap().count(), 0, "decrypted copy removed");
+    }
+
+    #[test]
+    fn a_new_pc_restores_another_installations_backup_once_given_its_key() {
+        let t = tempfile::tempdir().unwrap();
+        let old = env();
+        let mut new = env();
+        new.cfg.backups_dir = old.cfg.backups_dir.clone();         // the backups folder copied to the new PC
+        let r = fake(default_script(ALL_HEALTHY));
+        let a = sup(&old, &r, healthy_probe());
+        assert!(a.execute(Action::BackupNow, None).unwrap().ok);
+        let id = a.list_backups()[0].id.clone();
+        assert!(a.export_backup_key(Some("yes")).is_err(), "the key is shown only with the typed phrase");
+        let exported = a.export_backup_key(Some(crate::actions::SHOW_KEY_PHRASE)).unwrap()["key"].as_str().unwrap().to_string();
+
+        // the new installation does not hold the key: refused before anything is touched
+        let r2 = fake(default_script(ALL_HEALTHY));
+        let b = sup(&new, &r2, healthy_probe());
+        let err = b.restore(&id, Some(RESTORE_PHRASE)).unwrap_err().to_string();
+        assert!(err.contains("encrypted by another installation") && err.contains(&a.secrets.own_backup_key().unwrap().id_hex()), "{err}");
+        assert!(r2.calls.lock().unwrap().is_empty(), "refused before anything ran: no service stopped");
+
+        // given the exported key (stored with the new installation's secrets), it restores
+        let dir = t.path().join("secrets");
+        let _ = secrets_in(&dir);
+        crate::secrets::add_backup_key(&dir, &crate::secrets::PlainFileProtector, &exported).unwrap();
+        new.secrets = secrets_in(&dir);
+        let copied = Arc::new(Mutex::new(vec![]));
+        let r3 = fake(capturing(copied.clone()));
+        let c = sup(&new, &r3, healthy_probe());
+        assert!(c.restore(&id, Some(RESTORE_PHRASE)).unwrap().ok);
+        assert_eq!(copied.lock().unwrap().last().unwrap(), b"PGDMP-fake");
+    }
+
+    #[test]
+    fn a_modified_backup_is_refused_and_a_pre_phase_21_plain_backup_still_restores() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let s = sup(&e, &r, healthy_probe());
+        assert!(s.execute(Action::BackupNow, None).unwrap().ok);
+        let id = s.list_backups()[0].id.clone();
+        let p = e.cfg.backups_dir.join(format!("{id}.rrbk"));
+        let mut raw = std::fs::read(&p).unwrap();
+        let n = raw.len();
+        raw[n - 3] ^= 0x40;
+        std::fs::write(&p, raw).unwrap();
+        let rep = s.restore(&id, Some(RESTORE_PHRASE)).unwrap();
+        let st = rep.steps.iter().find(|x| matches!(x.step, Step::RestoreDatabase { .. })).unwrap();
+        assert!(!rep.ok && st.detail.contains("integrity check"), "{st:?}");
+        std::fs::write(e.cfg.backups_dir.join("manual-1600000000.dump"), b"PGDMP-legacy").unwrap();
+        let legacy = s.list_backups().into_iter().find(|b| b.id == "manual-1600000000").unwrap();
+        assert!(!legacy.encrypted);
+        assert!(s.restore("manual-1600000000", Some(RESTORE_PHRASE)).unwrap().ok);
+    }
+
+    #[test]
+    fn an_ubuntu_import_is_stored_encrypted_without_a_plain_copy() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let s = sup(&e, &r, healthy_probe());
+        let src = e.cfg.data_dir.join("rr_server.dump");
+        std::fs::write(&src, b"PGDMP-ubuntu-server").unwrap();
+        let id = s.import_dump(&src).unwrap();
+        let names: Vec<String> = std::fs::read_dir(&e.cfg.backups_dir).unwrap().map(|x| x.unwrap().file_name().to_string_lossy().into()).collect();
+        assert_eq!(names, vec![format!("{id}.rrbk")]);
+        assert!(s.list_backups()[0].encrypted);
+        assert_eq!(std::fs::read(&src).unwrap(), b"PGDMP-ubuntu-server", "the source file is untouched");
+    }
+
+    // ---- Phase 21: secret rotation ---------------------------------------------------------------------------
+    fn env_of(spec: &CommandSpec, k: &str) -> Option<String> {
+        spec.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
+    }
+
+    fn probe_ok(_: u16) -> ProbeResult {
+        ProbeResult { target: "engine", state: HealthState::Healthy, detail: "ok".into(), latency_ms: Some(1) }
+    }
+
+    #[test]
+    fn rotation_backs_up_stops_changes_the_password_saves_and_restarts_with_new_secrets() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let saved: Mutex<Option<StackSecrets>> = Mutex::new(None);
+        let save = |s: &StackSecrets| { *saved.lock().unwrap() = Some(s.clone()); Ok(()) };
+        assert_eq!(rotate_secrets(e.cfg.clone(), &r, &e.secrets, probe_ok, None, &save, Some("yes")).unwrap_err(),
+                   ActionError::RotateConfirmationRequired);
+        assert!(r.calls.lock().unwrap().is_empty(), "nothing ran without the phrase");
+        let rep = rotate_secrets(e.cfg.clone(), &r, &e.secrets, probe_ok, None, &save, Some(crate::actions::ROTATE_PHRASE)).unwrap();
+        assert!(rep.ok, "{rep:?}");
+        let new = saved.lock().unwrap().clone().expect("saved");
+        let old_pw = e.secrets.db_password().to_string();
+        let new_pw = new.db_password().to_string();
+        assert_ne!(old_pw, new_pw);
+        let calls = r.calls.lock().unwrap().clone();
+        let pos = |f: &dyn Fn(&CommandSpec) -> bool| calls.iter().position(f).unwrap_or_else(|| panic!("missing call"));
+        let dump = pos(&|c| has(c, "pg_dump"));
+        let stop = pos(&|c| c.args.get(5).map(String::as_str) == Some("stop"));
+        let alter = pos(&|c| c.stdin.as_deref().is_some_and(|i| i.contains("ALTER ROLE rr")));
+        let up_new = pos(&|c| has(c, "up") && env_of(c, "RR_ONE_DB_PASSWORD").as_deref() == Some(new_pw.as_str()));
+        assert!(dump < stop && stop < alter && alter < up_new, "backup, stop, password, restart");
+        assert!(calls[alter].stdin.as_deref().unwrap().contains(&new_pw));
+        assert!(calls.iter().all(|c| !c.args.iter().any(|a| a.contains(&new_pw) || a.contains(&old_pw))), "never in argv");
+        assert!(!calls[up_new..].iter().any(|c| env_of(c, "RR_ONE_DB_PASSWORD").as_deref() == Some(old_pw.as_str())));
+        assert!(!calls.iter().any(|c| has(c, "up") && c.args.contains(&"trading-worker".to_string())), "worker not restarted");
+        assert!(rep.steps.iter().any(|s| s.step == Step::RotateAccessSecrets && s.outcome == Outcome::Ok));
+    }
+
+    #[test]
+    fn a_rotation_whose_secrets_cannot_be_saved_puts_the_old_password_back_and_restarts_nothing() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let save = |_: &StackSecrets| Err("disk full".to_string());
+        let rep = rotate_secrets(e.cfg.clone(), &r, &e.secrets, probe_ok, None, &save, Some(crate::actions::ROTATE_PHRASE)).unwrap();
+        assert!(!rep.ok);
+        let st = rep.steps.last().unwrap();
+        assert!(st.step == Step::RotateAccessSecrets && st.detail.contains("put back, nothing changed"), "{st:?}");
+        let calls = r.calls.lock().unwrap().clone();
+        let alters: Vec<&CommandSpec> = calls.iter().filter(|c| c.stdin.is_some()).collect();
+        assert_eq!(alters.len(), 2);
+        assert!(alters[1].stdin.as_deref().unwrap().contains(e.secrets.db_password()), "the old password restored");
+        let first_alter = calls.iter().position(|c| c.stdin.is_some()).unwrap();
+        assert!(!calls[first_alter..].iter().any(|c| has(c, "up")), "nothing was started with unsaved secrets");
     }
 }

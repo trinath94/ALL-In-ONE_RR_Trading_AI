@@ -1,0 +1,68 @@
+# Dependency scanning (RR Trading One Phase 21, specification Part 21). Runs on every push and weekly, because new
+# advisories are published against unchanged dependencies. A known vulnerability fails the job; advisories that are
+# not vulnerabilities (unmaintained / unsound crates) are reported but do not fail it.
+name: security
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+  push:
+    branches: ["**"]
+    paths:
+      - "backend/requirements*.txt"
+      - "backend/requirements.lock"
+      - "mt5-connector/requirements.txt"
+      - "windows-connector/requirements*.txt"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "desktop/Cargo.lock"
+      - "desktop/**/Cargo.toml"
+      - ".github/workflows/security.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pip-audit==2.10.1
+      - name: Engine (pinned lock, exactly what the containers install)
+        run: pip-audit -r backend/requirements.lock --no-deps --disable-pip --progress-spinner off
+      - name: RR MT5 Connector
+        run: pip-audit -r windows-connector/requirements.txt --progress-spinner off
+      - name: MT5 bridge
+        run: pip-audit -r mt5-connector/requirements.txt --progress-spinner off
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Production dependencies (high or critical fails)
+        run: npm audit --omit=dev --audit-level=high
+
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --version 0.23.0 --locked
+      - name: Rust crates (vulnerabilities fail; unmaintained / unsound are listed as warnings)
+        run: cargo audit

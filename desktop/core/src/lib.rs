@@ -5,6 +5,7 @@
 //! fixed Docker Compose argument vectors (never through a shell). It contains no UI.
 
 pub mod actions;
+pub mod backupcrypt;
 pub mod compose;
 pub mod connector;
 pub mod engine;
@@ -34,3 +35,33 @@ pub const INITIAL_SAFETY_STATE: InitialSafetyState =
     InitialSafetyState { account_mode: "DEMO", auto_trading: false, trading_worker_running: false, live_locked: true };
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Phase 21: with an app ACL manifest, Tauri rejects at runtime any command not declared in build.rs and granted in
+/// the main window's capability. This keeps the handler list, the manifest and the capability identical.
+#[cfg(test)]
+mod tauri_acl_tests {
+    fn quoted(text: &str) -> Vec<String> {
+        text.split('"').skip(1).step_by(2).map(String::from).collect()
+    }
+
+    #[test]
+    fn tauri_acl_lists_every_command() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src-tauri");
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let start = lib.find("generate_handler![").unwrap() + "generate_handler![".len();
+        let mut handlers: Vec<String> = lib[start..start + lib[start..].find(']').unwrap()]
+            .split(',').map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
+        let build = std::fs::read_to_string(root.join("build.rs")).unwrap();
+        let s = build.find(".commands(&[").unwrap();
+        let mut manifest = quoted(&build[s..s + build[s..].find("])").unwrap()]);
+        let cap = std::fs::read_to_string(root.join("capabilities/main.json")).unwrap();
+        let mut granted: Vec<String> = quoted(&cap).into_iter().filter_map(|p| p.strip_prefix("allow-").map(|c| c.replace('-', "_"))).collect();
+        handlers.sort();
+        manifest.sort();
+        granted.sort();
+        assert!(handlers.len() >= 23, "{handlers:?}");
+        assert_eq!(manifest, handlers, "build.rs manifest must declare every command");
+        assert_eq!(granted, handlers, "capabilities/main.json must grant every command to the main window");
+        assert!(cap.contains("\"windows\": [\n    \"main\"\n  ]") || cap.contains("\"windows\": [\"main\"]"), "main window only");
+    }
+}

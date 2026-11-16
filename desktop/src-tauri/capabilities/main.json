@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
   "description": "Local Control Centre window only. No remote origin (including the engine console) is granted IPC.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "allow-get-overview",
@@ -19,6 +21,14 @@
     "allow-mt5-link",
     "allow-engine-status",
     "allow-engine-bootstrap-admin",
-    "allow-engine-use-demo-account"
+    "allow-engine-use-demo-account",
+    "allow-backup-list",
+    "allow-backup-restore",
+    "allow-backup-import-file",
+    "allow-backup-import",
+    "allow-prerequisites",
+    "allow-backup-key-export",
+    "allow-backup-key-add",
+    "allow-rotate-secrets"
   ]
 }

@@ -110,6 +110,11 @@ impl Compose {
         self.with(&["exec", "-T", "postgres", "psql", "-U", "rr", "-d", database, "--set=ON_ERROR_STOP=1", "-At", "-c", sql], &[])
     }
 
+    /// Phase 21: run SQL read from stdin (so a value such as a new password never appears in a process's arguments).
+    pub fn psql_stdin(&self, database: &str) -> Vec<String> {
+        self.with(&["exec", "-T", "postgres", "psql", "-U", "rr", "-d", database, "--set=ON_ERROR_STOP=1", "-q", "-f", "-"], &[])
+    }
+
     /// Phase 18: restore the copied dump into the scratch database, stopping at the first error.
     pub fn pg_restore_scratch(&self) -> Vec<String> {
         self.with(&["exec", "-T", "postgres", "pg_restore", "-U", "rr", "-d", SCRATCH_DB, "--no-owner", "--exit-on-error",

@@ -22,13 +22,13 @@ async function refreshBackups() {
     list = await invoke("backup_list");
   } catch (e) {
     body.replaceChildren(el("tr"));
-    body.firstChild.appendChild(el("td", String(e), "muted")).colSpan = 5;
+    body.firstChild.appendChild(el("td", String(e), "muted")).colSpan = 6;
     return;
   }
   body.replaceChildren();
   if (!list.length) {
     const tr = el("tr");
-    tr.appendChild(el("td", "No backups yet. One is taken automatically before every migration.", "muted")).colSpan = 5;
+    tr.appendChild(el("td", "No backups yet. One is taken automatically before every migration.", "muted")).colSpan = 6;
     body.appendChild(tr);
     return;
   }
@@ -38,6 +38,7 @@ async function refreshBackups() {
     tr.appendChild(el("td", KIND_LABEL[b.kind] || b.kind));
     tr.appendChild(el("td", new Date(b.created * 1000).toLocaleString()));
     tr.appendChild(el("td", size(b.bytes)));
+    tr.appendChild(el("td", b.encrypted ? "yes" : "no (made before encryption)", b.encrypted ? "" : "muted"));
     const td = el("td");
     const btn = el("button", b.kind === "import" ? "Import…" : "Restore…");
     btn.type = "button";

@@ -116,6 +116,27 @@ pub fn connector_setup(paths: &AppPaths, settings: &Settings) -> Result<Option<C
     Ok(Some(ConnectorSetup { launch, home, engine_url, profile: profiles.active_profile().cloned() }))
 }
 
+fn probe(port: u16) -> crate::health::ProbeResult {
+    crate::health::probe_engine(port, std::time::Duration::from_secs(3))
+}
+
+/// Phase 21: rotate the access secrets of the local stack (typed phrase required). The new secrets are saved with
+/// the platform protector (DPAPI on Windows).
+pub fn rotate_secrets(paths: &AppPaths, settings: &Settings, runner: &dyn Runner, confirmation: Option<&str>)
+                      -> Result<crate::supervisor::PlanReport, String> {
+    crate::actions::rotate_plans(confirmation).map_err(|e| e.to_string())?;
+    let setup = prepare(paths, settings, runner)?;
+    let dir = paths.secrets_dir();
+    let save = |s: &secrets::StackSecrets| secrets::save(&dir, secrets::platform_protector().as_ref(), s).map_err(|e| e.to_string());
+    crate::supervisor::rotate_secrets(setup.config, runner, &setup.secrets, probe, None, &save, confirmation)
+        .map_err(|e| e.to_string())
+}
+
+/// Phase 21: keep another installation's backup key (its `RRBK1-…` export) with this installation's secrets.
+pub fn add_backup_key(paths: &AppPaths, export: &str) -> Result<String, String> {
+    secrets::add_backup_key(&paths.secrets_dir(), secrets::platform_protector().as_ref(), export)
+}
+
 pub fn prepare(paths: &AppPaths, settings: &Settings, runner: &dyn Runner) -> Result<LocalSetup, String> {
     if settings.operating_mode != OperatingMode::Local {
         return Err("service control applies to LOCAL WINDOWS MODE only".into());
@@ -136,6 +157,8 @@ pub fn prepare(paths: &AppPaths, settings: &Settings, runner: &dyn Runner) -> Re
             gateway_port: settings.gateway_port,
             data_dir: paths.data_dir.clone(),
             backups_dir: paths.backups_dir(),
+            // Phase 21: decrypted dumps exist only here, briefly (owner-only, like the secrets folder)
+            private_dir: paths.secrets_dir().join("tmp"),
             log_file: Some(paths.logs_dir().join("supervisor.log")),
             wsl: cfg!(windows).then(|| system32("wsl.exe")),
             legacy_connector_dir: cfg!(windows).then(|| std::env::var_os("LOCALAPPDATA")).flatten()

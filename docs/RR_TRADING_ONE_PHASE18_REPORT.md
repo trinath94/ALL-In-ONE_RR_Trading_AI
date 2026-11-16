@@ -170,6 +170,7 @@ it relinked while the connector was running, which the supervisor correctly refu
 * **Secrets do not migrate,** by design: the server's encryption keys never leave it. AI keys and broker passwords are re-entered on the PC.
 * **The import replaces the whole database,** including the PC's own users; it is meant for a new installation. The safety backup undoes it.
 * **Disk:** the import needs room for the dump, its SQL form in the container and the safety backup, about three times the dump size.
+* **Correction (Phase 21):** the desktop app declares an ACL manifest (`src-tauri/build.rs`), and Tauri rejects at runtime any command that is not declared there and granted to the window. `backup_import_file`, `backup_import` and `prerequisites` were not declared, so in the real Windows window the Ubuntu import and the wizard's first step would have been refused. The supervisor, the `supervise` CLI and the mocked-browser checks used here do not go through Tauri's ACL, which is why it was not seen. Fixed in Phase 21, with a test that keeps the command list, the manifest and the capability identical.
 * **The desktop window was not run in a real Windows session here.** The new Tauri commands are thin wrappers over the supervisor, which was exercised through the `supervise` CLI. The Windows installer build in CI compiles them.
 
 ## 7. Security implications

@@ -118,6 +118,7 @@ left behind still fails.
 
 ## 6. Known limitations
 
+* **Correction (Phase 21):** the desktop app declares an ACL manifest (`src-tauri/build.rs`), and Tauri rejects at runtime any command that is not declared there and granted to the window. `backup_list` and `backup_restore` were not declared, so in the real Windows window Backup and Recovery's list and restore would have been refused. The supervisor, the `supervise` CLI and the mocked-browser checks used here do not go through Tauri's ACL, which is why it was not seen. Fixed in Phase 21, with a test that keeps the command list, the manifest and the capability identical.
 * **The desktop window was not exercised in a real Windows session here.** The new Tauri commands are thin wrappers, tested through the supervisor and the `supervise` CLI. The Windows installer build in CI compiles them.
 * **Quote values on the scanner are those at the last scan,** labelled so. Live quotes are on the charts.
 * **Backups stay on the computer.** The page says to copy the backups folder to external storage; automatic off-machine copies are not implemented.

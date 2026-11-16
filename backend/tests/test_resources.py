@@ -55,7 +55,7 @@ def row(name: str) -> LearningJob:
 
 
 def wait_pid(path) -> int:
-    for _ in range(200):
+    for _ in range(1200):                      # up to 60 s: process start-up on a slow CI runner
         if os.path.exists(path) and open(path).read():
             return int(open(path).read())
         time.sleep(0.05)
@@ -79,11 +79,16 @@ def test_isolated_job_runs_in_its_own_process_and_records_result_or_failure(db_c
 def test_a_timed_out_job_is_terminated_not_left_running(db_clean, tmp_path, monkeypatch):
     pidfile = tmp_path / "pid"
     monkeypatch.setenv("RR_TEST_PIDFILE", str(pidfile))
-    t0 = time.monotonic()
-    out = scheduler.run_job(scheduler.Job("t_iso_slow", 3600, 2, job_forever, isolated=True))
-    assert out["status"] == "TIMEOUT"
-    assert time.monotonic() - t0 < 2 + scheduler.POLL_SECONDS + scheduler.KILL_GRACE_SECONDS + 10
+    # Generous timeout: starting the job's process (a fresh interpreter importing the engine) can take seconds on a
+    # slow machine; the test waits until the job is running, so it measures the timeout, not the start-up.
+    job = scheduler.Job("t_iso_slow", 3600, 20, job_forever, isolated=True)
+    res = {}
+    th = threading.Thread(target=lambda: res.update(scheduler.run_job(job)))
+    th.start()
     pid = wait_pid(pidfile)
+    assert alive(pid)
+    th.join(20 + scheduler.POLL_SECONDS + scheduler.KILL_GRACE_SECONDS + 30)
+    assert not th.is_alive() and res["status"] == "TIMEOUT"
     assert not alive(pid), "the job's process was terminated"
     assert "process terminated" in row("t_iso_slow").error
 

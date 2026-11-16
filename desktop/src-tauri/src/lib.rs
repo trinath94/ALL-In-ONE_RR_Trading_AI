@@ -192,6 +192,35 @@ async fn backup_import(state: State<'_, AppState>, backup: String, confirmation:
     with_supervisor(&state, move |sup, _| sup.import(&backup, confirmation.as_deref()).map_err(|e| e.to_string())).await
 }
 
+/// Phase 21: this installation's backup key, to keep offline (typed phrase, checked again in the supervisor).
+#[tauri::command]
+async fn backup_key_export(state: State<'_, AppState>, confirmation: Option<String>) -> Result<serde_json::Value, String> {
+    with_supervisor(&state, move |sup, _| sup.export_backup_key(confirmation.as_deref())).await
+}
+
+/// Phase 21: add another installation's backup key so its backups can be restored here. Returns the key id.
+#[tauri::command]
+async fn backup_key_add(state: State<'_, AppState>, key: String) -> Result<String, String> {
+    let paths = state.paths.clone()?;
+    tauri::async_runtime::spawn_blocking(move || local::add_backup_key(&paths, &key)).await.map_err(|e| e.to_string())?
+}
+
+/// Phase 21: rotate the access secrets (typed phrase). Everyone is signed out; the trading worker is not restarted.
+#[tauri::command]
+async fn rotate_secrets(state: State<'_, AppState>, confirmation: Option<String>) -> Result<PlanReport, String> {
+    rr_one_core::actions::rotate_plans(confirmation.as_deref()).map_err(|e| e.to_string())?;
+    let paths = state.paths.clone()?;
+    let settings = state.settings.lock().map_err(|_| "settings lock poisoned")?.clone();
+    if state.busy.swap(true, Ordering::SeqCst) {
+        return Err("another service action is still running".into());
+    }
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        local::rotate_secrets(&paths, &settings, &SystemRunner, confirmation.as_deref())
+    }).await.map_err(|e| e.to_string());
+    state.busy.store(false, Ordering::SeqCst);
+    res?
+}
+
 /// Phase 18 first-run wizard: the prerequisite checks (Windows, Docker Desktop, WSL2, disk space, port).
 #[tauri::command]
 async fn prerequisites(state: State<'_, AppState>) -> Result<Vec<rr_one_core::supervisor::Check>, String> {
@@ -430,7 +459,8 @@ pub fn run() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console,
             mt5_overview, mt5_detect, mt5_save_profile, mt5_select_profile, mt5_delete_profile, mt5_link,
-            engine_status, engine_bootstrap_admin, engine_use_demo_account, backup_list, backup_restore, backup_import_file, backup_import, prerequisites])
+            engine_status, engine_bootstrap_admin, engine_use_demo_account, backup_list, backup_restore, backup_import_file, backup_import, prerequisites,
+            backup_key_export, backup_key_add, rotate_secrets])
         .setup(move |app| {
             build_tray(app.handle())?;
             if !start_minimized {

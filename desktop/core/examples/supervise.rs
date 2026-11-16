@@ -71,6 +71,17 @@ fn main() {
             println!("{}", serde_json::to_string_pretty(&rep).unwrap());
             std::process::exit(if ok { 0 } else { 1 });
         }
+        // Phase 21
+        "backup-key" => sup.export_backup_key(args.get(1).map(String::as_str)).unwrap_or_else(|e| fail(&e)),
+        // the key comes from the environment, never from argv
+        "backup-key-add" => serde_json::json!({"id": local::add_backup_key(&paths, &std::env::var("RR_ONE_BACKUP_KEY").unwrap_or_default())
+            .unwrap_or_else(|e| fail(&e))}),
+        "rotate-secrets" => {
+            let rep = local::rotate_secrets(&paths, &settings, &runner, args.get(1).map(String::as_str)).unwrap_or_else(|e| fail(&e));
+            let ok = rep.ok;
+            println!("{}", serde_json::to_string_pretty(&rep).unwrap());
+            std::process::exit(if ok { 0 } else { 1 });
+        }
         "restore" => {
             let rep = sup.restore(args.get(1).map(String::as_str).unwrap_or(""), args.get(2).map(String::as_str))
                 .unwrap_or_else(|e| fail(&e.to_string()));

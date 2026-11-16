@@ -16,7 +16,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub const FILE_NAME: &str = "stack.secrets";
-const FORMAT_VERSION: u32 = 5;
+const FORMAT_VERSION: u32 = 6;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +42,13 @@ pub struct StackSecrets {
     /// HMAC key signing model artefacts (format 5). Given to the `api`, `analysis` and `learner` containers only.
     #[serde(default)]
     model_signing_key: String,
+    /// Key encrypting database backups (format 6, Phase 21). Held by the desktop app only, never by a container.
+    #[serde(default)]
+    backup_key: String,
+    /// Backup keys of other installations the user added (their `RRBK1-…` export), so their backups can be restored
+    /// here (disaster recovery on a new PC). Stored like every other secret.
+    #[serde(default)]
+    extra_backup_keys: Vec<String>,
 }
 
 impl fmt::Debug for StackSecrets {
@@ -88,6 +95,10 @@ fn random_alnum(len: usize) -> Result<String, SecretsError> {
     Ok(out)
 }
 
+fn backup_key() -> Result<String, SecretsError> {
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(random_bytes(32)?))
+}
+
 fn fernet_key() -> Result<String, SecretsError> {
     Ok(base64::engine::general_purpose::URL_SAFE.encode(random_bytes(32)?))
 }
@@ -105,7 +116,38 @@ impl StackSecrets {
             supervisor_key: random_alnum(48)?,
             ai_keys_key: fernet_key()?,
             model_signing_key: random_alnum(48)?,
+            backup_key: backup_key()?,
+            extra_backup_keys: Vec::new(),
         })
+    }
+
+    /// Phase 21: the same secrets with every *access* secret replaced (database and Redis passwords, session signing
+    /// key, bridge secret, local supervisor API key). Keys that encrypt or sign stored data are kept: rotating them
+    /// would make stored broker passwords, AI keys, signed models and existing backups unreadable.
+    pub fn with_rotated_access(&self) -> Result<Self, SecretsError> {
+        let mut n = self.clone();
+        n.db_password = random_alnum(32)?;
+        n.redis_password = random_alnum(32)?;
+        n.jwt_secret = random_alnum(64)?;
+        n.bridge_secret = random_alnum(48)?;
+        n.supervisor_key = random_alnum(48)?;
+        Ok(n)
+    }
+
+    /// The database password, for `ALTER ROLE` during a rotation only (alphanumeric, never logged).
+    pub fn db_password(&self) -> &str {
+        &self.db_password
+    }
+
+    /// This installation's backup key, then the keys added from other installations.
+    pub fn backup_keys(&self) -> Vec<crate::backupcrypt::BackupKey> {
+        std::iter::once(crate::backupcrypt::BackupKey::from_stored(&self.backup_key).ok()).flatten()
+            .chain(self.extra_backup_keys.iter().filter_map(|k| crate::backupcrypt::BackupKey::from_stored(k).ok()))
+            .collect()
+    }
+
+    pub fn own_backup_key(&self) -> Result<crate::backupcrypt::BackupKey, String> {
+        crate::backupcrypt::BackupKey::from_stored(&self.backup_key)
     }
 
     /// Environment for Docker Compose interpolation (see infrastructure/compose.yml).
@@ -124,9 +166,9 @@ impl StackSecrets {
     }
 
     /// Every secret value, for redacting text that might echo one (e.g. tool error output).
-    pub fn values(&self) -> [&str; 9] {
+    pub fn values(&self) -> [&str; 10] {
         [&self.db_password, &self.redis_password, &self.jwt_secret, &self.encryption_key, &self.bridge_secret,
-            &self.bridge_read_key, &self.supervisor_key, &self.ai_keys_key, &self.model_signing_key]
+            &self.bridge_read_key, &self.supervisor_key, &self.ai_keys_key, &self.model_signing_key, &self.backup_key]
     }
 
     /// Key for signing requests to the engine's local supervisor API.
@@ -245,6 +287,9 @@ pub fn load_or_create(dir: &Path, protector: &dyn Protector) -> Result<(StackSec
                 if s.model_signing_key.is_empty() {
                     s.model_signing_key = random_alnum(48)?;
                 }
+                if s.backup_key.is_empty() {
+                    s.backup_key = backup_key()?;
+                }
                 s.version = FORMAT_VERSION;
                 let sealed = protector.protect(&serde_json::to_vec(&s).expect("serialise secrets"))
                     .map_err(SecretsError::Undecryptable)?;
@@ -265,6 +310,25 @@ pub fn load_or_create(dir: &Path, protector: &dyn Protector) -> Result<(StackSec
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// Phase 21: replace the stored secrets (rotation, an added backup key). Atomic: the old file stays until the new one
+/// is complete.
+pub fn save(dir: &Path, protector: &dyn Protector, s: &StackSecrets) -> Result<(), SecretsError> {
+    let sealed = protector.protect(&serde_json::to_vec(s).expect("serialise secrets")).map_err(SecretsError::Undecryptable)?;
+    replace_private(&secrets_file(dir), &sealed)?;
+    Ok(())
+}
+
+/// Phase 21: add another installation's exported backup key. Returns its id. Adding a key already held is a no-op.
+pub fn add_backup_key(dir: &Path, protector: &dyn Protector, export: &str) -> Result<String, String> {
+    let k = crate::backupcrypt::BackupKey::parse_export(export)?;
+    let (mut s, _) = load_or_create(dir, protector).map_err(|e| e.to_string())?;
+    if !s.backup_keys().contains(&k) {
+        s.extra_backup_keys.push(k.stored());
+        save(dir, protector, &s).map_err(|e| e.to_string())?;
+    }
+    Ok(k.id_hex())
 }
 
 fn create_private_dir(dir: &Path) -> std::io::Result<()> {
@@ -414,7 +478,7 @@ mod tests {
         std::fs::write(secrets_file(&dir), serde_json::to_vec(&v2).unwrap()).unwrap();
         let (s, _) = load_or_create(&dir, &PlainFileProtector).unwrap();
         assert_eq!((s.db_password.as_str(), s.bridge_read_key.as_str()), (v2.db_password.as_str(), v2.bridge_read_key.as_str()));
-        assert_eq!(s.version, 5);
+        assert_eq!(s.version, FORMAT_VERSION);
         assert_eq!(s.supervisor_key.len(), 48);
     }
 
@@ -429,7 +493,7 @@ mod tests {
         std::fs::write(secrets_file(&dir), serde_json::to_vec(&v3).unwrap()).unwrap();
         let (s, created) = load_or_create(&dir, &PlainFileProtector).unwrap();
         assert!(!created);
-        assert_eq!(s.version, 5);
+        assert_eq!(s.version, FORMAT_VERSION);
         assert_eq!((s.db_password.as_str(), s.supervisor_key.as_str(), s.encryption_key.as_str()),
                    (v3.db_password.as_str(), v3.supervisor_key.as_str(), v3.encryption_key.as_str()),
                    "every existing value survives the upgrade");
@@ -448,9 +512,52 @@ mod tests {
         v4.model_signing_key = String::new();
         std::fs::write(secrets_file(&dir), serde_json::to_vec(&v4).unwrap()).unwrap();
         let (s, _) = load_or_create(&dir, &PlainFileProtector).unwrap();
-        assert_eq!(s.version, 5);
+        assert_eq!(s.version, FORMAT_VERSION);
         assert_eq!((s.db_password.as_str(), s.ai_keys_key.as_str()), (v4.db_password.as_str(), v4.ai_keys_key.as_str()));
         assert_eq!(s.model_signing_key.len(), 48);
+    }
+
+    #[test]
+    fn format_5_file_gains_only_the_backup_key() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("secrets");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut v5 = StackSecrets::generate().unwrap();
+        v5.version = 5;
+        v5.backup_key = String::new();
+        std::fs::write(secrets_file(&dir), serde_json::to_vec(&v5).unwrap()).unwrap();
+        let (s, _) = load_or_create(&dir, &PlainFileProtector).unwrap();
+        assert_eq!(s.version, FORMAT_VERSION);
+        assert_eq!(s.values()[..9], v5.values()[..9], "every existing value is kept");
+        assert!(s.own_backup_key().is_ok() && s.backup_keys().len() == 1);
+    }
+
+    #[test]
+    fn rotation_replaces_access_secrets_and_keeps_data_keys() {
+        let s = StackSecrets::generate().unwrap();
+        let n = s.with_rotated_access().unwrap();
+        for (a, b, rotated) in [(&s.db_password, &n.db_password, true), (&s.redis_password, &n.redis_password, true),
+                                (&s.jwt_secret, &n.jwt_secret, true), (&s.bridge_secret, &n.bridge_secret, true),
+                                (&s.supervisor_key, &n.supervisor_key, true), (&s.encryption_key, &n.encryption_key, false),
+                                (&s.bridge_read_key, &n.bridge_read_key, false), (&s.ai_keys_key, &n.ai_keys_key, false),
+                                (&s.model_signing_key, &n.model_signing_key, false), (&s.backup_key, &n.backup_key, false)] {
+            assert_eq!(a != b, rotated, "{rotated}");
+        }
+        assert!(n.db_password.chars().all(|c| c.is_ascii_alphanumeric()), "safe to quote in ALTER ROLE");
+    }
+
+    #[test]
+    fn another_installations_backup_key_can_be_added_and_is_kept() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("secrets");
+        let (mine, _) = load_or_create(&dir, &PlainFileProtector).unwrap();
+        let other = crate::backupcrypt::BackupKey::generate().unwrap();
+        assert!(add_backup_key(&dir, &PlainFileProtector, "not a key").is_err());
+        assert_eq!(add_backup_key(&dir, &PlainFileProtector, &other.export()).unwrap(), other.id_hex());
+        assert_eq!(add_backup_key(&dir, &PlainFileProtector, &other.export()).unwrap(), other.id_hex(), "idempotent");
+        let (s, _) = load_or_create(&dir, &PlainFileProtector).unwrap();
+        assert_eq!(s.backup_keys(), vec![mine.own_backup_key().unwrap(), other]);
+        assert_eq!(s.values(), mine.values(), "nothing else changed");
     }
 
     #[cfg(unix)]

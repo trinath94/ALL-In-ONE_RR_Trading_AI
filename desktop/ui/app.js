@@ -46,6 +46,7 @@ function describeStep(s) {
     case "verify_dump": return "Verify " + s.backup + " in a scratch database (nothing replaced yet)";
     case "verify_restored": return "Compare every table's row count with the verified dump";
     case "reset_for_new_installation": return "Start like a new installation: DEMO, auto trading OFF, LIVE approvals cleared";
+    case "rotate_access_secrets": return "Change the database password and save the new access secrets";
     default: return s.step;
   }
 }

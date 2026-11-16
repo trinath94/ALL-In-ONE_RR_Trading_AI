@@ -43,6 +43,7 @@ measurements showed.
 | Backend suite, including the 215-strategy preservation test | **314 passed** (302 + 12 new) in one full run |
 | Desktop core tests (Rust) | 106 passed (unchanged) |
 | Frontend `next build` | Passed |
+| CI (`7978cf7`) | frontend 43962564891 and desktop 43962564914 passed. Backend 43962565144 **failed one new test** (`test_a_timed_out_job_is_terminated_not_left_running`): on the slower CI runner the job's process took longer than the test's 2-second timeout just to start, so it was terminated (correctly) before writing the PID file the test waits for. The engine behaved as designed; the test now waits for the job to start and uses a 20-second timeout (fixed in Phase 21). |
 
 ## 2. CPU priority: learning cannot starve position protection
 

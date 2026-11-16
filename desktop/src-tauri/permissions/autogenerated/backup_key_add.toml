@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-backup-key-add"
+description = "Enables the backup_key_add command without any pre-configured scope."
+commands.allow = ["backup_key_add"]
+
+[[permission]]
+identifier = "deny-backup-key-add"
+description = "Denies the backup_key_add command without any pre-configured scope."
+commands.deny = ["backup_key_add"]

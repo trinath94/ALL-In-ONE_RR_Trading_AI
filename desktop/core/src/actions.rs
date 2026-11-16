@@ -21,6 +21,10 @@ pub const START_WORKER_PHRASE: &str = "START TRADING WORKER";
 pub const RESTORE_PHRASE: &str = "RESTORE DATABASE";
 /// Phrase the operator must type to import the database of the previous Ubuntu server (Phase 18).
 pub const IMPORT_PHRASE: &str = "IMPORT DATABASE";
+/// Phase 21: typed confirmation before the backup key is shown (it decrypts every backup of this installation).
+pub const SHOW_KEY_PHRASE: &str = "SHOW BACKUP KEY";
+/// Phase 21: typed confirmation for rotating the access secrets (everyone is signed out; the engine restarts).
+pub const ROTATE_PHRASE: &str = "ROTATE SECRETS";
 
 /// Services the supervisor manages. Roles follow decision D1 (Phase 1 report): the original monolithic worker
 /// loop is split into `Monitor` (heartbeat, sync, reconciliation, position protection), `Analysis` (scanner and
@@ -141,6 +145,9 @@ pub enum Step {
     /// Phase 18: an imported database starts like a new installation: DEMO, auto trading OFF, LIVE approvals cleared,
     /// reconciliation required (recorded in the audit trail).
     ResetForNewInstallation,
+    /// Phase 21: the database password is changed (ALTER ROLE) and the new access secrets are saved. Reported by
+    /// `rotate_secrets`, which runs it between the two halves of the rotation; never part of an ordinary plan.
+    RotateAccessSecrets,
 }
 
 /// The fixed plan of an import of the previous Ubuntu server's database (Phase 18): verified in a scratch database
@@ -254,6 +261,34 @@ pub enum ActionError {
     RestoreConfirmationRequired,
     #[error("importing a database requires typing exactly: {IMPORT_PHRASE}")]
     ImportConfirmationRequired,
+    #[error("rotating the secrets requires typing exactly: {ROTATE_PHRASE}")]
+    RotateConfirmationRequired,
+    /// Phase 21: a backup that cannot be used here (e.g. encrypted with a key this installation does not hold).
+    #[error("{0}")]
+    Backup(String),
+}
+
+/// Phase 21: the two halves of a rotation of the access secrets. Before (with the current secrets): a backup, then
+/// everything that uses the database or Redis is stopped, trading worker first. After (with the new secrets): the
+/// database and Redis come back with the new passwords, then the engine and the learner. The trading worker is not
+/// restarted.
+pub fn rotate_plans(confirmation: Option<&str>) -> Result<(Vec<Step>, Vec<Step>), ActionError> {
+    if confirmation != Some(ROTATE_PHRASE) {
+        return Err(ActionError::RotateConfirmationRequired);
+    }
+    use Step::*;
+    Ok((vec![
+        CheckPrerequisites,
+        StartServices { services: INFRA.to_vec() },
+        BackupDatabase { purpose: BackupPurpose::Manual },
+        StopServices { services: stop_order(&[Service::TradingWorker, Service::Learner, Service::Analysis, Service::Monitor,
+            Service::Gateway, Service::Frontend, Service::Api]) },
+    ], vec![
+        StartServices { services: INFRA.to_vec() },
+        StartServices { services: BACKEND.to_vec() },
+        StartServices { services: vec![Service::Learner] },
+        VerifyHealth,
+    ]))
 }
 
 impl Action {

@@ -670,7 +670,7 @@ os.remove(os.path.join(home, "stop.request")); st("STOPPED", "", {"id": p["profi
         let secrets = crate::secrets::StackSecrets::generate().unwrap();
         let cfg = crate::supervisor::SupervisorConfig {
             compose: crate::compose::Compose { docker: "/nonexistent/docker".into(), file: "/nonexistent/compose.yml".into() },
-            gateway_port: 47810, data_dir: t.path().into(), backups_dir: t.path().join("b"), log_file: None, wsl: None, legacy_connector_dir: None,
+            gateway_port: 47810, data_dir: t.path().into(), backups_dir: t.path().join("b"), private_dir: t.path().join("p"), log_file: None, wsl: None, legacy_connector_dir: None,
             image_tag: "local".into(),
         };
         let sup = crate::supervisor::Supervisor { cfg, runner: &crate::runner::SystemRunner, secrets: &secrets,
