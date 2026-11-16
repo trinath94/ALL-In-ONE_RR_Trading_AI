@@ -8,6 +8,7 @@
   <script src="app.js" defer></script>
   <script src="mt5.js" defer></script>
   <script src="engine.js" defer></script>
+  <script src="backup.js" defer></script>
 </head>
 <body>
   <header class="top">
@@ -89,6 +90,26 @@
           <button id="btn-cancel" type="button">Cancel</button></div>
       </div>
       <pre class="plan" id="plan" aria-live="polite"></pre>
+    </section>
+
+    <section class="card" aria-labelledby="h-backup">
+      <div class="row"><h2 id="h-backup">Backup and Recovery</h2>
+        <div class="btns"><button id="bk-refresh" type="button">Refresh</button>
+          <button id="bk-now" type="button" class="primary">Back up now</button></div></div>
+      <p class="muted">Backups are PostgreSQL dumps in this computer's backups folder (see Locations): taken on request, before
+        every database migration, and before every restore. Restoring replaces the whole database in one transaction, after a
+        safety backup of the current one; afterwards auto trading is OFF and the engine reconciles with the broker before any
+        entry. The trading worker is not restarted.</p>
+      <table class="tbl"><thead><tr><th>Backup</th><th>Kind</th><th>Taken</th><th>Size</th><th></th></tr></thead>
+        <tbody id="backups"><tr><td colspan="5" class="muted">Not loaded yet</td></tr></tbody></table>
+      <div class="confirm" id="bk-confirm" hidden>
+        <label for="bk-phrase">Restore <code id="bk-id"></code>? Everything recorded after it is replaced by its contents.
+          Type <code>RESTORE DATABASE</code> to continue.</label>
+        <div class="row"><input id="bk-phrase" autocomplete="off" spellcheck="false">
+          <button id="bk-go" type="button" class="danger">Restore</button>
+          <button id="bk-cancel" type="button">Cancel</button></div>
+      </div>
+      <pre class="plan" id="bk-out" aria-live="polite"></pre>
     </section>
 
     <section class="card" aria-labelledby="h-paths">

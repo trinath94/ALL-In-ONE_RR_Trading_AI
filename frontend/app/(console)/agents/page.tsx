@@ -24,7 +24,7 @@ export default function Agents() {
   return (
     <div>
       <PageTitle sub="Specialist agents coordinated by one orchestrator, not independent bots. Each run is recorded in a typed contract (inputs, output, timing, provider/model, evidence, errors). Only Trade Execution and Trade Management touch the broker, and only through the Risk Engine.">
-        Agent Control Room</PageTitle>
+        Multi-Agent Control Room</PageTitle>
       <ErrorLine error={error} />
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
         <Stat label="Agents" value={(data || []).length} sub="closed registry" />
@@ -38,10 +38,16 @@ export default function Agents() {
             cols={[{ k: "name", h: "Agent" }, { k: "kind", h: "Kind", r: (a) => <Badge tone={KIND[a.kind]}>{a.kind}</Badge> },
               { k: "runs_in", h: "Runs in", r: (a) => <span className="text-[10px] text-dim">{a.runs_in}</span> },
               { k: "execution_path", h: "Broker", r: (a) => a.execution_path ? <Badge tone="bear">execution</Badge> : <span className="text-dim">read-only</span> },
-              { k: "runs", h: "Runs 24 h", sort: false, r: (a) => `${a.runs_24h.ok + a.runs_24h.partial + a.runs_24h.error + a.runs_24h.skipped}${a.runs_24h.error ? ` (${a.runs_24h.error} err)` : ""}` },
-              { k: "last", h: "Last run", sort: false, r: (a) => a.last_run
-                ? <span><Badge tone={STATUS[a.last_run.status]}>{a.last_run.status}</Badge> <span className="text-dim">{fmt.time(a.last_run.completed_at)}</span></span>
-                : <span className="text-dim">not run yet</span> }]} />
+              { k: "status", h: "Status", sort: false, r: (a) => a.last_run ? <Badge tone={STATUS[a.last_run.status]}>{a.last_run.status}</Badge> : <span className="text-dim">not run yet</span> },
+              { k: "task", h: "Task", sort: false, r: (a) => a.last_run?.task ?? "—" },
+              { k: "markets", h: "Symbol / TF", sort: false, r: (a) => a.markets?.length ? <span title={a.markets.join(", ")}>{a.markets[0]}{a.markets.length > 1 ? ` +${a.markets.length - 1}` : ""}</span> : <span className="text-dim">—</span> },
+              { k: "provider", h: "Provider / model", sort: false, r: (a) => a.last_run?.provider ? `${a.last_run.provider} · ${a.last_run.model}` : <span className="text-dim">{a.kind === "deterministic" ? "none (deterministic)" : "—"}</span> },
+              { k: "last", h: "Last activity", sort: false, r: (a) => a.last_run ? fmt.time(a.last_run.completed_at) : "—" },
+              { k: "time", h: "Time", sort: false, r: (a) => a.last_run?.duration_ms == null ? "—" : a.last_run.duration_ms < 1 ? "<1 ms" : `${Math.round(a.last_run.duration_ms)} ms` },
+              { k: "output", h: "Output", sort: false, r: (a) => <span className="block max-w-[220px] truncate text-dim">{a.last_run ? Object.entries(a.last_run.output || {}).map(([k, v]) => `${k}: ${v}`).join(" · ") : ""}</span> },
+              { k: "errors", h: "Errors", sort: false, r: (a) => a.last_run?.errors?.length ? <span className="block max-w-[160px] truncate text-bear">{a.last_run.errors.join("; ")}</span> : <span className="text-dim">none</span> },
+              { k: "health", h: "Health (24 h)", sort: false, r: (a) => <Badge tone={a.health === "healthy" ? "neon" : a.health === "failing" ? "bear" : a.health === "degraded" ? "warn" : "dim"}>{a.health}</Badge> },
+              { k: "runs", h: "Runs 24 h", sort: false, r: (a) => `${a.runs_24h.ok + a.runs_24h.partial + a.runs_24h.error + a.runs_24h.skipped}${a.runs_24h.error ? ` (${a.runs_24h.error} err)` : ""}` }]} />
         </Panel>
         {sel && (
           <Panel title={sel.name}>

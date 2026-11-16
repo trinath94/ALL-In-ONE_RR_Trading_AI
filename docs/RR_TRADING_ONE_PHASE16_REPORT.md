@@ -31,6 +31,7 @@ installed app, and fixed three gaps. **LIVE trading was never enabled on the ins
 | New tests | 3: the full LIVE lifecycle, exact identity, unresolved executions block a switch |
 | Backend suite, including the 215-strategy preservation test | **295 passed** (292 + 3 new) in one full run |
 | Frontend `next build` | Passed, 29 pages |
+| CI (`36ddfed`) | backend 43914609413 and frontend 43914609525 passed. Desktop 43914609789 **failed**: the installer's silent-uninstall check raced the NSIS uninstaller (it tested the connector folder before the uninstaller had removed it). No desktop code had changed; the check was fixed in Phase 17 (it now waits for both paths, as it already did for the app). |
 
 ## 2. Gaps found and fixed
 

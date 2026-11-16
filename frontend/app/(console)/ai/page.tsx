@@ -32,7 +32,7 @@ export default function AiPage() {
   const statusOf = (k: string) => (mods[MIRROR[k] || k]?.status as string) || "IDLE";
   return (
     <div>
-      <PageTitle sub="Module states reflect real recorded activity; idle modules have not run.">AI Intelligence</PageTitle>
+      <PageTitle sub="Module states reflect real recorded activity; idle modules have not run.">AI Trading Engine</PageTitle>
       <div className="grid gap-3 xl:grid-cols-[1fr_360px]">
         <div className="space-y-3">
           <Panel title="AI brain">

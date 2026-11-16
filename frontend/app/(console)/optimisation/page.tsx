@@ -13,7 +13,7 @@ export default function Optimisation() {
   const opt = (jobs || []).filter((j) => ["OPTIMISE", "WALKFORWARD"].includes(j.kind));
   return (
     <div>
-      <PageTitle sub="Candidates are ranked in-sample but always shown with their out-of-sample result. Optimised parameters are never applied to live automatically.">Strategy Optimisation</PageTitle>
+      <PageTitle sub="Candidates are ranked in-sample but always shown with their out-of-sample result. Optimised parameters are never applied to live automatically.">Optimisation Lab</PageTitle>
       <div className="grid gap-3 xl:grid-cols-2">
         <Panel title="Grid search / walk-forward">{can(me, "backtest.run") ? <BacktestForm defaultKind="WALKFORWARD" kinds={["WALKFORWARD", "OPTIMISE"]} onCreated={(id) => { setSel(id); reload(); }} /> : <Empty>Requires backtest permission</Empty>}</Panel>
         <Panel title="Optimisation jobs"><Table rows={opt} onRow={(j) => setSel(j.id)} empty="No optimisation runs yet"

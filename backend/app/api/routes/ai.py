@@ -44,9 +44,35 @@ def agents(_: User = Depends(current_user), db: Session = Depends(get_db)):
     out = []
     for a in REGISTRY:
         lr = last.get(a.id)
-        out.append({**a.dict(), "runs_24h": {st: counts.get((a.id, st), 0) for st in ("ok", "partial", "error", "skipped")},
-                    "last_run": _run(lr) if lr else None})
+        r24 = {st: counts.get((a.id, st), 0) for st in ("ok", "partial", "error", "skipped")}
+        out.append({**a.dict(), "runs_24h": r24, "last_run": _run(lr) if lr else None,
+                    # Phase 17 (Part 17 Control Room): health from the last 24 h of runs; the markets of the last run
+                    "health": _health(r24), "markets": _markets(lr)})
     return out
+
+
+def _health(r24: dict) -> str:
+    n = sum(r24.values())
+    if n == 0:
+        return "idle (no run in 24 h)"
+    if r24["error"] and not (r24["ok"] or r24["partial"]):
+        return "failing"
+    return "degraded" if r24["error"] else "healthy"
+
+
+def _markets(lr: AgentRun | None) -> list[str]:
+    """Symbol:timeframe references of the agent's last run (e.g. EURUSD.r:H1), de-duplicated."""
+    if lr is None:
+        return []
+    refs = (lr.input_refs or {}).get("refs") or []
+    seen = []
+    for ref in refs:
+        parts = str(ref).split(":")
+        if len(parts) >= 2 and parts[1] in ("M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"):
+            m = f"{parts[0]} {parts[1]}"
+            if m not in seen:
+                seen.append(m)
+    return seen
 
 
 @router.get("/agents/runs")

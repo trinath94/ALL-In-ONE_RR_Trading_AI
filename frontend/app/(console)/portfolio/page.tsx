@@ -17,7 +17,7 @@ export default function Portfolio() {
   const perf = sum?.performance;
   return (
     <div>
-      <PageTitle sub="Exposure in account currency, derived from live MT5 positions and broker tick values">Portfolio Analytics</PageTitle>
+      <PageTitle sub="Exposure in account currency, derived from live MT5 positions and broker tick values">Portfolio Intelligence</PageTitle>
       <ErrorLine error={error} />
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
         <Stat label="Total exposure" value={fmt.num(p?.total_exposure, 0)} />

@@ -29,7 +29,7 @@ export default function Terminal() {
   }
   return (
     <div>
-      <PageTitle sub="Windows MT5 connector, terminal health and manual order entry (always routed through the Risk Engine)">MT5 Terminal</PageTitle>
+      <PageTitle sub="Windows MT5 connector, terminal health and manual order entry (always routed through the Risk Engine)">MT5 Manager</PageTitle>
       <div className="grid gap-3 xl:grid-cols-3">
         <Panel title="Connector & terminal">
           <div className="grid grid-cols-2 gap-1 text-[11px]">

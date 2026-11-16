@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import client_ip, current_user, require
-from app.db.models import (AccountSnapshot, BrokerConnection, ClosedPosition, MT5Terminal, OpenPosition, RiskEvaluation,
+from app.db.models import (AccountSnapshot, ClosedPosition, OpenPosition, RiskEvaluation,
                            Symbol, TradeExecution, TradeOrder, TradingAccount, TradingSignal, User)
 from app.db.session import get_db
 from app.execution import manager as em
@@ -481,3 +481,104 @@ def sync(_: User = Depends(require("trade.manual")), db: Session = Depends(get_d
         raise HTTPException(409, "No active account")
     tr.sync_account(db, bridge, acct)
     return tr.sync_positions(db, bridge, acct)
+
+
+# ---- Command Centre overview (RR Trading One Phase 17, specification Part 17) ----------------------------------------
+@router.get("/dashboard/overview")
+def overview(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Everything Part 17 lists for the Command Centre that the account summary does not already carry: service and
+    role status, broker connection, symbol and strategy counts, agent and learner and worker status, latest signals,
+    recent executions and critical alerts. Every figure comes from live state or recorded rows; nothing is estimated."""
+    import json as _json
+
+    from sqlalchemy import text
+
+    from app.db.models import Notification, SystemEvent
+    from app.db.models_ai import AgentRun
+    from app.db.models_intel import AnomalyEvent
+    from app.scanner.service import enabled_strategies
+    from app.services.events import get_redis
+    now = datetime.now(UTC)
+    st = tr.get_state(db)
+    acct = tr.active_account(db)
+
+    def check(fn):
+        try:
+            return {"status": "UP", "detail": fn()}
+        except Exception as exc:  # noqa: BLE001 - shown as DOWN with its reason
+            return {"status": "DOWN", "detail": str(exc)[:160]}
+
+    r = get_redis()
+    services = {"backend": {"status": "UP", "detail": "API responding"},
+                "database": check(lambda: db.execute(text("select version()")).scalar()[:40]),
+                "redis": check(lambda: r.info("server")["redis_version"])}
+    try:
+        bridge = _json.loads(r.get("rr:bridge:health") or "null")
+    except Exception:  # noqa: BLE001
+        bridge = None
+    services["mt5_terminal"] = {"status": "UP" if bridge and bridge.get("connected") else "DOWN",
+                                "detail": "terminal connected" if bridge and bridge.get("connected") else
+                                ((bridge or {}).get("error") or "no heartbeat from the monitor")}
+    services["broker_connection"] = {
+        "status": "UP" if bridge and bridge.get("connected") and bridge.get("identity_ok") and acct and acct.verified else "DOWN",
+        "detail": (f"{acct.mode} {acct.login}@{acct.server}" + (" verified" if acct.verified else " not verified")) if acct
+        else "no active account"}
+
+    def role(name, key):
+        try:
+            return {"status": "RUNNING" if r.exists(key) else "STOPPED"}
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "UNKNOWN", "detail": str(exc)[:120]}
+    roles = {"monitor": role("monitor", "rr:role:monitor:lock"), "analysis": role("analysis", "rr:role:analysis:lock"),
+             "learner": role("learner", "rr:learner:lock"), "trading_worker": role("trading", "rr:role:trading:lock")}
+
+    hour = now - timedelta(hours=1)
+    runs = dict(db.execute(select(AgentRun.status, func.count()).where(AgentRun.created_at >= hour)
+                           .group_by(AgentRun.status)).all())
+    agents_active = db.scalar(select(func.count(func.distinct(AgentRun.agent_id))).where(AgentRun.created_at >= hour)) or 0
+    alerts = []
+    if st.kill_switch:
+        alerts.append({"kind": "KILL_SWITCH", "detail": st.kill_reason or "emergency stop active"})
+    if st.risk_lock:
+        alerts.append({"kind": "RISK_LOCK", "detail": st.risk_lock_reason})
+    for a in db.scalars(select(AnomalyEvent).where(AnomalyEvent.resolved_at.is_(None), AnomalyEvent.severity == "critical")
+                        .order_by(AnomalyEvent.id.desc()).limit(10)):
+        alerts.append({"kind": f"ANOMALY {a.kind}", "detail": f"{a.symbol}: {a.explanation}"[:200], "at": a.detected_at})
+    # Past critical events and unread critical notifications (24 h), grouped by kind: shown apart from the alerts above,
+    # which are conditions active now. Only active conditions affect the overall health.
+    recent: dict[str, dict] = {}
+    day = now - timedelta(hours=24)
+    rows = [(f"SYSTEM {e.component}", e.message, e.created_at) for e in db.scalars(
+        select(SystemEvent).where(SystemEvent.level == "critical", SystemEvent.created_at >= day))]
+    rows += [(n.kind, n.title, n.created_at) for n in db.scalars(
+        select(Notification).where(Notification.severity == "critical", Notification.read.is_(False), Notification.created_at >= day))]
+    for kind, detail, at in rows:
+        g = recent.setdefault(kind, {"kind": kind, "count": 0, "latest": at, "detail": detail[:200]})
+        g["count"] += 1
+        if at > g["latest"]:
+            g["latest"], g["detail"] = at, detail[:200]
+    if not st.startup_checks_passed:
+        alerts.append({"kind": "RECONCILIATION", "detail": "startup reconciliation has not passed: new entries are blocked"})
+    for k, v in services.items():
+        if v["status"] == "DOWN":
+            alerts.append({"kind": f"{k.upper()} DOWN", "detail": str(v["detail"])[:200]})
+    worst = ("DOWN" if any(s["status"] == "DOWN" for s in services.values()) else "DEGRADED" if alerts else "HEALTHY")
+    return {
+        "overall_health": worst,
+        "services": services, "roles": roles,
+        "account_mode": st.active_mode, "auto_trading": st.auto_trading, "startup_checks_passed": st.startup_checks_passed,
+        "symbols_discovered": db.scalar(select(func.count(Symbol.id))) or 0,
+        "symbols_scanning": db.scalar(select(func.count(Symbol.id)).where(Symbol.scan_enabled.is_(True))) or 0,
+        "active_strategies": len(enabled_strategies(db, st.active_mode)),
+        "agents": {"active_last_hour": agents_active, "runs_last_hour": runs},
+        "latest_signals": [{"id": s.id, "symbol": sym, "timeframe": s.timeframe, "decision": s.decision, "grade": s.grade,
+                            "score": s.score, "status": s.status, "at": s.created_at}
+                           for s, sym in db.execute(select(TradingSignal, Symbol.broker_symbol)
+                                                    .join(Symbol, Symbol.id == TradingSignal.symbol_id)
+                                                    .order_by(TradingSignal.id.desc()).limit(8))],
+        "recent_executions": [{"execution_id": o.execution_id[:12], "symbol": o.symbol, "action": o.action,
+                               "volume": f(o.volume), "status": o.status, "source": o.source, "at": o.created_at}
+                              for o in db.scalars(select(TradeOrder).order_by(TradeOrder.id.desc()).limit(8))],
+        "critical_alerts": alerts,
+        "recent_critical_events": sorted(recent.values(), key=lambda g: g["latest"], reverse=True),
+    }

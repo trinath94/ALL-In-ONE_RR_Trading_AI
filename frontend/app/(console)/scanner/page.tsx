@@ -106,7 +106,13 @@ export default function Scanner() {
             { k: "entry", h: "Entry", r: (r) => fmt.px(r.entry) }, { k: "stop_loss", h: "SL", r: (r) => fmt.px(r.stop_loss) },
             { k: "take_profit", h: "TP", r: (r) => fmt.px(r.take_profit) }, { k: "risk_reward", h: "R:R" },
             { k: "regime", h: "Regime" }, { k: "news", h: "News", r: (r) => <Badge tone={r.news === "CLEAR" ? "neon" : r.news === "RESTRICTED" ? "bear" : "warn"}>{r.news}</Badge> },
-            { k: "analysed_at", h: "Status", r: (r) => <span className="text-dim">{fmt.time(r.analysed_at)}</span> },
+            { k: "bid", h: "Bid / ask", sort: false, r: (r) => r.bid == null ? "—" : <span title="at the last scan">{fmt.px(r.bid)} / {fmt.px(r.ask)}</span> },
+            { k: "spread_points", h: "Spread (pts)" },
+            { k: "consensus", h: "Consensus", r: (r) => r.consensus ? <span><Badge tone={dirTone(r.consensus)}>{r.consensus}</Badge> <span className="text-dim">{r.consensus_agreement}</span></span> : <span className="text-dim">—</span> },
+            { k: "probability", h: "Probability", r: (r) => r.probability == null ? <span className="text-dim" title={r.probability_evidence || "not evaluated"}>{r.probability_evidence === "INSUFFICIENT_DATA" ? "insufficient data" : "—"}</span> : <span title={r.probability_evidence}>{fmt.pct(r.probability, 1)}</span> },
+            { k: "data_quality", h: "Data", sort: false, r: (r) => r.data_quality ? <Badge tone={r.data_quality.status === "OK" ? "neon" : "warn"}>{r.data_quality.status === "OK" ? "ok" : `${r.data_quality.strategies_without_data} lack data`}</Badge> : "—" },
+            { k: "scan_priority", h: "Priority" },
+            { k: "analysed_at", h: "Last scan", r: (r) => <span className="text-dim">{fmt.time(r.analysed_at)}</span> },
           ]} />
       </Panel>
     </div>

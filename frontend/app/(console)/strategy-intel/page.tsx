@@ -24,7 +24,7 @@ export default function StrategyIntel() {
     { k: "r", h: "Avg R", r: (s: any) => fmt.num(s.performance.avg_r) }, { k: "dd", h: "Max DD", r: (s: any) => fmt.pctRaw(s.performance.max_drawdown) }];
   return (
     <div>
-      <PageTitle sub="Performance comes only from out-of-sample, walk-forward, paper and live results; < 30 trades is treated as inconclusive.">Strategy Intelligence</PageTitle>
+      <PageTitle sub="Performance comes only from out-of-sample, walk-forward, paper and live results; < 30 trades is treated as inconclusive.">Strategy Performance</PageTitle>
       <ErrorLine error={error} />
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">
         <Stat label="Total strategies" value={all.length} />

@@ -28,7 +28,7 @@ export default function Trades() {
     <div>
       <PageTitle sub={`${rows?.length ?? 0} open positions · floating ${fmt.num(pnl)} · mirrored from MT5`} right={manual &&
         <Btn small onClick={async () => { try { await post("/api/positions/sync"); reload(); } catch (e: any) { setErr(e.message); } }}><RefreshCw size={11} />Sync MT5</Btn>}>
-        Active Trades</PageTitle>
+        Open Positions</PageTitle>
       <ErrorLine error={error || err} />
       <Panel>
         <Table rows={rows} onRow={(r) => { setSel(r); setSl(r.stop_loss ?? ""); setTp(r.take_profit ?? ""); setVol(""); }} empty="No open positions at the broker"

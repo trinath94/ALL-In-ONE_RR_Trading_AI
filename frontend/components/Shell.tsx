@@ -3,7 +3,7 @@ import clsx from "clsx";
 import {
   Activity, Bell, BookOpen, Bot, BrainCircuit, CandlestickChart, Cpu, FlaskConical, Gauge, Globe, History, LayoutDashboard,
   LogOut, Menu, Newspaper, Sparkles, Target, PieChart, Radar, Settings, ShieldAlert, Sliders, Terminal, Users, X, Zap,
-  BarChart3, KeyRound, Network, Shuffle,
+  BarChart3, KeyRound, Network, Shuffle, LineChart, GitCompareArrows, Microscope, DatabaseBackup,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -11,32 +11,38 @@ import { createContext, ReactNode, useContext, useEffect, useState } from "react
 import { api, post } from "@/lib/api";
 import { useApi, useLive } from "@/lib/hooks";
 
+// Part 17 main navigation, in the specification's order (1-27), then the pages that support it.
 export const NAV = [
-  { href: "/", label: "Command Center", icon: LayoutDashboard },
-  { href: "/ai", label: "AI Intelligence", icon: BrainCircuit },
-  { href: "/agents", label: "Agent Control Room", icon: Network },
-  { href: "/ai-providers", label: "AI Studio", icon: KeyRound },
+  { href: "/", label: "Command Centre", icon: LayoutDashboard },
+  { href: "/ai", label: "AI Trading Engine", icon: BrainCircuit },
+  { href: "/agents", label: "Multi-Agent Control Room", icon: Network },
+  { href: "/terminal", label: "MT5 Manager", icon: Terminal },
+  { href: "/symbols", label: "Broker Symbol Discovery", icon: Globe },
   { href: "/scanner", label: "Market Scanner", icon: Radar },
-  { href: "/symbols", label: "Broker Symbols", icon: Globe },
-  { href: "/signals", label: "Live Signals", icon: Zap },
-  { href: "/trades", label: "Active Trades", icon: CandlestickChart },
+  { href: "/analysis", label: "Market Analysis", icon: LineChart },
+  { href: "/signals", label: "Signal Centre", icon: Zap },
+  { href: "/worker", label: "Trading Worker", icon: Bot },
+  { href: "/trades", label: "Open Positions", icon: CandlestickChart },
   { href: "/history", label: "Trade History", icon: History },
-  { href: "/strategy-intel", label: "Strategy Intelligence", icon: Gauge },
-  { href: "/library", label: "Strategy Library", icon: BookOpen },
+  { href: "/learning", label: "AI Learning Centre", icon: Sparkles },
+  { href: "/adaptive", label: "Adaptive Intelligence", icon: Shuffle },
+  { href: "/strategy-intel", label: "Strategy Performance", icon: Gauge },
+  { href: "/correlation", label: "Strategy Correlation", icon: GitCompareArrows },
+  { href: "/predictive", label: "Predictive Intelligence", icon: Target },
   { href: "/backtesting", label: "Backtesting Lab", icon: FlaskConical },
-  { href: "/optimisation", label: "Strategy Optimisation", icon: Sliders },
-  { href: "/risk", label: "Risk Management", icon: ShieldAlert },
-  { href: "/portfolio", label: "Portfolio Analytics", icon: PieChart },
-  { href: "/economic", label: "Economic Intelligence", icon: Newspaper },
-  { href: "/terminal", label: "MT5 Terminal", icon: Terminal },
-  { href: "/system", label: "System Monitoring", icon: Cpu },
-  { href: "/notifications", label: "Notifications", icon: Bell },
-  { href: "/users", label: "User Management", icon: Users },
+  { href: "/optimisation", label: "Optimisation Lab", icon: Sliders },
+  { href: "/library", label: "Strategy Library", icon: BookOpen },
+  { href: "/research", label: "Strategy Research Lab", icon: Microscope },
+  { href: "/risk", label: "Risk Centre", icon: ShieldAlert },
+  { href: "/portfolio", label: "Portfolio Intelligence", icon: PieChart },
+  { href: "/ai-providers", label: "AI Studio", icon: KeyRound },
+  { href: "/economic", label: "News and Economic Calendar", icon: Newspaper },
+  { href: "/system", label: "System Monitor", icon: Cpu },
+  { href: "/backup", label: "Backup and Recovery", icon: DatabaseBackup },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/trade-intelligence", label: "Trade Intelligence", icon: BarChart3 },
-  { href: "/learning", label: "AI Learning & Evolution", icon: Sparkles },
-  { href: "/adaptive", label: "Adaptive Intelligence", icon: Shuffle },
-  { href: "/predictive", label: "Predictive Intelligence", icon: Target },
+  { href: "/notifications", label: "Notifications", icon: Bell },
+  { href: "/users", label: "User Management", icon: Users },
 ];
 
 export type Me = { id: number; username: string; role: string; permissions: string[] };

@@ -137,7 +137,9 @@ jobs:
           Remove-Item (Join-Path $inst "supervise.exe")
 
           $u = Start-Process (Join-Path $inst "uninstall.exe") -ArgumentList "/S" -PassThru; $u.WaitForExit()
-          for ($i = 0; $i -lt 60 -and (Test-Path (Join-Path $inst "rr-trading-one.exe")); $i++) { Start-Sleep 1 }
+          # NSIS runs the uninstaller from a temporary copy that keeps deleting after WaitForExit returns: wait (up to
+          # 60 s) until both the app and the connector are gone, then require that they are.
+          for ($i = 0; $i -lt 60 -and ((Test-Path (Join-Path $inst "rr-trading-one.exe")) -or (Test-Path (Join-Path $inst "mt5-connector"))); $i++) { Start-Sleep 1 }
           if (Test-Path (Join-Path $inst "rr-trading-one.exe")) { throw "uninstall left the app behind" }
           if (Test-Path (Join-Path $inst "mt5-connector")) { throw "uninstall left the connector behind" }
           "uninstalled"

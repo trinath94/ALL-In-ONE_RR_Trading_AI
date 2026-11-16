@@ -12,7 +12,7 @@
 //!   engine's `/api/health` through the loopback gateway whenever the API is running.
 //! * The native MT5 connector (a user-session process, never a container) is driven through [`NativeConnector`].
 
-use crate::actions::{Action, ActionError, Service, Step};
+use crate::actions::{restore_plan, valid_backup_id, Action, ActionError, BackupPurpose, Service, Step};
 use crate::compose::{self, Compose, ServiceStatus};
 use crate::health::{HealthState, ProbeResult};
 use crate::runner::{CommandOutput, CommandSpec, Runner};
@@ -30,6 +30,18 @@ const T_QUICK: Duration = Duration::from_secs(30);
 const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const WARN_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 pub const KEEP_PRE_MIGRATION_BACKUPS: usize = 10;
+pub const KEEP_MANUAL_BACKUPS: usize = 30;
+
+/// One backup in the backups folder (Phase 17).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BackupInfo {
+    pub id: String,
+    /// manual | pre-migrate | pre-restore
+    pub kind: String,
+    /// Unix seconds, from the file name.
+    pub created: u64,
+    pub bytes: u64,
+}
 const NO_CONNECTOR: &str = "MT5 connector is not available in this installation";
 
 /// The native MT5 connector, as seen by the supervisor (implemented by `connector::LocalConnector`).
@@ -196,33 +208,92 @@ impl<'a> Supervisor<'a> {
     }
 
     fn backup_before_migration(&self) -> Result<String, String> {
+        self.backup("pre-migrate", KEEP_PRE_MIGRATION_BACKUPS)
+            .map_err(|e| format!("database backup failed, migrations not applied: {e}"))
+    }
+
+    /// Dump the database to `<prefix>-<unix seconds>.dump` and keep the newest `keep` of that kind.
+    fn backup(&self, prefix: &str, keep: usize) -> Result<String, String> {
         std::fs::create_dir_all(&self.cfg.backups_dir).map_err(|e| format!("backup directory: {e}"))?;
-        let file = self.cfg.backups_dir.join(format!("pre-migrate-{}.dump", now_secs()));
+        let mut ts = now_secs();
+        while self.cfg.backups_dir.join(format!("{prefix}-{ts}.dump")).exists() {
+            ts += 1; // two backups of one kind within a second never overwrite each other
+        }
+        let file = self.cfg.backups_dir.join(format!("{prefix}-{ts}.dump"));
         let out = self.compose(self.cfg.compose.pg_dump(), T_DUMP, Some(file.clone()))?;
         let size = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
         if !out.success() || size == 0 {
             let _ = std::fs::remove_file(&file);
-            return Err(format!("database backup failed, migrations not applied: {}", self.secrets.redact(&out.failure_summary())));
+            return Err(self.secrets.redact(&out.failure_summary()));
         }
-        self.prune_pre_migration_backups();
+        self.prune_backups(prefix, keep);
         Ok(format!("backup {} ({} bytes)", file.display(), size))
     }
 
-    /// Keep only the newest pre-migration dumps. Touches nothing but files this supervisor created.
-    fn prune_pre_migration_backups(&self) {
-        let Ok(rd) = std::fs::read_dir(&self.cfg.backups_dir) else { return };
-        let mut dumps: Vec<(u64, PathBuf)> = rd
+    /// Keep only the newest dumps of one kind. Touches nothing but files this supervisor created.
+    fn prune_backups(&self, prefix: &str, keep: usize) {
+        let mut dumps: Vec<(u64, PathBuf)> = self.backup_files().into_iter().filter(|b| b.kind == prefix)
+            .map(|b| (b.created, self.cfg.backups_dir.join(format!("{}.dump", b.id)))).collect();
+        dumps.sort_by_key(|d| std::cmp::Reverse(d.0));
+        for (_, p) in dumps.into_iter().skip(keep) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    fn backup_files(&self) -> Vec<BackupInfo> {
+        let Ok(rd) = std::fs::read_dir(&self.cfg.backups_dir) else { return Vec::new() };
+        let mut out: Vec<BackupInfo> = rd
             .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().into_owned();
-                let ts = name.strip_prefix("pre-migrate-")?.strip_suffix(".dump")?.parse::<u64>().ok()?;
-                e.file_type().ok().filter(|t| t.is_file())?;
-                Some((ts, e.path()))
+                let id = name.strip_suffix(".dump")?.to_string();
+                if !valid_backup_id(&id) {
+                    return None;
+                }
+                let (kind, ts) = id.rsplit_once('-')?;
+                Some(BackupInfo { id: id.clone(), kind: kind.to_string(), created: ts.parse().ok()?,
+                                  bytes: e.metadata().map(|m| m.len()).unwrap_or(0) })
             })
             .collect();
-        dumps.sort_by_key(|d| std::cmp::Reverse(d.0));
-        for (_, p) in dumps.into_iter().skip(KEEP_PRE_MIGRATION_BACKUPS) {
-            let _ = std::fs::remove_file(p);
+        out.sort_by_key(|b| std::cmp::Reverse(b.created));
+        out
+    }
+
+    /// Phase 17: the backups in the backups folder, newest first.
+    pub fn list_backups(&self) -> Vec<BackupInfo> {
+        self.backup_files()
+    }
+
+    /// Phase 17: restore the database from a backup id (typed phrase required). Runs the fixed `restore_plan`.
+    pub fn restore(&self, backup: &str, confirmation: Option<&str>) -> Result<PlanReport, ActionError> {
+        let plan = restore_plan(backup, confirmation)?;
+        if !self.backup_files().iter().any(|b| b.id == backup) {
+            return Err(ActionError::Unknown(format!("backup {backup} (not in the backups folder)")));
+        }
+        Ok(self.run_plan("restore_backup", plan))
+    }
+
+    fn restore_database(&self, backup: &str) -> (Outcome, String) {
+        if !valid_backup_id(backup) {
+            return (Outcome::Failed, "invalid backup id".into());
+        }
+        let file = self.cfg.backups_dir.join(format!("{backup}.dump"));
+        let mut head = [0u8; 5];
+        let valid = std::fs::File::open(&file).and_then(|mut f| { use std::io::Read; f.read_exact(&mut head) }).is_ok()
+            && &head == b"PGDMP";
+        if !valid {
+            return (Outcome::Failed, format!("{backup} is missing or is not a PostgreSQL custom-format dump"));
+        }
+        if let Err(e) = self.run_ok(self.cfg.compose.copy_into_postgres(&file), T_DUMP) {
+            return (Outcome::Failed, format!("copy into the database container failed: {e}"));
+        }
+        let res = self.run_ok(self.cfg.compose.pg_restore(), T_DUMP);
+        let _ = self.run_ok(self.cfg.compose.remove_restore_file(), T_QUICK);
+        match res {
+            Ok(_) => (Outcome::Ok, format!("restored {backup} (single transaction)")),
+            Err(e) => (Outcome::Failed, format!("restore failed and was rolled back; the database is unchanged. Use Start All \
+                                                 to start the engine again. {e}")),
         }
     }
 
@@ -354,6 +425,18 @@ impl<'a> Supervisor<'a> {
                 let (o, d, _) = self.verify(expected);
                 (o, d)
             }
+            Step::BackupDatabase { purpose } => {
+                let keep = match purpose { BackupPurpose::Manual => KEEP_MANUAL_BACKUPS, BackupPurpose::PreRestore => KEEP_PRE_MIGRATION_BACKUPS };
+                match self.backup(purpose.prefix(), keep) {
+                    Ok(d) => (Outcome::Ok, d),
+                    Err(e) => (Outcome::Failed, format!("database backup failed: {e}")),
+                }
+            }
+            Step::RestoreDatabase { backup } => self.restore_database(backup),
+            Step::ResetTradingState => match self.run_ok(self.cfg.compose.reset_trading_state(), T_QUICK) {
+                Ok(_) => (Outcome::Ok, "auto trading OFF; reconciliation required before any entry".into()),
+                Err(e) => (Outcome::Failed, e),
+            },
             Step::RestartUnhealthy => {
                 let services = match self.status() {
                     Ok(s) => s,
@@ -382,6 +465,10 @@ impl<'a> Supervisor<'a> {
 
     pub fn execute(&self, action: Action, confirmation: Option<&str>) -> Result<PlanReport, ActionError> {
         let plan = action.plan(confirmation)?;
+        Ok(self.run_plan(action.id(), plan))
+    }
+
+    fn run_plan(&self, label: &'static str, plan: Vec<Step>) -> PlanReport {
         let best_effort = plan.iter().all(|s| matches!(s, Step::StopServices { .. }));
         let mut expected = Vec::new();
         let mut steps = Vec::with_capacity(plan.len());
@@ -397,17 +484,17 @@ impl<'a> Supervisor<'a> {
                 failed = true;
             }
             let rep = StepReport { step, outcome, detail: self.secrets.redact(&detail), duration_ms: t0.elapsed().as_millis() as u64 };
-            self.log(action, &rep);
+            self.log(label, &rep);
             steps.push(rep);
         }
         let services = self.status().unwrap_or_default();
         let engine = services.iter().any(|x| x.service == "api" && x.is_running()).then(|| (self.probe)(self.cfg.gateway_port));
-        Ok(PlanReport { action: action.id(), ok: !failed, steps, services, engine })
+        PlanReport { action: label, ok: !failed, steps, services, engine }
     }
 
-    fn log(&self, action: Action, rep: &StepReport) {
+    fn log(&self, action: &str, rep: &StepReport) {
         let Some(path) = &self.cfg.log_file else { return };
-        let line = serde_json::json!({"ts": now_secs(), "action": action.id(), "step": rep.step, "outcome": rep.outcome,
+        let line = serde_json::json!({"ts": now_secs(), "action": action, "step": rep.step, "outcome": rep.outcome,
             "detail": rep.detail, "duration_ms": rep.duration_ms});
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(f, "{line}");
@@ -758,11 +845,101 @@ mod tests {
         }
         std::fs::write(e.cfg.backups_dir.join("manual-keep.dump"), b"x").unwrap();
         let r = fake(default_script(ALL_HEALTHY));
-        sup(&e, &r, healthy_probe()).prune_pre_migration_backups();
+        sup(&e, &r, healthy_probe()).prune_backups("pre-migrate", KEEP_PRE_MIGRATION_BACKUPS);
         let mut left: Vec<String> = std::fs::read_dir(&e.cfg.backups_dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         left.sort();
         assert_eq!(left.len(), KEEP_PRE_MIGRATION_BACKUPS + 1);
         assert!(left.contains(&"manual-keep.dump".to_string()) && left.contains(&"pre-migrate-15.dump".to_string()));
         assert!(!left.contains(&"pre-migrate-5.dump".to_string()));
+    }
+
+    // ---- Phase 17: backup and restore --------------------------------------------------------------------------
+    use crate::actions::RESTORE_PHRASE;
+
+    #[test]
+    fn backup_now_writes_a_listed_manual_backup_and_keeps_the_newest() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let s = sup(&e, &r, healthy_probe());
+        let rep = s.execute(Action::BackupNow, None).unwrap();
+        assert!(rep.ok, "{rep:?}");
+        let list = s.list_backups();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].kind == "manual" && list[0].bytes > 0 && valid_backup_id(&list[0].id));
+        assert!(compose_cmds(&r).iter().any(|c| c.contains(&"pg_dump".to_string())));
+        for i in 0..(KEEP_MANUAL_BACKUPS as u64 + 3) {
+            std::fs::write(e.cfg.backups_dir.join(format!("manual-{}.dump", 1000 + i)), b"PGDMP").unwrap();
+        }
+        std::fs::write(e.cfg.backups_dir.join("pre-migrate-5.dump"), b"PGDMP").unwrap();
+        std::fs::write(e.cfg.backups_dir.join("notes.txt"), b"x").unwrap();
+        s.execute(Action::BackupNow, None).unwrap();
+        let list = s.list_backups();
+        assert_eq!(list.iter().filter(|b| b.kind == "manual").count(), KEEP_MANUAL_BACKUPS);
+        assert!(list.iter().any(|b| b.id == "pre-migrate-5"), "other kinds are not pruned");
+        assert!(!list.iter().any(|b| b.id.contains("notes")), "foreign files are not listed");
+        assert!(e.cfg.backups_dir.join("notes.txt").exists(), "foreign files are never touched");
+    }
+
+    #[test]
+    fn restore_refuses_without_phrase_bad_ids_and_missing_backups() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let s = sup(&e, &r, healthy_probe());
+        assert_eq!(s.restore("manual-1", None).unwrap_err(), ActionError::RestoreConfirmationRequired);
+        assert!(matches!(s.restore("../../etc/passwd", Some(RESTORE_PHRASE)), Err(ActionError::Unknown(_))));
+        assert!(matches!(s.restore("manual-1", Some(RESTORE_PHRASE)), Err(ActionError::Unknown(_))), "not on disk");
+        assert!(r.calls.lock().unwrap().is_empty(), "nothing was run");
+    }
+
+    #[test]
+    fn restore_runs_the_fixed_sequence_and_never_starts_the_trading_worker() {
+        let e = env();
+        std::fs::create_dir_all(&e.cfg.backups_dir).unwrap();
+        std::fs::write(e.cfg.backups_dir.join("manual-1700000000.dump"), b"PGDMP-old").unwrap();
+        let r = fake(default_script(ALL_HEALTHY));
+        let s = sup(&e, &r, healthy_probe());
+        let rep = s.restore("manual-1700000000", Some(RESTORE_PHRASE)).unwrap();
+        assert!(rep.ok && rep.action == "restore_backup", "{rep:?}");
+        let cmds = compose_cmds(&r);
+        let at = |pred: &dyn Fn(&Vec<String>) -> bool| cmds.iter().position(pred).unwrap_or_else(|| panic!("{cmds:?}"));
+        let safety = at(&|c| c.contains(&"pg_dump".to_string()));
+        let stop = at(&|c| c[0] == "stop");
+        let copy = at(&|c| c[0] == "cp");
+        let restore = at(&|c| c.contains(&"pg_restore".to_string()));
+        let reset = at(&|c| c.iter().any(|a| a.starts_with("UPDATE trading_state SET auto_trading = false")));
+        let up_api = at(&|c| c[0] == "up" && c.contains(&"api".to_string()));
+        assert!(safety < stop && stop < copy && copy < restore && restore < reset && reset < up_api, "{cmds:?}");
+        assert_eq!(cmds[stop][cmds[stop].len() - 7..].first().map(String::as_str), Some("trading-worker"), "{:?}", cmds[stop]);
+        assert!(cmds[restore].contains(&"--single-transaction".to_string()));
+        assert!(cmds[copy][1].ends_with("manual-1700000000.dump"), "the file is resolved in the backups folder");
+        assert!(!cmds.iter().any(|c| c[0] == "up" && c.contains(&"trading-worker".to_string())));
+        assert!(s.list_backups().iter().any(|b| b.kind == "pre-restore"), "a safety backup was taken first");
+    }
+
+    #[test]
+    fn a_failed_restore_stops_the_plan_and_says_the_database_is_unchanged() {
+        let e = env();
+        std::fs::create_dir_all(&e.cfg.backups_dir).unwrap();
+        std::fs::write(e.cfg.backups_dir.join("manual-1700000000.dump"), b"PGDMP-old").unwrap();
+        let r = fake(Box::new(|s: &CommandSpec| if has(s, "pg_restore") { fail("pg_restore: error") }
+                              else if has(s, "ps") { ok(ALL_HEALTHY) } else { ok("29.0") }));
+        let s = sup(&e, &r, healthy_probe());
+        let rep = s.restore("manual-1700000000", Some(RESTORE_PHRASE)).unwrap();
+        assert!(!rep.ok);
+        let st = rep.steps.iter().find(|x| matches!(x.step, Step::RestoreDatabase { .. })).unwrap();
+        assert!(st.outcome == Outcome::Failed && st.detail.contains("database is unchanged"), "{st:?}");
+        assert!(!compose_cmds(&r).iter().any(|c| c.iter().any(|a| a.starts_with("UPDATE trading_state"))), "nothing after the failure");
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_dump_is_never_restored() {
+        let e = env();
+        std::fs::create_dir_all(&e.cfg.backups_dir).unwrap();
+        std::fs::write(e.cfg.backups_dir.join("manual-1700000000.dump"), b"not a dump").unwrap();
+        let r = fake(default_script(ALL_HEALTHY));
+        let s = sup(&e, &r, healthy_probe());
+        let rep = s.restore("manual-1700000000", Some(RESTORE_PHRASE)).unwrap();
+        assert!(!rep.ok);
+        assert!(!compose_cmds(&r).iter().any(|c| c.contains(&"pg_restore".to_string())));
     }
 }

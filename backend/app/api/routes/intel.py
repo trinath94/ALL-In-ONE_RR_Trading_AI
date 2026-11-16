@@ -167,7 +167,10 @@ def rates(symbol: str, timeframe: str = "H1", count: int = 500, _: User = Depend
 
 @router.get("/market/{symbol}/tick")
 def tick(symbol: str, _: User = Depends(current_user), bridge: BridgeClient = Depends(bridge_dep)):
-    return bridge.tick(symbol)
+    try:
+        return bridge.tick(symbol)
+    except BridgeError as exc:                 # Phase 17: a connector outage is a 502 with its reason, not a server error
+        raise HTTPException(502, str(exc)) from None
 
 
 @router.get("/market/{symbol}/overlays")
@@ -176,7 +179,10 @@ def overlays(symbol: str, timeframe: str = "H1", _: User = Depends(current_user)
     """Structure overlays for the chart: swings, BOS/CHOCH, FVGs, order blocks, liquidity, fib levels."""
     from app.analysis import indicators as ind
     from app.analysis import structure as st
-    df = bars_to_df(bridge.rates(symbol, timeframe, 500))
+    try:
+        df = bars_to_df(bridge.rates(symbol, timeframe, 500))
+    except BridgeError as exc:                 # Phase 17: as /rates does; was an unhandled 500
+        raise HTTPException(502, str(exc)) from None
     if len(df) < 60:
         return {}
     t = lambda i: int(df.index[i].timestamp())  # noqa: E731
@@ -211,6 +217,26 @@ def overlays(symbol: str, timeframe: str = "H1", _: User = Depends(current_user)
     }
 
 
+def _scan_extra(a: AnalysisResult, s: Symbol) -> dict:
+    """Phase 17 (Part 17 'Broker Symbol Scanner'): the quote, consensus, calibrated probability and data quality the
+    analysis recorded, and the symbol's scan priority. Quote values are those at the time of the scan, labelled so."""
+    st, sc = a.structure or {}, a.score or {}
+    bid, sp_pts, point = st.get("price"), st.get("spread_points"), float(s.point or 0)
+    cons = (sc.get("intelligence") or {}).get("consensus") or {}
+    fu = sc.get("fusion") or {}
+    prob = fu.get("probability") if fu.get("evidence") in ("CALIBRATED", "LOW_DATA_CONFIDENCE") else None
+    unavailable = st.get("unavailable") or []
+    problems = st.get("peer_problems") or []
+    return {"bid": bid, "ask": round(bid + sp_pts * point, 8) if bid is not None and sp_pts is not None and point else None,
+            "spread_points": sp_pts, "quote_at": "last scan",
+            "consensus": cons.get("decision"), "consensus_agreement": cons.get("agreement"),
+            "probability": prob.get("value") if prob else None, "probability_evidence": fu.get("evidence"),
+            "data_quality": {"caps": st.get("data_caps") or [], "strategies_without_data": len(unavailable),
+                             "peer_problems": problems,
+                             "status": "OK" if not unavailable and not problems else "PARTIAL"},
+            "scan_priority": s.priority}
+
+
 @router.get("/scanner")
 def scanner(_: User = Depends(current_user), db: Session = Depends(get_db), timeframe: str | None = None):
     """Latest analysis per symbol/timeframe (real scan output)."""
@@ -228,7 +254,7 @@ def scanner(_: User = Depends(current_user), db: Session = Depends(get_db), time
                     "stop_loss": sc.get("stop_loss"), "take_profit": sc.get("tp2"), "risk_reward": sc.get("risk_reward"),
                     "strategies": sorted({x["strategy"] for x in sc.get("strategies", [])}),
                     "htf_bias": (a.structure or {}).get("htf_bias"), "news": (a.structure or {}).get("news"),
-                    "analysed_at": a.created_at})
+                    "analysed_at": a.created_at, **_scan_extra(a, s)})
     return sorted(out, key=lambda r: -(r["score"] or 0))
 
 
@@ -814,3 +840,76 @@ def put_notif(body: list[NotifSetting], user: User = Depends(require("system.man
         db.add(s)
     audit(db, user.id, "NOTIFICATION_SETTINGS", "", {"count": len(body)})
     return {"ok": True}
+
+
+# ---- Phase 17 (Part 17): Market Analysis, Trading Worker, Backup and Recovery pages -----------------------------------
+@router.get("/analysis/latest")
+def analysis_latest(symbol: str, timeframe: str = "H1", _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The most recent full analysis of one market: context, every strategy setup, the original engine's result and the
+    fused decision (Phase 13). Recorded output only."""
+    sym = db.scalar(select(Symbol).where(Symbol.broker_symbol == symbol))
+    if sym is None:
+        raise HTTPException(404, "unknown symbol")
+    a = db.scalar(select(AnalysisResult).where(AnalysisResult.symbol_id == sym.id, AnalysisResult.timeframe == timeframe)
+                  .order_by(AnalysisResult.id.desc()).limit(1))
+    if a is None:
+        return {"available": False, "note": f"{symbol} {timeframe} has not been analysed yet (enable it for scanning)"}
+    sc, st = a.score or {}, a.structure or {}
+    return {"available": True, "symbol": symbol, "timeframe": timeframe, "bar_time": a.bar_time, "analysed_at": a.created_at,
+            "regime": st.get("regime"), "htf_bias": st.get("htf_bias"), "sessions": st.get("sessions"), "news": st.get("news"),
+            "atr": st.get("atr"), "price": st.get("price"), "spread_points": st.get("spread_points"),
+            "data_caps": st.get("data_caps"), "evaluation": st.get("evaluation"), "unavailable": st.get("unavailable"),
+            "setups": [o for o in (a.strategy_outputs or []) if o.get("direction")],
+            "engine": {k: sc.get(k) for k in ("decision", "grade", "score", "direction", "entry", "stop_loss", "tp1", "tp2",
+                                              "tp3", "risk_reward", "explanation", "warnings", "components",
+                                              "calibrated_confidence", "confidence_sample")},
+            "intelligence": sc.get("intelligence"), "fusion": sc.get("fusion")}
+
+
+@router.get("/worker/status")
+def worker_status(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """What the trading worker would do now, and why each NEW candidate would or would not be executed. The worker is
+    started and stopped only from the desktop application (typed phrase); this view never controls it."""
+    from app.db.models import TradingSignal
+    from app.db.models_ai import AgentRun
+    from app.services import trading as tr
+    from app.services.events import get_redis
+    st = tr.get_state(db)
+    try:
+        running = bool(get_redis().exists("rr:role:trading:lock"))
+    except Exception:  # noqa: BLE001
+        running = None
+    now = datetime.now(UTC)
+    cands = []
+    for s, sym in db.execute(select(TradingSignal, Symbol.broker_symbol).join(Symbol, Symbol.id == TradingSignal.symbol_id)
+                             .where(TradingSignal.status == "NEW", TradingSignal.expires_at > now)
+                             .order_by(TradingSignal.id.desc()).limit(50)):
+        review = (s.ai_review or {}).get("decision")
+        why = ("WAIT / NO_TRADE are never executed" if s.decision not in ("BUY", "SELL") else
+               "auto trading is OFF" if not st.auto_trading else
+               "produced before auto trading was switched on" if st.auto_trading_since and s.created_at < st.auto_trading_since else
+               "not confirmed by the AI review" if review not in ("BUY", "SELL") else
+               f"AI review {review} does not confirm {s.decision}" if review != s.decision else
+               "eligible: the Risk Engine decides when the worker picks it up")
+        cands.append({"id": s.id, "symbol": sym, "timeframe": s.timeframe, "decision": s.decision, "grade": s.grade,
+                      "review": review, "created_at": s.created_at, "expires_at": s.expires_at, "status": why})
+    runs = db.scalars(select(AgentRun).where(AgentRun.agent_id == "trade_execution").order_by(AgentRun.id.desc()).limit(20))
+    return {"running": running, "auto_trading": st.auto_trading, "auto_trading_since": st.auto_trading_since,
+            "mode": st.active_mode, "startup_checks_passed": st.startup_checks_passed, "kill_switch": st.kill_switch,
+            "risk_lock": st.risk_lock, "pause_new_entries": st.pause_new_entries, "candidates": cands,
+            "runs": [{"at": r.completed_at, "status": r.status, "signal_id": (r.input_refs or {}).get("signal_id"),
+                      "output": r.output, "errors": r.errors} for r in runs],
+            "control": "Start and stop the trading worker from the RR Trading One desktop window (Service manager, typed phrase)."}
+
+
+@router.get("/system/data")
+def system_data(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Database facts for the Backup and Recovery page: schema version, size and record counts. Backups themselves live
+    on this computer and are taken, listed and restored by the desktop application."""
+    from sqlalchemy import text
+    tables = ["trading_accounts", "trading_signals", "trade_orders", "closed_positions", "analysis_results", "model_registry",
+              "audit_logs"]
+    return {"schema_version": db.execute(text("select version_num from alembic_version")).scalar(),
+            "database_bytes": db.execute(text("select pg_database_size(current_database())")).scalar(),
+            "records": {t: db.execute(text(f"select count(*) from {t}")).scalar() for t in tables},  # noqa: S608 - fixed names
+            "managed_by": "desktop application: Backup and Recovery (back up now, list, restore with RESTORE DATABASE)"}

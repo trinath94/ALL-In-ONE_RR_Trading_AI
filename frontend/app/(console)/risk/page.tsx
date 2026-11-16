@@ -31,7 +31,7 @@ export default function Risk() {
     <div>
       <PageTitle sub="Every order — automated, manual or AI-recommended — passes these checks. DEMO and LIVE are configured independently."
         right={<div className="flex gap-1">{["DEMO", "LIVE"].map((m) => <Btn key={m} small tone={m === mode ? (m === "LIVE" ? "bear" : "cyan") : "dim"} onClick={() => setMode(m)}>{m}</Btn>)}</div>}>
-        Risk Management</PageTitle>
+        Risk Centre</PageTitle>
       <Panel accent={mode === "LIVE" ? "bear" : "cyan"}>
         {form && <div className="grid gap-4 lg:grid-cols-3">
           {GROUPS.map(([g, keys]) => (

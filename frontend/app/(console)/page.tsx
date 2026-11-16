@@ -3,6 +3,7 @@ import { CandlestickChart, Radar } from "lucide-react";
 import { useEffect, useState } from "react";
 import AiPanel from "@/components/AiPanel";
 import ControlCenter from "@/components/ControlCenter";
+import SystemStrip from "@/components/SystemStrip";
 import { PageTitle } from "@/components/Shell";
 import TradingChart from "@/components/TradingChart";
 import { Badge, dirTone, Empty, ErrorLine, gradeTone, inputCls, Panel, Stat, Table, toneOf } from "@/components/ui";
@@ -22,15 +23,16 @@ export default function CommandCenter() {
   const sel = (scan || []).find((r) => r.symbol === symbol && r.timeframe === tf && (r.decision === "BUY" || r.decision === "SELL"));
   return (
     <div>
-      <PageTitle sub={a ? `Account ${a.login} @ ${a.server} · data as of ${fmt.time(a.as_of)}` : "No synchronised account yet"}>Command Center</PageTitle>
+      <PageTitle sub={a ? `Account ${a.login} @ ${a.server} · data as of ${fmt.time(a.as_of)}` : "No synchronised account yet"}>Command Centre</PageTitle>
       <ErrorLine error={error} />
+      <SystemStrip />
       <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
         <Stat label="Balance" value={fmt.num(a?.balance)} sub={a?.currency} />
         <Stat label="Equity" value={fmt.num(a?.equity)} tone={a ? toneOf(a.equity - a.balance) : "plain"} />
         <Stat label="Free margin" value={fmt.num(a?.free_margin)} />
         <Stat label="Used margin" value={fmt.num(a?.margin)} />
         <Stat label="Floating P&L" value={fmt.num(a?.floating_pnl)} tone={toneOf(a?.floating_pnl)} />
-        <Stat label="Today realised" value={fmt.num(p?.today_pnl)} tone={toneOf(p?.today_pnl)} />
+        <Stat label="Daily P&L (realised)" value={fmt.num(p?.today_pnl)} tone={toneOf(p?.today_pnl)} />
         <Stat label="Week P&L" value={fmt.num(p?.week_pnl)} tone={toneOf(p?.week_pnl)} />
         <Stat label="Month P&L" value={fmt.num(p?.month_pnl)} tone={toneOf(p?.month_pnl)} />
         <Stat label="Win rate" value={fmt.pct(p?.win_rate, 1)} sub={`${p?.total_trades ?? 0} trades`} />

@@ -14,7 +14,7 @@ export default function SystemPage() {
   const svc = Object.entries(s?.services || {});
   return (
     <div>
-      <PageTitle sub={s ? `Server time ${s.server_time} · API uptime ${fmt.dur(s.uptime_s)}` : ""}>System Monitoring</PageTitle>
+      <PageTitle sub={s ? `Server time ${s.server_time} · API uptime ${fmt.dur(s.uptime_s)}` : ""}>System Monitor</PageTitle>
       <ErrorLine error={error} />
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
         <Stat label="CPU" value={fmt.pctRaw(h?.cpu_pct, 0)} tone={h?.cpu_pct > 85 ? "down" : "plain"} sub={h ? `load ${h.load.map((x: number) => x.toFixed(2)).join(" ")}` : ""} />

@@ -202,7 +202,7 @@ export default function Predictive() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Fusion");
   return (
     <div>
-      <PageTitle sub="Advisory intelligence. Nothing on this page can place, size or approve an order — the Risk Engine keeps final authority.">Institutional Predictive Intelligence Center</PageTitle>
+      <PageTitle sub="Advisory intelligence. Nothing on this page can place, size or approve an order — the Risk Engine keeps final authority.">Predictive Intelligence</PageTitle>
       <Anomalies />
       <div className="mb-3 flex flex-wrap gap-1">{TABS.map((t) => <button key={t} onClick={() => setTab(t)}
         className={clsx("rounded border px-3 py-1 text-[11px] uppercase tracking-wider", t === tab ? "border-cyan/60 bg-cyan/10 text-cyan" : "border-line text-dim hover:text-text")}>{t}</button>)}</div>

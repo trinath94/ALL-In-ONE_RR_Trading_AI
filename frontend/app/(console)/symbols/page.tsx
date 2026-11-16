@@ -35,7 +35,7 @@ export default function Symbols() {
         sessions are not provided by the MT5 terminal API and are not guessed.</>}
         right={admin && <Btn busy={busy} onClick={() => run(() => post("/api/symbols/discover"),
           (r) => `Catalogue refreshed: ${r.discovered} symbols (${r.new ?? 0} new, ${r.missing ?? 0} no longer offered).`)}>Discover now</Btn>}>
-        Broker Symbols
+        Broker Symbol Discovery
       </PageTitle>
       <ErrorLine error={error || err} />
       {msg && <div className="mb-2 rounded border border-neon/40 bg-neon/5 px-2 py-1 text-[11px] text-neon">{msg}</div>}

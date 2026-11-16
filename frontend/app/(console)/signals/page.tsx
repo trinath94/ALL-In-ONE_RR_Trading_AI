@@ -30,7 +30,7 @@ export default function Signals() {
   }
   return (
     <div>
-      <PageTitle sub="Every signal shows its strategies, calibrated confidence (when statistically available), AI review and risk decisions.">Live Signals</PageTitle>
+      <PageTitle sub="Every signal shows its strategies, calibrated confidence (when statistically available), AI review and risk decisions.">Signal Centre</PageTitle>
       <ErrorLine error={error} />
       <div className="grid gap-3 2xl:grid-cols-2">
         <Panel>

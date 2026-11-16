@@ -25,7 +25,7 @@ export default function Learning() {
         right={<div className="flex items-center gap-2">
           {["DEMO", "LIVE"].map((m) => <Btn key={m} small tone={m === mode ? (m === "LIVE" ? "bear" : "cyan") : "dim"} onClick={() => setMode(m)}>{m}</Btn>)}
           {can(me, "trade.control") && <Btn small onClick={async () => { await post("/api/learning/jobs/trade_sync/run"); reload(); }}><RefreshCw size={11} />Sync MT5 history</Btn>}</div>}>
-        AI Learning & Strategy Evolution</PageTitle>
+        AI Learning Centre</PageTitle>
       <ErrorLine error={error} />
       <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
         <Stat label="Trades analysed" value={ov?.trades_analysed ?? "—"} sub={`${ov?.features_enriched ?? 0} enriched`} />
@@ -36,6 +36,19 @@ export default function Learning() {
         <Stat label="Profit factor" value={fmt.num(o.profit_factor)} sub={`95% ${ci(o.profit_factor_ci95)}`} />
         <Stat label="Pending approvals" value={(ov?.pending_approvals?.experiments ?? 0) + (ov?.pending_approvals?.models ?? 0)} tone="warn" />
         <Stat label="Drift alerts 7d" value={ov?.drift_alerts_7d ?? "—"} tone={ov?.drift_alerts_7d ? "down" : "plain"} />
+      </div>
+      {/* Part 17 Learning Centre: the remaining figures, all counted from recorded rows */}
+      <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
+        <Stat label="Break-even" value={ov?.breakeven ?? "—"} />
+        <Stat label="Unattributed trades" value={ov?.unattributed ?? "—"} sub="no engine order linked" tone={ov?.unattributed ? "warn" : "plain"} />
+        <Stat label="Training jobs 7d" value={Object.values(ov?.training_jobs_7d || {}).reduce((a: number, b: any) => a + b, 0)}
+          sub={Object.entries(ov?.training_jobs_7d || {}).map(([k, v]) => `${k.toLowerCase()} ${v}`).join(" · ") || "none"} />
+        <Stat label="Candidate models" value={(ov?.models_by_status?.TRAINED ?? 0) + (ov?.models_by_status?.REJECTED ?? 0)} sub="trained / rejected" />
+        <Stat label="Validated models" value={(ov?.models_by_status?.VALIDATED ?? 0) + (ov?.models_by_status?.APPROVED ?? 0)} sub="validated / approved" />
+        <Stat label="Production models" value={ov?.models_by_status?.PRODUCTION ?? 0} tone="up" />
+        <Stat label="Learning memory" value={ov?.learning_memory ?? "—"} sub="stored lessons" />
+        <Stat label="Rollbacks" value={ov?.rollbacks?.length ?? 0}
+          sub={ov?.rollbacks?.[0] ? `last ${fmt.time(ov.rollbacks[0].at)}` : "none recorded"} />
       </div>
       <div className="mb-3 flex flex-wrap gap-2 text-[11px]">
         {Object.entries(ov?.experiments_by_stage || {}).map(([k, v]: any) => <Badge key={k} tone={STAGE_TONE[k]}>{k} {v}</Badge>)}

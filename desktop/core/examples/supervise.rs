@@ -60,6 +60,15 @@ fn main() {
             };
             r.unwrap_or_else(|e| fail(&e))
         }
+        // Same calls as the desktop app's Backup and Recovery section (Phase 17).
+        "backups" => serde_json::to_value(sup.list_backups()).unwrap(),
+        "restore" => {
+            let rep = sup.restore(args.get(1).map(String::as_str).unwrap_or(""), args.get(2).map(String::as_str))
+                .unwrap_or_else(|e| fail(&e.to_string()));
+            let ok = rep.ok;
+            println!("{}", serde_json::to_string_pretty(&rep).unwrap());
+            std::process::exit(if ok { 0 } else { 1 });
+        }
         "mt5-link" => {
             let n = native.as_ref().unwrap_or_else(|| fail("the RR MT5 Connector build was not found"));
             rr_one_core::connector::link(&sup, n).unwrap_or_else(|e| fail(&e))

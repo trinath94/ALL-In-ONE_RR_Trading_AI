@@ -166,6 +166,19 @@ async fn run_action(state: State<'_, AppState>, action: String, confirmation: Op
     with_supervisor(&state, move |sup, _| sup.execute(a, confirmation.as_deref()).map_err(|e| e.to_string())).await
 }
 
+/// Phase 17: backups in this installation's backups folder, newest first.
+#[tauri::command]
+async fn backup_list(state: State<'_, AppState>) -> Result<Vec<rr_one_core::supervisor::BackupInfo>, String> {
+    with_supervisor(&state, |sup, _| Ok(sup.list_backups())).await
+}
+
+/// Phase 17: restore the database from a backup id, with the typed phrase (checked again inside the supervisor).
+#[tauri::command]
+async fn backup_restore(state: State<'_, AppState>, backup: String, confirmation: Option<String>) -> Result<PlanReport, String> {
+    rr_one_core::actions::restore_plan(&backup, confirmation.as_deref()).map_err(|e| e.to_string())?;
+    with_supervisor(&state, move |sup, _| sup.restore(&backup, confirmation.as_deref()).map_err(|e| e.to_string())).await
+}
+
 /// Live container states for the Services table.
 #[tauri::command]
 async fn service_status(state: State<'_, AppState>) -> Result<Vec<ServiceStatus>, String> {
@@ -398,7 +411,7 @@ pub fn run() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console,
             mt5_overview, mt5_detect, mt5_save_profile, mt5_select_profile, mt5_delete_profile, mt5_link,
-            engine_status, engine_bootstrap_admin, engine_use_demo_account])
+            engine_status, engine_bootstrap_admin, engine_use_demo_account, backup_list, backup_restore])
         .setup(move |app| {
             build_tray(app.handle())?;
             if !start_minimized {

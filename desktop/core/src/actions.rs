@@ -17,6 +17,8 @@ use std::fmt;
 
 /// Phrase the operator must type to start the trading worker.
 pub const START_WORKER_PHRASE: &str = "START TRADING WORKER";
+/// Phrase the operator must type to restore the database from a backup (Phase 17).
+pub const RESTORE_PHRASE: &str = "RESTORE DATABASE";
 
 /// Services the supervisor manages. Roles follow decision D1 (Phase 1 report): the original monolithic worker
 /// loop is split into `Monitor` (heartbeat, sync, reconciliation, position protection), `Analysis` (scanner and
@@ -121,6 +123,63 @@ pub enum Step {
     VerifyHealth,
     /// Restart only services whose health check failed. Never includes the trading worker.
     RestartUnhealthy,
+    /// Phase 17: dump the database to the backups folder (`manual-*` on request, `pre-restore-*` before a restore).
+    BackupDatabase { purpose: BackupPurpose },
+    /// Phase 17: replace the database with a backup. `backup` is a validated backup id (see `valid_backup_id`), never
+    /// a path; the supervisor resolves it inside its own backups folder.
+    RestoreDatabase { backup: String },
+    /// Phase 17: after a restore, auto trading OFF and reconciliation required, whatever the backup contained.
+    ResetTradingState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupPurpose {
+    Manual,
+    PreRestore,
+}
+
+impl BackupPurpose {
+    pub fn prefix(self) -> &'static str {
+        match self {
+            BackupPurpose::Manual => "manual",
+            BackupPurpose::PreRestore => "pre-restore",
+        }
+    }
+}
+
+/// Backup ids are `<kind>-<unix seconds>` for the kinds this supervisor writes. Anything else (paths, dots,
+/// separators, other prefixes) is refused before a file name is ever built from it.
+pub fn valid_backup_id(id: &str) -> bool {
+    ["manual-", "pre-migrate-", "pre-restore-"].iter().any(|p| {
+        id.strip_prefix(p).is_some_and(|ts| !ts.is_empty() && ts.len() <= 12 && ts.chars().all(|c| c.is_ascii_digit()))
+    })
+}
+
+/// The fixed plan of a restore (Phase 17): a safety backup first, everything that uses the database stopped (trading
+/// worker first), the restore, migrations for an older backup, the trading state made safe, then the engine back up.
+/// The trading worker is not restarted.
+pub fn restore_plan(backup: &str, confirmation: Option<&str>) -> Result<Vec<Step>, ActionError> {
+    if confirmation != Some(RESTORE_PHRASE) {
+        return Err(ActionError::RestoreConfirmationRequired);
+    }
+    if !valid_backup_id(backup) {
+        return Err(ActionError::Unknown(format!("backup {}", backup.chars().take(48).collect::<String>())));
+    }
+    use Step::*;
+    Ok(vec![
+        CheckPrerequisites,
+        StartServices { services: INFRA.to_vec() },
+        BackupDatabase { purpose: BackupPurpose::PreRestore },
+        StopServices { services: stop_order(&[Service::TradingWorker, Service::Learner, Service::Analysis, Service::Monitor,
+            Service::Gateway, Service::Frontend, Service::Api]) },
+        RestoreDatabase { backup: backup.to_string() },
+        RunMigrations,
+        ResetTradingState,
+        StartServices { services: BACKEND.to_vec() },
+        StartServices { services: vec![Service::Learner] },
+        VerifyHealth,
+    ])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -139,6 +198,7 @@ pub enum Action {
     StopTradingWorker,
     SystemHealth,
     Recovery,
+    BackupNow,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -147,10 +207,12 @@ pub enum ActionError {
     Unknown(String),
     #[error("starting the trading worker requires typing exactly: {START_WORKER_PHRASE}")]
     ConfirmationRequired,
+    #[error("restoring the database requires typing exactly: {RESTORE_PHRASE}")]
+    RestoreConfirmationRequired,
 }
 
 impl Action {
-    pub const ALL: [Action; 13] = [
+    pub const ALL: [Action; 14] = [
         Action::StartAll,
         Action::StopAll,
         Action::RestartAll,
@@ -164,6 +226,7 @@ impl Action {
         Action::StopTradingWorker,
         Action::SystemHealth,
         Action::Recovery,
+        Action::BackupNow,
     ];
 
     pub fn id(self) -> &'static str {
@@ -181,6 +244,7 @@ impl Action {
             Action::StopTradingWorker => "stop_trading_worker",
             Action::SystemHealth => "system_health",
             Action::Recovery => "recovery",
+            Action::BackupNow => "backup_now",
         }
     }
 
@@ -243,6 +307,7 @@ impl Action {
             // RestartUnhealthy inspects state itself; a leading VerifyHealth would abort exactly when recovery is
             // needed.
             Action::Recovery => vec![RestartUnhealthy, VerifyHealth],
+            Action::BackupNow => vec![StartServices { services: INFRA.to_vec() }, BackupDatabase { purpose: BackupPurpose::Manual }],
         })
     }
 }
@@ -284,6 +349,37 @@ mod tests {
             })
             .flatten()
             .collect()
+    }
+
+    #[test]
+    fn backup_ids_are_validated_never_paths() {
+        for ok in ["manual-1794844635", "pre-migrate-1", "pre-restore-123456789012"] {
+            assert!(valid_backup_id(ok), "{ok}");
+        }
+        for bad in ["", "manual-", "manual-12a", "manual-1/../x", "../manual-1", "pre-migrate-1.dump", "C:\\x", "other-1",
+            "manual-1 ", "manual-1234567890123", "/etc/passwd", "manual-1;rm"] {
+            assert!(!valid_backup_id(bad), "{bad:?} accepted");
+        }
+    }
+
+    #[test]
+    fn restore_needs_the_phrase_and_never_restarts_the_trading_worker() {
+        assert_eq!(restore_plan("manual-1", None), Err(ActionError::RestoreConfirmationRequired));
+        assert_eq!(restore_plan("manual-1", Some("restore database")), Err(ActionError::RestoreConfirmationRequired));
+        assert!(matches!(restore_plan("../x", Some(RESTORE_PHRASE)), Err(ActionError::Unknown(_))));
+        let plan = restore_plan("manual-1", Some(RESTORE_PHRASE)).unwrap();
+        assert!(!starts(&plan).contains(&Service::TradingWorker));
+        let pos = |want: &dyn Fn(&Step) -> bool| plan.iter().position(want).unwrap();
+        let safety = pos(&|s| matches!(s, Step::BackupDatabase { purpose: BackupPurpose::PreRestore }));
+        let stop = pos(&|s| matches!(s, Step::StopServices { .. }));
+        let restore = pos(&|s| matches!(s, Step::RestoreDatabase { .. }));
+        let reset = pos(&|s| matches!(s, Step::ResetTradingState));
+        let start = pos(&|s| matches!(s, Step::StartServices { services } if services.contains(&Service::Api)));
+        assert!(safety < stop && stop < restore && restore < reset && reset < start, "{plan:?}");
+        match &plan[stop] {
+            Step::StopServices { services } => assert_eq!(services[0], Service::TradingWorker, "trading worker stopped first"),
+            _ => unreachable!(),
+        }
     }
 
     #[test]

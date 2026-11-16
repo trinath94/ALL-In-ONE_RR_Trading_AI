@@ -14,7 +14,7 @@ export default function Economic() {
       <PageTitle sub="High-impact events and central-bank decisions block new entries inside their configured risk windows."
         right={<div className="flex items-center gap-2"><Badge tone={ok ? "neon" : "bear"}>Provider {data?.provider_status || "…"}</Badge>
           {can(me, "system.manage") && <Btn small onClick={async () => { await post("/api/news/refresh"); reload(); }}><RefreshCw size={11} />Refresh</Btn>}</div>}>
-        Economic Intelligence</PageTitle>
+        News and Economic Calendar</PageTitle>
       <ErrorLine error={error} />
       {!ok && data && <div className="mb-3 rounded border border-warn/50 bg-warn/5 p-2 text-[12px] text-warn">{data.note} Configure RR_NEWS_PROVIDER / RR_NEWS_API_URL.</div>}
       <Panel>

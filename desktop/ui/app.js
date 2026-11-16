@@ -28,7 +28,7 @@ const LABELS = {
   start_mt5_connector: "Start MT5 Connector", stop_mt5_connector: "Stop MT5 Connector",
   start_learner: "Start Learner", stop_learner: "Stop Learner",
   start_trading_worker: "Start Trading Worker", stop_trading_worker: "Stop Trading Worker",
-  system_health: "System Health", recovery: "Recovery",
+  system_health: "System Health", recovery: "Recovery", backup_now: "Back Up Database Now",
 };
 
 function describeStep(s) {
@@ -40,6 +40,9 @@ function describeStep(s) {
     case "run_migrations": return "Back up database, then apply pending migrations";
     case "verify_health": return "Verify health (real checks)";
     case "restart_unhealthy": return "Restart services that failed health checks (never the trading worker)";
+    case "backup_database": return s.purpose === "pre_restore" ? "Safety backup of the current database" : "Back up the database";
+    case "restore_database": return "Restore the database from " + s.backup + " (one transaction: all or nothing)";
+    case "reset_trading_state": return "Auto trading OFF; reconciliation required before any entry";
     default: return s.step;
   }
 }

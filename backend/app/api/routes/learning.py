@@ -56,6 +56,14 @@ def overview(mode: str = "DEMO", _: User = Depends(current_user), db: Session = 
         "sync": [{"account_id": s.account_id, "stream": s.stream, "last_time": s.last_time, "status": s.status,
                   "detail": s.detail} for s in db.scalars(select(SyncState))],
         "consensus_mode": get_settings().consensus_mode,
+        # Phase 17 (Part 17 'Learning Centre')
+        "breakeven": sum(1 for t in trades if t["net"] == 0 or t.get("outcome") == "BE"),
+        "unattributed": sum(1 for t in trades if t.get("attribution") == "UNLINKED"),
+        "training_jobs_7d": dict(Counter(st_ for (st_,) in db.execute(select(LearningJob.status).where(LearningJob.started_at >= since)))),
+        "learning_memory": db.scalar(select(func.count(LearningMemory.id))),
+        "rollbacks": [{"model_id": a.entity_id, "notes": a.notes, "user_id": a.user_id, "at": a.created_at}
+                      for a in db.scalars(select(ApprovalRecord).where(ApprovalRecord.action == "rollback")
+                                          .order_by(ApprovalRecord.id.desc()).limit(20))],
     }
 
 

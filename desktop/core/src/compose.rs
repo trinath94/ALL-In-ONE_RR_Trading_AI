@@ -13,6 +13,8 @@ pub const PROJECT: &str = "rr-trading-one";
 pub const WAIT_TIMEOUT_SECS: u32 = 300;
 /// Seconds containers get to stop gracefully (workers finish their cycle; journal stays consistent).
 pub const STOP_TIMEOUT_SECS: u32 = 30;
+/// Where a backup is placed inside the database container for `pg_restore` (Phase 17).
+pub const RESTORE_FILE: &str = "/tmp/rr-restore.dump";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compose {
@@ -54,6 +56,29 @@ impl Compose {
     }
 
     /// Consistent PostgreSQL dump to stdout (custom format).
+    /// Phase 17: copy a backup (a file the supervisor resolved in its own backups folder) into the database container.
+    pub fn copy_into_postgres(&self, file: &std::path::Path) -> Vec<String> {
+        let mut v = self.base();
+        v.extend(["cp".to_string(), file.to_string_lossy().into_owned(), format!("postgres:{RESTORE_FILE}")]);
+        v
+    }
+
+    /// Phase 17: restore in one transaction (all or nothing), replacing existing objects.
+    pub fn pg_restore(&self) -> Vec<String> {
+        self.with(&["exec", "-T", "postgres", "pg_restore", "-U", "rr", "-d", "rr_trading", "--clean", "--if-exists",
+            "--no-owner", "--single-transaction", RESTORE_FILE], &[])
+    }
+
+    pub fn remove_restore_file(&self) -> Vec<String> {
+        self.with(&["exec", "-T", "postgres", "rm", "-f", RESTORE_FILE], &[])
+    }
+
+    /// Phase 17: after a restore, auto trading OFF and reconciliation required. Fixed SQL, no input.
+    pub fn reset_trading_state(&self) -> Vec<String> {
+        self.with(&["exec", "-T", "postgres", "psql", "-U", "rr", "-d", "rr_trading", "-v", "ON_ERROR_STOP=1", "-c",
+            "UPDATE trading_state SET auto_trading = false, startup_checks_passed = false"], &[])
+    }
+
     pub fn pg_dump(&self) -> Vec<String> {
         self.with(&["exec", "-T", "postgres", "pg_dump", "-U", "rr", "-d", "rr_trading", "--format=custom", "--no-owner"], &[])
     }
