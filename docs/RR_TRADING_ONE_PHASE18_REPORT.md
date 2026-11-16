@@ -38,6 +38,7 @@ The import's end-to-end test found a real defect in the Phase 17 restore. It is 
 | Desktop core tests (Rust) | **104 passed** (98 + 6 new); clippy clean with warnings as errors |
 | Backend suite, including the 215-strategy preservation test | **302 passed** in one full run (one assertion added to an existing test) |
 | Desktop window in a browser with a mocked supervisor | wizard and import flow passed; earlier window check passed unchanged |
+| CI for Phase 18 (`b78955a`) | desktop 43951669672, backend 43951669764: **all passed** (no frontend change, so no frontend run) |
 | CI for Phase 17 (`461dc3f`) | frontend 43945858386, backend 43945858657, desktop 43945858555: **all passed** |
 
 ## 2. Migrating from the Ubuntu server

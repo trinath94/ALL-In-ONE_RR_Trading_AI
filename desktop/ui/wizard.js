@@ -27,6 +27,8 @@ async function evaluateSteps() {
   const running = (name) => (svc || []).some((x) => x.Service === name && x.State === "running");
   const st = {};
   st.prereq = pre ? pre.every((c) => c.ok) : null;
+  // Passing checks can still carry a warning (low disk, the standalone connector from the Ubuntu setup).
+  st.warnings = (pre || []).filter((c) => c.ok && String(c.detail).startsWith("warning:")).map((c) => String(c.detail));
   st.engine = svc ? ["postgres", "redis", "api", "frontend", "gateway"].every(running) : null;
   st.health = health ? health.every((h) => h.state === "healthy") : null;
   st.admin = eng ? !!eng.admin_exists : null;
@@ -50,6 +52,7 @@ async function refreshWizard() {
       done === true ? "ok" : done === false ? (s.optional ? "muted" : "warn") : "muted"));
     li.appendChild(el("span", ` ${i + 1}. ${s.title} `));
     li.appendChild(el("span", `(${s.where})`, "muted"));
+    if (s.id === "prereq") for (const w of st.warnings) li.appendChild(el("div", w, "warn-text"));
     list.appendChild(li);
     if (!next && done !== true && !s.optional) next = s;
   }

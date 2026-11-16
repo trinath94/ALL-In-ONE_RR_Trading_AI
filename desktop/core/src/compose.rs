@@ -29,11 +29,18 @@ pub const COUNT_ALL_TABLES: &str = "SELECT table_name, (xpath('/row/c/text()', q
     table_name), false, true, '')))[1]::text FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' \
     ORDER BY 1";
 /// Phase 18: an imported database starts like a new installation (DEMO, auto trading OFF, LIVE approvals cleared,
-/// reconciliation required), recorded in the audit trail.
+/// reconciliation required), recorded in the audit trail. Phase 19: identities that belonged to the server are not
+/// trusted here: its connectors (relay agents) are revoked, its unused link tokens expire, its sessions are revoked.
+/// The PC's connector is linked afresh to this engine.
 pub const RESET_FOR_NEW_INSTALLATION: &str = "BEGIN; UPDATE trading_state SET active_mode = 'DEMO', auto_trading = false, \
     startup_checks_passed = false; UPDATE trading_accounts SET live_approved_by = NULL, live_approved_at = NULL, is_active = false \
-    WHERE mode = 'LIVE'; INSERT INTO audit_logs (action, target, detail, created_at) VALUES ('DATABASE_IMPORTED', 'desktop', \
-    '{\"reset\": \"DEMO, auto trading off, LIVE approvals cleared, reconciliation required\"}', now()); COMMIT;";
+    WHERE mode = 'LIVE'; \
+    UPDATE mt5_agents SET enabled = false, revoked_at = now() WHERE revoked_at IS NULL; \
+    UPDATE mt5_agent_tokens SET expires_at = now() WHERE used_at IS NULL AND expires_at > now(); \
+    UPDATE user_sessions SET revoked = true WHERE NOT revoked; \
+    INSERT INTO audit_logs (action, target, detail, created_at) VALUES ('DATABASE_IMPORTED', 'desktop', \
+    '{\"reset\": \"DEMO, auto trading off, LIVE approvals cleared, reconciliation required\", \"server_connectors\": \"revoked\", \
+    \"server_link_tokens\": \"expired\", \"server_sessions\": \"revoked\"}', now()); COMMIT;";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compose {
@@ -215,6 +222,18 @@ mod tests {
         }
         let r = c().psql_restore();
         assert!(r.contains(&"--single-transaction".to_string()) && r.contains(&"--set=ON_ERROR_STOP=1".to_string()), "{r:?}");
+    }
+
+    #[test]
+    fn an_import_trusts_no_identity_of_the_server() {
+        let r = RESET_FOR_NEW_INSTALLATION;
+        assert!(r.starts_with("BEGIN;") && r.ends_with("COMMIT;"), "one transaction");
+        for must in ["active_mode = 'DEMO'", "auto_trading = false", "startup_checks_passed = false", "live_approved_at = NULL",
+                     "UPDATE mt5_agents SET enabled = false, revoked_at = now() WHERE revoked_at IS NULL",
+                     "UPDATE mt5_agent_tokens SET expires_at = now() WHERE used_at IS NULL",
+                     "UPDATE user_sessions SET revoked = true", "'DATABASE_IMPORTED'"] {
+            assert!(r.contains(must), "{must}");
+        }
     }
 
     #[test]

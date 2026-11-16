@@ -65,6 +65,9 @@ pub struct SupervisorConfig {
     pub log_file: Option<PathBuf>,
     /// `Some(path to wsl.exe)` on Windows; WSL2 is then a prerequisite.
     pub wsl: Option<PathBuf>,
+    /// Phase 19: data folder of the standalone RR MT5 Connector used with the Ubuntu server
+    /// (`%LOCALAPPDATA%\RRMT5Connector`); its presence is reported as a warning.
+    pub legacy_connector_dir: Option<PathBuf>,
     /// Tag of the locally built engine images (`RR_ONE_IMAGE_TAG`). Installed builds derive it from the installed
     /// sources, so a new version's images are built by the next Start All instead of reusing the old ones.
     pub image_tag: String,
@@ -188,6 +191,14 @@ impl<'a> Supervisor<'a> {
             let spec = CommandSpec { program: wsl.clone(), args: vec!["--status".into()], env: vec![], timeout: T_QUICK, stdout_file: None, stdin: None };
             let ok = self.runner.run(&spec).map(|o| o.success()).unwrap_or(false);
             checks.push(Check { name: "wsl2", ok, detail: if ok { "WSL available".into() } else { "WSL2 is not installed or not enabled".into() } });
+        }
+        if let Some(dir) = self.cfg.legacy_connector_dir.as_ref().filter(|d| d.join("config.db").is_file()) {
+            // A warning, not a failure: the standalone connector is a different application, linked (if at all) to
+            // another engine. The desktop cannot read or stop it; it can say what it means.
+            checks.push(Check { name: "previous_connector", ok: true, detail: format!(
+                "warning: the standalone RR MT5 Connector from the Ubuntu setup is installed for this user ({}). If it still \
+                 runs and is linked to the server, that server can trade the same MT5 terminal. Close it (and disable its \
+                 start-up), and stop trading on the server, before trading in LOCAL mode.", dir.display()) });
         }
         let cf = &self.cfg.compose.file;
         checks.push(Check { name: "compose_file", ok: cf.is_file(), detail: cf.display().to_string() });
@@ -550,7 +561,8 @@ impl<'a> Supervisor<'a> {
             Step::VerifyDump { backup } => self.verify_dump(backup),
             Step::VerifyRestored { backup } => self.verify_restored(backup),
             Step::ResetForNewInstallation => match self.run_ok(self.cfg.compose.psql("rr_trading", RESET_FOR_NEW_INSTALLATION), T_QUICK) {
-                Ok(_) => (Outcome::Ok, "DEMO, auto trading OFF, LIVE approvals cleared, reconciliation required (audited)".into()),
+                Ok(_) => (Outcome::Ok, "DEMO, auto trading OFF, LIVE approvals cleared, reconciliation required; the server's connectors, link tokens \
+                           and sessions revoked (audited)".into()),
                 Err(e) => (Outcome::Failed, e),
             },
             Step::ResetTradingState => match self.run_ok(self.cfg.compose.reset_trading_state(), T_QUICK) {
@@ -692,6 +704,7 @@ mod tests {
             backups_dir: t.path().join("backups"),
             log_file: Some(t.path().join("supervisor.log")),
             wsl: None,
+            legacy_connector_dir: None,
             image_tag: "local".into(),
         };
         Env { _t: t, cfg, secrets: StackSecrets::generate().unwrap() }
@@ -945,6 +958,21 @@ mod tests {
         assert!(!get("docker_installed").ok);
         assert!(!get("gateway_port").ok && get("gateway_port").detail.contains("another program"));
         assert!(get("disk_space").ok);
+    }
+
+    #[test]
+    fn the_standalone_ubuntu_era_connector_is_reported_as_a_warning() {
+        let mut e = env();
+        let legacy = e.cfg.data_dir.join("RRMT5Connector");
+        e.cfg.legacy_connector_dir = Some(legacy.clone());
+        let r = fake(default_script(""));
+        let checks = sup(&e, &r, unreachable_probe()).prerequisites();
+        assert!(!checks.iter().any(|c| c.name == "previous_connector"), "nothing installed, nothing reported");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("config.db"), b"x").unwrap();
+        let checks = sup(&e, &r, unreachable_probe()).prerequisites();
+        let c = checks.iter().find(|c| c.name == "previous_connector").unwrap();
+        assert!(c.ok && c.detail.starts_with("warning:") && c.detail.contains("server can trade the same MT5 terminal"), "{c:?}");
     }
 
     #[test]

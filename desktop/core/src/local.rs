@@ -138,6 +138,8 @@ pub fn prepare(paths: &AppPaths, settings: &Settings, runner: &dyn Runner) -> Re
             backups_dir: paths.backups_dir(),
             log_file: Some(paths.logs_dir().join("supervisor.log")),
             wsl: cfg!(windows).then(|| system32("wsl.exe")),
+            legacy_connector_dir: cfg!(windows).then(|| std::env::var_os("LOCALAPPDATA")).flatten()
+                .filter(|v| !v.is_empty()).map(|d| PathBuf::from(d).join("RRMT5Connector")),
             image_tag,
         },
         secrets,

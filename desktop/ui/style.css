@@ -47,3 +47,4 @@ h3 { margin: 16px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600;
 .badge.muted { opacity: .7; }
 ol.steps { margin: .4rem 0; padding-left: 1.2rem; display: grid; gap: .3rem; }
 #wizard.done { opacity: .75; }
+.warn-text { color: var(--warn); font-size: 12px; margin: 2px 0 0 1.5em; }
