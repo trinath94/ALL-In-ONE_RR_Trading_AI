@@ -2,13 +2,14 @@
 import clsx from "clsx";
 import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { FusionOverview } from "@/components/Fusion";
 import { DriftPanel, ModelsPanel, ResearchLab, ReliabilityChart } from "@/components/Intel";
 import { can, PageTitle, useMe } from "@/components/Shell";
 import { Badge, Btn, dirTone, Empty, ErrorLine, Panel, Stat, Table } from "@/components/ui";
 import { fmt, post } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
 
-const TABS = ["Regime", "Consensus", "Probability", "Portfolio Risk", "Failure", "Execution", "Governance", "Research Lab"] as const;
+const TABS = ["Fusion", "Regime", "Consensus", "Probability", "Portfolio Risk", "Failure", "Execution", "Governance", "Research Lab"] as const;
 const tip = { background: "#0a0d10", border: "1px solid #1a2329", fontSize: 11 };
 const regTone = (r: string) => (r?.includes("BULL") ? "neon" : r?.includes("BEAR") ? "bear" : r === "UNCERTAIN" || r === "NEWS_DRIVEN" ? "warn" : "cyan") as any;
 
@@ -198,13 +199,14 @@ function Anomalies() {
 }
 
 export default function Predictive() {
-  const [tab, setTab] = useState<(typeof TABS)[number]>("Regime");
+  const [tab, setTab] = useState<(typeof TABS)[number]>("Fusion");
   return (
     <div>
       <PageTitle sub="Advisory intelligence. Nothing on this page can place, size or approve an order — the Risk Engine keeps final authority.">Institutional Predictive Intelligence Center</PageTitle>
       <Anomalies />
       <div className="mb-3 flex flex-wrap gap-1">{TABS.map((t) => <button key={t} onClick={() => setTab(t)}
         className={clsx("rounded border px-3 py-1 text-[11px] uppercase tracking-wider", t === tab ? "border-cyan/60 bg-cyan/10 text-cyan" : "border-line text-dim hover:text-text")}>{t}</button>)}</div>
+      {tab === "Fusion" && <FusionOverview />}
       {tab === "Regime" && <RegimeTab />}
       {tab === "Consensus" && <ConsensusTab />}
       {tab === "Probability" && <ProbabilityTab />}

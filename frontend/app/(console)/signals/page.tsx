@@ -5,6 +5,7 @@ import TradingChart from "@/components/TradingChart";
 import { Badge, Btn, Confirm, dirTone, ErrorLine, gradeTone, Panel, Table } from "@/components/ui";
 import { api, fmt, post } from "@/lib/api";
 import { useApi, useLive } from "@/lib/hooks";
+import { FusionDetail } from "@/components/Fusion";
 
 export default function Signals() {
   const me = useMe();
@@ -12,12 +13,16 @@ export default function Signals() {
   const { data: rows, error, reload } = useApi<any[]>("/api/signals?limit=300", 30000, live.tick);
   const { data: st } = useApi<any>("/api/control/state");
   const [sel, setSel] = useState<any>(null);
+  const [fusion, setFusion] = useState<any>(undefined);
   const [tf, setTf] = useState("H1");
   const [confirm, setConfirm] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  async function open(r: any) { setSel(await api(`/api/signals/${r.id}`)); setTf(r.timeframe); setMsg(null); setErr(null); }
+  async function open(r: any) {
+    setSel(await api(`/api/signals/${r.id}`)); setTf(r.timeframe); setMsg(null); setErr(null); setFusion(undefined);
+    try { setFusion((await api<any>(`/api/intelligence/signals/${r.id}`)).fusion); } catch { setFusion(null); }
+  }
   async function execute() {
     setBusy(true); setErr(null);
     try { const o = await post(`/api/signals/${sel.id}/execute`, { confirm_live: st?.mode === "LIVE" }); setMsg(`Order ${o.execution_id.slice(0, 10)}… ${o.status}: ${o.status_detail}`); reload(); }
@@ -32,7 +37,7 @@ export default function Signals() {
           <Table rows={rows} onRow={open} empty="No signals generated yet"
             cols={[{ k: "created_at", h: "Time", r: (r) => fmt.time(r.created_at) }, { k: "symbol", h: "Symbol" }, { k: "timeframe", h: "TF" },
               { k: "decision", h: "Dir", r: (r) => <Badge tone={dirTone(r.decision)}>{r.decision}</Badge> },
-              { k: "grade", h: "Grade", r: (r) => <Badge tone={gradeTone(r.grade)}>{r.grade}</Badge> }, { k: "score", h: "Score" },
+              { k: "grade", h: "Grade", r: (r) => <Badge tone={gradeTone(r.grade)}>{r.grade}</Badge> }, { k: "score", h: "Confluence" },
               { k: "calibrated_confidence", h: "Calibrated", r: (r) => r.calibrated_confidence === null ? <span className="text-dim" title={`${r.confidence_sample} OOS samples`}>n/a</span> : fmt.pct(r.calibrated_confidence, 0) },
               { k: "risk_reward", h: "R:R" }, { k: "ai", h: "AI", sort: false, r: (r) => r.ai_review ? <Badge tone={r.ai_review.decision === r.decision ? "neon" : "warn"}>{r.ai_review.decision}</Badge> : "—" },
               { k: "status", h: "Status" }]} />
@@ -50,6 +55,8 @@ export default function Signals() {
             </div>
             <p className="mt-2 text-[12px] leading-relaxed">{sel.explanation}</p>
             <div className="mt-2 text-[11px] text-dim">Confidence: {sel.calibrated_confidence === null ? `not reported — only ${sel.confidence_sample} out-of-sample outcomes (min 30)` : fmt.pct(sel.calibrated_confidence, 1) + ` (n=${sel.confidence_sample})`}</div>
+            <div className="mt-3 rounded border border-line p-2"><div className="mb-1 text-[10px] uppercase tracking-wider text-dim">Signal fusion (all evidence)</div>
+              {fusion === undefined ? <div className="text-[11px] text-dim">loading…</div> : <FusionDetail f={fusion} />}</div>
             <div className="mt-2 flex flex-wrap gap-1">{sel.strategies.map((s: any, i: number) => <Badge key={i} tone="violet">{s.strategy}</Badge>)}</div>
             {sel.ai_review && (
               <div className="mt-3 rounded border border-violet/40 p-2 text-[11px]">

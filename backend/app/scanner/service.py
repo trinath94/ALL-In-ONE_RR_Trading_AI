@@ -236,6 +236,14 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     except Exception as exc:  # noqa: BLE001 - adaptive weighting must never break the scan; the baseline result stands
         log.warning("adaptive weighting skipped for %s: %s", ref, exc)
     intel, consensus_rec = _intelligence(db, df, sym, tf, sigs, res, news, tick, mctx, metas, enabled, cyc, ref)
+    fused = None
+    try:
+        with cyc.step("signal_quality", ref):
+            fused = _fuse(db, sym, res, intel, news, spread, mctx, cfg, adaptive_recs)
+        cyc.note("signal_quality", {f"fused_{fused['decision']}": 1, f"evidence_{fused['evidence']}": 1})
+    except Exception as exc:  # noqa: BLE001 - fusion must never break the scan; the original decision stands
+        log.warning("fusion skipped for %s: %s", ref, exc)
+        fused = {"error": str(exc)[:200]}
     ar = AnalysisResult(symbol_id=sym.id, timeframe=tf, bar_time=df.index[-1].to_pydatetime(), regime=reg.primary,
                         structure={"regime": reg.dict(), "htf_bias": mctx.htf_bias, "sessions": mctx.sessions,
                                    "news": news, "atr": mctx.atr, "price": mctx.price,
@@ -246,7 +254,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
                                    "evaluation": outcomes,
                                    "unavailable": sorted({d["strategy"] for d in diag if d["status"] == "unavailable"})},
                         strategy_outputs=[s.dict() for s in sigs] + [d for d in diag if d["status"] == "error"],
-                        score={**res.dict(), "intelligence": intel})
+                        score={**res.dict(), "intelligence": intel, "fusion": fused})
     db.add(ar)
     db.flush()
     if consensus_rec is not None:
@@ -255,6 +263,32 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
                                                    f"{res.decision} {res.grade} ({res.score})")
     return {"analysis": ar, "result": res, "symbol": sym, "regime": reg, "price": mctx.price, "spread": spread,
             "intel": intel, "consensus_record": consensus_rec, "adaptive_records": adaptive_recs}
+
+
+def _fuse(db: Session, sym, res, intel: dict, news: str, spread: float, mctx: MarketContext, cfg: SignalConfig,
+          adaptive_recs: list) -> dict:
+    """Phase 13: one explainable decision from all the evidence (app.intelligence.fusion). Advisory by default: the
+    original engine's decision is kept and the fused one recorded beside it. With RR_FUSION_MODE=enforce the fused
+    decision is used; it can only keep or make more cautious the original one."""
+    from app.db.models_intel import ModelRegistry
+    from app.intelligence import fusion
+    from app.services import trading as tr
+    s = get_settings()
+    acct = tr.active_account(db)
+    used = next((r for r in adaptive_recs if not r.shadow), None)
+    weighting = (f"adaptive profile v{db.get(ModelRegistry, used.model_id).version}" if used is not None
+                 else "original weights")
+    out = fusion.fuse(res, intel, news=news, spread=spread, atr=mctx.atr, htf_bias=mctx.htf_bias,
+                      max_spread_atr=cfg.max_spread_atr,
+                      history=fusion.historical(db, acct.mode if acct else "DEMO", sorted({x["strategy"] for x in res.strategies})),
+                      exposure_info=fusion.exposure(db, sym.broker_symbol, res.direction), weighting=weighting,
+                      mode=s.fusion_mode).dict()
+    if s.fusion_mode == "enforce" and out["decision"] != res.decision:
+        res.warnings.append(f"fusion {out['decision']} (enforce mode): original {res.decision} not used")
+        res.decision = out["decision"]
+        if out["decision"] == "NO_TRADE":
+            res.direction = None
+    return out
 
 
 def _adaptive(db: Session, sigs, mctx: MarketContext, cfg: SignalConfig, calib: Calibrator, baseline):

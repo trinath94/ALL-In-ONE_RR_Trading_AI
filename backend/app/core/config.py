@@ -109,6 +109,9 @@ class Settings(BaseSettings):
 
     # Part 25/26
     consensus_mode: str = "advisory"          # advisory | enforce (enforce downgrades disagreeing BUY/SELL to WAIT)
+    # Phase 13: advisory records the fused decision beside the original engine's (the benchmark); enforce uses it for
+    # signals. Either way the fused decision can only keep, or make more cautious, the original one.
+    fusion_mode: str = "advisory"
     max_quote_age_seconds: int = 120          # stale quotes cannot authorise entries
     regime_intel_enabled: bool = True
     learner_interval_seconds: int = 60

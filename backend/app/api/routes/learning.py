@@ -484,7 +484,30 @@ def signal_intelligence(signal_id: int, _: User = Depends(current_user), db: Ses
     if not s:
         raise HTTPException(404)
     ar = db.get(AnalysisResult, s.analysis_id) if s.analysis_id else None
-    return {"signal_id": s.id, "intelligence": ((ar.score or {}).get("intelligence") if ar else None) or {}}
+    return {"signal_id": s.id, "intelligence": ((ar.score or {}).get("intelligence") if ar else None) or {},
+            # Phase 13: the fused decision, its evidence status and every factor, beside the original engine's
+            "fusion": (ar.score or {}).get("fusion") if ar else None}
+
+
+@intel.get("/fusion/latest")
+def fusion_latest(limit: int = 50, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The most recent fused decisions, one per analysis, with the original engine's decision beside each."""
+    from app.db.models import AnalysisResult, Symbol
+    rows = db.execute(select(AnalysisResult.id, AnalysisResult.timeframe, AnalysisResult.created_at, AnalysisResult.score,
+                             Symbol.broker_symbol).join(Symbol, Symbol.id == AnalysisResult.symbol_id)
+                      .order_by(AnalysisResult.id.desc()).limit(min(limit, 500))).all()
+    out = []
+    for aid, tf, at, score, sym in rows:
+        fu = (score or {}).get("fusion")
+        if fu and "decision" in fu:
+            out.append({"analysis_id": aid, "symbol": sym, "timeframe": tf, "at": at, **fu})
+    return {"mode": get_settings().fusion_mode, "decisions": out}
+
+
+@intel.get("/fusion/benchmark")
+def fusion_benchmark(days: int = 30, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.intelligence import fusion
+    return {"mode": get_settings().fusion_mode, **fusion.benchmark_report(db, min(max(days, 1), 365))}
 
 
 # ================================================================ TRADE INTELLIGENCE (RR Trading One Phase 10) ======

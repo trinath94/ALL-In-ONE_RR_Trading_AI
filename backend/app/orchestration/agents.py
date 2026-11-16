@@ -66,7 +66,8 @@ REGISTRY: list[AgentSpec] = [
       "app.intelligence.consensus (evidence families) + /api/strategies-analytics/correlation", "ConsensusAgreement",
       "analysis service (BUY/SELL/WAIT candidates)", "Counts correlated evidence once"),
     A("signal_quality", "Signal Quality Agent", "1.0", HYBRID,
-      "app.signals.engine.build_signal + app.intelligence.anomaly; AI review of shortlisted candidates via app.ai.gateway",
+      "app.signals.engine.build_signal + app.intelligence.anomaly + app.intelligence.fusion; AI review of "
+      "shortlisted candidates via app.ai.gateway",
       "SignalScore / Review", "analysis service",
       "Score and grade; the AI review may only confirm, downgrade to WAIT or reject (enforce_boundaries)"),
     A("news_events", "News and Economic Events Agent", "1.0", DETERMINISTIC, "app.news.service.status_for",

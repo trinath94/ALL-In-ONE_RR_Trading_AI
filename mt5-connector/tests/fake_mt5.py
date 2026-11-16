@@ -5,6 +5,7 @@ It is never imported by production code.
 """
 from __future__ import annotations
 
+import os
 import time
 from collections import namedtuple
 from types import SimpleNamespace
@@ -102,6 +103,8 @@ class FakeMT5:
                        ("tick_volume", "<u8"), ("spread", "<i4"), ("real_volume", "<u8")])
         base = self.symbols[name]["bid"]
         t0 = int(time.time()) // 3600 * 3600 - count * 3600
+        if os.environ.get("FAKE_MT5_SERIES") == "walk":
+            return np.array(_walk(name, base, t0, count), dtype=dt)
         rows = [(t0 + i * 3600, base, base * 1.001, base * 0.999, base, 100, 10, 0) for i in range(count)]
         return np.array(rows, dtype=dt)
 
@@ -154,3 +157,22 @@ class FakeMT5:
         if self.fail_after_send:
             raise ConnectionError("terminal connection lost after send")
         return Result(10009, t + 100000, t, req.get("volume", 0.0), req.get("price", 0.0), 0.0, 0.0, "Done", None)
+
+
+def _walk(name: str, base: float, t0: int, count: int) -> list[tuple]:
+    """Opt-in (FAKE_MT5_SERIES=walk, test only): trending waves plus noise, a pure function of (symbol, hour), so every
+    request returns the same bar for the same hour and strategies have structure to react to. The default stays flat."""
+    import zlib
+
+    def close(h: int) -> float:
+        n = (zlib.crc32(f"{name}:{h}".encode()) / 2 ** 32) - 0.5
+        return base * (1 + 0.02 * np.sin(h / 53.0) + 0.008 * np.sin(h / 13.0) + 0.003 * n)
+
+    out = []
+    for i in range(count):
+        h = t0 // 3600 + i
+        o, c = close(h - 1), close(h)
+        wick = abs(close(h + 10 ** 6) - base) / base * 0.3 + 0.0002
+        out.append((t0 + i * 3600, o, max(o, c) * (1 + wick), min(o, c) * (1 - wick), c,
+                    100 + zlib.crc32(f"v{name}:{h}".encode()) % 120, 10, 0))
+    return out

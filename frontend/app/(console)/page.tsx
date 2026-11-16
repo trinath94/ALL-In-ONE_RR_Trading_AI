@@ -50,7 +50,7 @@ export default function CommandCenter() {
               levels={sel ? { entry: sel.entry, stop_loss: sel.stop_loss, tp2: sel.take_profit, direction: sel.direction } : undefined} />
               : <Empty>No broker symbols discovered yet. Configure an account and run symbol discovery (Settings).</Empty>}
             {sel && <div className="mt-2 flex flex-wrap gap-2 text-[11px]"><Badge tone={dirTone(sel.direction)}>{sel.direction}</Badge>
-              <Badge tone={gradeTone(sel.grade)}>{sel.grade}</Badge><span>score {sel.score}</span><span className="text-dim">regime {sel.regime}</span>
+              <Badge tone={gradeTone(sel.grade)}>{sel.grade}</Badge><span>confluence {sel.score}/100</span><span className="text-dim">regime {sel.regime}</span>
               <span className="text-dim">{sel.strategies.join(", ")}</span></div>}
           </Panel>
           <Panel title="Top qualified opportunities" icon={<Radar size={12} />}>
@@ -58,7 +58,7 @@ export default function CommandCenter() {
               cols={[{ k: "symbol", h: "Symbol" }, { k: "timeframe", h: "TF" },
                 { k: "direction", h: "Signal", r: (r) => <Badge tone={dirTone(r.direction)}>{r.direction}</Badge> },
                 { k: "grade", h: "Grade", r: (r) => <Badge tone={gradeTone(r.grade)}>{r.grade}</Badge> },
-                { k: "score", h: "AI score" }, { k: "entry", h: "Entry", r: (r) => fmt.px(r.entry) },
+                { k: "score", h: "Confluence" }, { k: "entry", h: "Entry", r: (r) => fmt.px(r.entry) },
                 { k: "stop_loss", h: "SL", r: (r) => fmt.px(r.stop_loss) }, { k: "take_profit", h: "TP", r: (r) => fmt.px(r.take_profit) },
                 { k: "risk_reward", h: "R:R" }, { k: "regime", h: "Regime" }]} />
           </Panel>

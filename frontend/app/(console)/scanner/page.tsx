@@ -102,7 +102,7 @@ export default function Scanner() {
             { k: "htf_bias", h: "Trend", r: (r) => r.htf_bias > 0 ? <span className="text-neon">▲ bull</span> : r.htf_bias < 0 ? <span className="text-bear">▼ bear</span> : <span className="text-dim">—</span> },
             { k: "decision", h: "Signal", r: (r) => <Badge tone={dirTone(r.decision)}>{r.decision || "—"}</Badge> },
             { k: "strategies", h: "Strategy", sort: false, r: (r) => <span className="block max-w-[200px] truncate text-dim">{r.strategies.join(", ") || "—"}</span> },
-            { k: "score", h: "AI score", r: (r) => <span>{r.score ?? "—"} <Badge tone={gradeTone(r.grade)}>{r.grade}</Badge></span> },
+            { k: "score", h: "Confluence", r: (r) => <span>{r.score ?? "—"} <Badge tone={gradeTone(r.grade)}>{r.grade}</Badge></span> },
             { k: "entry", h: "Entry", r: (r) => fmt.px(r.entry) }, { k: "stop_loss", h: "SL", r: (r) => fmt.px(r.stop_loss) },
             { k: "take_profit", h: "TP", r: (r) => fmt.px(r.take_profit) }, { k: "risk_reward", h: "R:R" },
             { k: "regime", h: "Regime" }, { k: "news", h: "News", r: (r) => <Badge tone={r.news === "CLEAR" ? "neon" : r.news === "RESTRICTED" ? "bear" : "warn"}>{r.news}</Badge> },

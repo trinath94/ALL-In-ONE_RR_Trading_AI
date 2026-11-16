@@ -44,6 +44,7 @@ modules. It adds **no new tables and no migration**:
 | Backend suite, including the 215-strategy preservation test | **276 passed** (260 + 16 new) in one full run |
 | Frontend `next build` | Passed, 29 pages (new: Adaptive Intelligence) |
 | Noise check of the profile validation | **0 / 200** pure-noise datasets validated; a ±1 R regime edge validated **40 / 40** |
+| CI (`440dd42`) | backend 43896507411 (suite + image build), desktop (installer build + silent install/uninstall) 43896507384, frontend 43896507441. All passed. |
 
 ## 2. Defects found
 
