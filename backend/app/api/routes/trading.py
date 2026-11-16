@@ -113,10 +113,18 @@ def switch_mode(body: ModeIn, request: Request, user: User = Depends(require("tr
     pending = db.scalar(select(func.count(TradeOrder.id)).where(TradeOrder.status.in_(["PENDING", "SENT", "UNKNOWN"])))
     if pending:
         raise HTTPException(409, f"{pending} executions unresolved; reconcile before switching")
+    # Phase 16: positions left on the other mode's account stay at the broker with their stops, but are not managed
+    # (break-even, partial close, trailing) while this mode is active. Say so, and record it.
+    leaving = tr.active_account(db)
+    left = db.scalar(select(func.count(OpenPosition.id)).where(OpenPosition.account_id == leaving.id)) if leaving else 0
     st.active_mode, st.auto_trading, st.startup_checks_passed, st.updated_by = body.mode, False, False, user.id
-    audit(db, user.id, "MODE_SWITCH", body.mode, ip=client_ip(request))
+    audit(db, user.id, "MODE_SWITCH", body.mode, {"open_positions_left_on_previous_account": left}, ip=client_ip(request))
     publish("control", {"mode": body.mode})
-    return state_out(db)
+    out = state_out(db)
+    out["warnings"] = ([f"{left} position(s) remain open on the {leaving.mode} account {leaving.login}; they keep their "
+                        f"broker stops but are not managed while {body.mode} is active"] if left else [])
+    out["new_entries"] = "blocked until the account is verified and reconciled (startup checks)"
+    return out
 
 
 class KillIn(BaseModel):
@@ -183,6 +191,11 @@ def accounts(_: User = Depends(current_user), db: Session = Depends(get_db)):
 
 @router.post("/accounts")
 def create_account(body: AccountIn, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    # Phase 16: one broker identity is one account, in one mode. Refused clearly instead of a database error, so the
+    # DEMO identity can never also be registered as LIVE (or the reverse).
+    dup = db.scalar(select(TradingAccount).where(TradingAccount.login == body.login, TradingAccount.server == body.server))
+    if dup is not None:
+        raise HTTPException(409, f"{body.login}@{body.server} is already registered as a {dup.mode} account")
     a = tr.create_account_record(db, login=body.login, server=body.server, mode=body.mode, password=body.password,
                                  broker_name=body.broker_name, terminal_name=body.terminal_name,
                                  bridge_url=body.bridge_url, timezone_name=body.timezone)
@@ -216,6 +229,22 @@ def approve_live(account_id: int, body: ConfirmIn, user: User = Depends(require(
         raise HTTPException(428, f"Type 'APPROVE {a.login}' to confirm")
     a.live_approved_by, a.live_approved_at = user.id, datetime.now(UTC)
     audit(db, user.id, "LIVE_ACCOUNT_APPROVED", f"{a.login}@{a.server}")
+    return account_out(a)
+
+
+@router.post("/accounts/{account_id}/revoke-live")
+def revoke_live(account_id: int, request: Request, user: User = Depends(require("trade.live")),
+                db: Session = Depends(get_db)):
+    """Phase 16: re-lock a LIVE account. New LIVE entries are refused at once (the execution manager requires the
+    approval); if it is the active LIVE account while LIVE is active, auto trading is switched off."""
+    a = db.get(TradingAccount, account_id)
+    if not a or a.mode != "LIVE":
+        raise HTTPException(404, "LIVE account not found")
+    a.live_approved_by, a.live_approved_at = None, None
+    st = tr.get_state(db)
+    if st.active_mode == "LIVE" and a.is_active:
+        st.auto_trading = False
+    audit(db, user.id, "LIVE_ACCOUNT_REVOKED", f"{a.login}@{a.server}", ip=client_ip(request))
     return account_out(a)
 
 

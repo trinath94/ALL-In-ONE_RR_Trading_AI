@@ -36,6 +36,7 @@ auto-executing a DEMO candidate through every gate**. That run found one real ga
 |---|---|
 | End-to-end on the running install (real trading-worker container, DEMO) | **20 / 20** (section 3) |
 | Backend suite, including the 215-strategy preservation test | **292 passed** (289 + 3 new) in one full run |
+| CI (`017bf9c`) | backend 43909702027, desktop (installer build + silent install/uninstall) 43909702217. Both passed (no frontend change, so the frontend workflow did not run). |
 
 ## 2. Defects found and fixed
 

@@ -17,11 +17,17 @@ export default function ControlCenter() {
   const [dlg, setDlg] = useState<Dialog>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [notes, setNotes] = useState<string[]>([]);
   const control = can(me, "trade.control");
 
   async function run(fn: () => Promise<any>) {
     setBusy(true); setErr(null);
-    try { await fn(); await reload(); setDlg(null); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+    setNotes([]);
+    try {
+      const r = await fn(); await reload(); setDlg(null);
+      // Phase 16: a mode switch reports positions left on the other account and that entries wait for reconciliation
+      if (r && r.new_entries) setNotes([...(r.warnings || []), `New entries ${r.new_entries}.`]);
+    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   }
   const acct = sum?.account;
   return (
@@ -55,7 +61,8 @@ export default function ControlCenter() {
         <Btn tone="bear" disabled={!control} onClick={() => setDlg("kill")}><OctagonX size={12} />Emergency kill switch</Btn>
         {st?.kill_switch && can(me, "system.manage") && <Btn tone="dim" onClick={() => run(() => post("/api/control/kill-switch/reset"))}><ShieldOff size={12} />Reset kill switch</Btn>}
       </div>
-      <div className="mt-2"><ErrorLine error={err} /></div>
+      <div className="mt-2"><ErrorLine error={err} />
+      {notes.map((n, i) => <div key={i} className="mt-1 rounded border border-warn/40 bg-warn/5 px-2 py-1 text-[11px] text-warn">{n}</div>)}</div>
       <Confirm open={dlg === "live"} title="Activate LIVE trading" phrase="ENABLE LIVE TRADING" busy={busy}
         body={<>Real money will be at risk. Auto trading will be OFF after the switch and startup reconciliation must pass before any entry.</>}
         onCancel={() => setDlg(null)} onConfirm={(t) => run(() => post("/api/control/mode", { mode: "LIVE", confirm_text: t }))} />

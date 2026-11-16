@@ -29,7 +29,8 @@ export default function Settings() {
             { k: "act", h: "", sort: false, r: (x) => admin && <div className="flex gap-1">
               <Btn small onClick={() => run(() => post(`/api/accounts/${x.id}/verify`), "Account verified against MT5")}>Verify</Btn>
               <Btn small onClick={() => run(() => post(`/api/accounts/${x.id}/activate`), "Activated (auto trading OFF, reconciliation required)")}>Activate</Btn>
-              {x.mode === "LIVE" && !x.live_approved && can(me, "trade.live") && <Btn small tone="bear" onClick={() => setApprove(x)}>Approve live</Btn>}</div> }]} />
+              {x.mode === "LIVE" && !x.live_approved && can(me, "trade.live") && <Btn small tone="bear" onClick={() => setApprove(x)}>Approve live</Btn>}
+              {x.mode === "LIVE" && x.live_approved && can(me, "trade.live") && <Btn small tone="warn" onClick={() => run(() => post(`/api/accounts/${x.id}/revoke-live`), "LIVE approval revoked: LIVE entries are refused until approved again")}>Revoke live</Btn>}</div> }]} />
           {admin && <div className="mt-3 grid grid-cols-2 gap-2">
             <Field label="MT5 login"><input className={inputCls} value={a.login} onChange={(e) => setA({ ...a, login: e.target.value })} /></Field>
             <Field label="Server"><input className={inputCls} value={a.server} onChange={(e) => setA({ ...a, server: e.target.value })} /></Field>
