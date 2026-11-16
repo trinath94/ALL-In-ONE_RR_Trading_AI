@@ -551,6 +551,8 @@ class TradingState(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True, default=1)
     active_mode: Mapped[str] = mapped_column(ACCOUNT_MODE, default="DEMO")
     auto_trading: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Phase 15: last OFF->ON switch; signals created before it are never auto-executed
+    auto_trading_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     pause_new_entries: Mapped[bool] = mapped_column(Boolean, default=False)
     kill_switch: Mapped[bool] = mapped_column(Boolean, default=False)
     kill_reason: Mapped[str] = mapped_column(Text, default="")

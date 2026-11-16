@@ -71,6 +71,8 @@ def auto_trading(body: Toggle, request: Request, user: User = Depends(require("t
                 raise HTTPException(403, "LIVE auto trading requires trade.live permission")
             if not body.confirm:
                 raise HTTPException(428, "Explicit confirmation required to enable LIVE auto trading")
+    if body.enabled and not st.auto_trading:
+        st.auto_trading_since = datetime.now(UTC)      # Phase 15: only signals created from now on are auto-executed
     st.auto_trading, st.updated_by = body.enabled, user.id
     audit(db, user.id, "AUTO_TRADING_" + ("ON" if body.enabled else "OFF"), st.active_mode, ip=client_ip(request))
     publish("control", {"auto_trading": body.enabled})

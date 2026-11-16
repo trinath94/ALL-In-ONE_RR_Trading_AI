@@ -33,6 +33,7 @@ item and completed what was missing.
 | End-to-end as an **upgrade** of the running install (schema 0008 → 0009) | **14 / 14** (section 3) |
 | Backend suite, including the 215-strategy preservation test | **289 passed** (283 + 6 new) in one full run |
 | Frontend `next build` | Passed, 29 pages; the page is now **AI Studio** (Part 17 item 23) |
+| CI (`e847afa`) | backend 43904095602, desktop (installer build + silent install/uninstall) 43904095430, frontend 43904095486. All passed. |
 
 ## 2. The two tasks wired in this phase
 

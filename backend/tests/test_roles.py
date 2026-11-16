@@ -17,6 +17,7 @@ from tests.test_execution_e2e import allow_unknown_news, stack  # noqa: F401 (fi
 from tests.test_mt5_agent import engine  # noqa: F401 (fixture)
 
 UTC = timezone.utc
+from tests.test_api import client  # noqa: E402,F401 (fixture)
 
 
 @pytest.fixture
@@ -173,6 +174,39 @@ def test_trading_role_executes_only_new_confirmed_signals_once(stack):
     assert len(fake.positions) == 1
 
 
+def test_trading_role_never_executes_a_direction_the_review_did_not_confirm(stack):
+    """Phase 15: a stored review in the other direction (the gateway's boundaries already refuse that) is still
+    never executed, in either direction."""
+    fake, bridge = stack
+    allow_unknown_news()
+    assert legacy.startup_checks(bridge)[0]
+    enable_auto(True)
+    started = datetime.now(UTC)
+    make_signal(started + timedelta(seconds=1), decision="BUY", review="SELL")
+    make_signal(started + timedelta(seconds=1), decision="SELL", review="BUY")
+    roles.trading_cycle(legacy.auto_execute_factory(bridge), started)
+    assert orders() == 0 and not fake.positions
+
+
+def test_signals_from_while_auto_trading_was_off_are_never_executed_later(stack):
+    """Phase 15 (found end-to-end): a candidate produced while auto trading was off stayed NEW and was executed as soon
+    as auto trading was switched on. Only signals created after the switch are executed."""
+    fake, bridge = stack
+    allow_unknown_news()
+    assert legacy.startup_checks(bridge)[0]
+    started = datetime.now(UTC)
+    while_off = make_signal(started + timedelta(seconds=1))
+    switched_on = started + timedelta(seconds=2)
+    with session_scope() as db:
+        st = tr.get_state(db)
+        st.auto_trading, st.auto_trading_since = True, switched_on
+    after = make_signal(switched_on + timedelta(seconds=1))
+    roles.trading_cycle(legacy.auto_execute_factory(bridge), started)
+    with session_scope() as db:
+        executed = {o.signal_id for o in db.scalars(select(TradeOrder))}
+    assert executed == {after} and while_off not in executed
+
+
 def test_trading_role_respects_auto_trading_off(stack):
     fake, bridge = stack
     allow_unknown_news()
@@ -205,3 +239,26 @@ def test_relinking_rotates_the_credential_fingerprint(engine, tmp_path, monkeypa
     k2 = roles.current_agent_key()
     assert k1 and k2 and k1[0] == k2[0] and k1[1] != k2[1]
     assert roles.current_agent_id() == k1[0]
+
+
+def test_switching_auto_trading_on_records_when(client):
+    """Phase 15: the API records the OFF->ON switch; re-sending ON does not move it."""
+    from tests.test_api import h, login
+    from tests.test_trade_intelligence import accounts
+    demo, _ = accounts()
+    with session_scope() as db:
+        from app.db.models import TradingAccount
+        a = db.get(TradingAccount, demo)
+        a.is_active, a.verified = True, True
+    login(client, "admin")
+    assert client.post("/api/control/auto-trading", json={"enabled": True}, headers=h(client)).status_code == 200
+    with session_scope() as db:
+        first = tr.get_state(db).auto_trading_since
+    assert first is not None
+    client.post("/api/control/auto-trading", json={"enabled": True}, headers=h(client))
+    with session_scope() as db:
+        assert tr.get_state(db).auto_trading_since == first
+    client.post("/api/control/auto-trading", json={"enabled": False}, headers=h(client))
+    client.post("/api/control/auto-trading", json={"enabled": True}, headers=h(client))
+    with session_scope() as db:
+        assert tr.get_state(db).auto_trading_since > first
