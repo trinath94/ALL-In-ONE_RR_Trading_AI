@@ -44,6 +44,8 @@ class AIProvider(Base):
     max_retries: Mapped[int] = mapped_column(Integer, default=2)
     price_in_per_mtok: Mapped[float | None] = mapped_column(Float)
     price_out_per_mtok: Mapped[float | None] = mapped_column(Float)
+    # Phase 14: optional client-side limit; above it the gateway moves to the next provider instead of calling
+    max_requests_per_minute: Mapped[int | None] = mapped_column(Integer)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -62,7 +64,8 @@ class AIUsage(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     task: Mapped[str] = mapped_column(String(48), index=True)
     provider: Mapped[str] = mapped_column(String(64), index=True)
-    model: Mapped[str] = mapped_column(String(96))
+    model: Mapped[str] = mapped_column(String(96))               # the model the provider reports it served
+    requested_model: Mapped[str | None] = mapped_column(String(96))  # Phase 14: the model the route asked for
     status: Mapped[str] = mapped_column(String(24))            # ok | error | invalid_output | rate_limited | skipped
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)

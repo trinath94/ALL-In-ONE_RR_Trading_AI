@@ -1,6 +1,7 @@
 "use client";
 import { RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { ResearchSummaryPanel } from "@/components/AiText";
 import { ci, DriftPanel, JobsPanel, ModelsPanel, MonthlyLine, RecommendationsPanel, ResearchLab, STAGE_TONE, Verdict } from "@/components/Intel";
 import { can, PageTitle, useMe } from "@/components/Shell";
 import { Badge, Btn, ErrorLine, inputCls, Panel, Stat, Table, toneOf } from "@/components/ui";
@@ -60,7 +61,7 @@ export default function Learning() {
           </div>
         </Panel>
       </div>
-      <div className="mt-3 space-y-3"><ResearchLab /><ModelsPanel /><div className="grid gap-3 xl:grid-cols-2"><DriftPanel /><RecommendationsPanel /></div><JobsPanel /></div>
+      <div className="mt-3 space-y-3"><ResearchLab /><ModelsPanel /><div className="grid gap-3 xl:grid-cols-2"><DriftPanel /><RecommendationsPanel /></div><ResearchSummaryPanel /><JobsPanel /></div>
     </div>
   );
 }

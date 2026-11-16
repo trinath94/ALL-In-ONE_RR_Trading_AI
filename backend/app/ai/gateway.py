@@ -2,7 +2,7 @@
 
 One path for every AI call, whatever the provider:
 
-1. **Route.** The task's route (console: AI Providers) lists providers and models in order. With no route, the
+1. **Route.** The task's route (console: AI Studio) lists providers and models in order. With no route, the
    original behaviour applies: Claude with RR_ANTHROPIC_API_KEY and RR_CLAUDE_MODEL, if a key is set.
 2. **Redact.** Keys that look like credentials (password, secret, token, API key, login...) are removed from the
    payload before it leaves the engine, at any depth. Broker passwords and private credentials never reach a provider.
@@ -25,7 +25,6 @@ import time
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, ValidationError
-from sqlalchemy import select
 
 from app.ai.providers import AnthropicProvider, OpenAICompatibleProvider, ProviderError
 from app.core.config import get_settings
@@ -42,8 +41,9 @@ TASKS = {
     "research_summary": "Research summarisation",
     "diagnostics": "Operational diagnostics and provider tests",
 }
-# Tasks the engine calls today. The others can be routed, and are used by later phases.
-WIRED_TASKS = ("candidate_review", "strategy_discovery", "trade_research", "diagnostics")
+# Tasks the engine calls (Phase 14: all of them).
+WIRED_TASKS = ("candidate_review", "strategy_discovery", "trade_research", "learning_explanation", "research_summary",
+               "diagnostics")
 ENV_PROVIDER = "anthropic (RR_ANTHROPIC_API_KEY)"
 MAX_RETRY_AFTER = 30.0
 COOLDOWN_S = 120
@@ -81,6 +81,7 @@ class Hop:
     max_retries: int
     price_in: float | None
     price_out: float | None
+    rpm: int | None = None          # Phase 14: optional client-side requests-per-minute limit
 
 
 def _decrypt(enc: str | None) -> str | None:
@@ -106,7 +107,7 @@ def chain_for(task: str) -> list[Hop]:
                     log.warning("provider %s: stored key unreadable (%s)", p.name, type(exc).__name__)
                     continue
                 hops.append(Hop(p.name, p.kind, item.get("model") or "", p.base_url, key, float(p.timeout_s),
-                                int(p.max_retries), p.price_in_per_mtok, p.price_out_per_mtok))
+                                int(p.max_retries), p.price_in_per_mtok, p.price_out_per_mtok, p.max_requests_per_minute))
             return hops
     if s.anthropic_api_key:
         return [Hop(ENV_PROVIDER, "anthropic", s.claude_model, None, s.anthropic_api_key, 180.0, 2, None, None)]
@@ -123,6 +124,22 @@ def _provider(h: Hop, factory):
     if h.kind == "anthropic":
         return AnthropicProvider(h.api_key, h.timeout_s)
     return OpenAICompatibleProvider(h.base_url or "", h.api_key, h.timeout_s)
+
+
+def _take_slot(h: Hop) -> bool:
+    """Client-side rate limit (Phase 14): False when this provider already made ``rpm`` requests this minute. If Redis
+    is unreachable the call is allowed (the provider's own 429 handling still applies)."""
+    if not h.rpm:
+        return True
+    try:
+        from app.services.events import get_redis
+        r = get_redis()
+        key = f"rr:ai:rpm:{h.name}:{int(time.time() // 60)}"
+        n = r.incr(key)
+        r.expire(key, 90)
+        return int(n) <= h.rpm
+    except Exception:  # noqa: BLE001
+        return True
 
 
 def _cooling(name: str) -> bool:
@@ -163,7 +180,8 @@ def _record(task: str, h: Hop, model: str, status: str, tin: int, tout: int, lat
         cost = round(tin / 1e6 * h.price_in + tout / 1e6 * h.price_out, 6)
     try:
         with session_scope() as db:
-            db.add(AIUsage(task=task, provider=h.name, model=model or h.model or "?", status=status, input_tokens=tin,
+            db.add(AIUsage(task=task, provider=h.name, model=model or h.model or "?", requested_model=h.model or None,
+                           status=status, input_tokens=tin,
                            output_tokens=tout, cost=cost, latency_ms=round(latency, 1), attempts=attempts,
                            error=(error or None) and error[:1000], fallback_from=fallback_from))
     except Exception:  # noqa: BLE001 - accounting must not break the call
@@ -193,6 +211,9 @@ def run_hops(task: str, hops: list[Hop], system: str, user: dict, schema: dict, 
             continue
         attempts, last = 0, None
         while attempts <= h.max_retries:
+            if not _take_slot(h):
+                last = ProviderError(f"local limit of {h.rpm} requests per minute reached", "local_limit")
+                break
             attempts += 1
             t0 = time.perf_counter()
             try:
@@ -221,9 +242,11 @@ def run_hops(task: str, hops: list[Hop], system: str, user: dict, schema: dict, 
                          "output_tokens": comp.output_tokens, "latency_ms": comp.latency_ms, "attempts": attempts,
                          "fallback_from": previous}
         if last is not None:
-            status = "rate_limited" if last.kind == "rate_limited" else "error"
-            _record(task, h, h.model, status, 0, 0, (time.perf_counter() - t0) * 1000, attempts, str(last), previous)
-            _note_failure(h.name, last.kind, last.retry_after)
+            status = "rate_limited" if last.kind in ("rate_limited", "local_limit") else "error"
+            _record(task, h, h.model, status, 0, 0, (time.perf_counter() - t0) * 1000 if attempts else 0, attempts,
+                    str(last), previous)
+            if last.kind != "local_limit":          # our own limit is not a provider failure
+                _note_failure(h.name, last.kind, last.retry_after)
             errors.append(f"{h.name}: {last}")
         previous = h.name
     raise GatewayError("; ".join(errors) or "no provider produced a valid answer")

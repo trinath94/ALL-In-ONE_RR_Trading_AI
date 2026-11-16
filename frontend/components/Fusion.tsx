@@ -1,4 +1,5 @@
 "use client";
+import { ExplainButton } from "@/components/AiText";
 import { Badge, dirTone, Panel, Table } from "@/components/ui";
 import { fmt } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
@@ -14,7 +15,7 @@ export function EvidenceBadge({ e }: { e: string }) {
 }
 
 /** Part 13: the fused decision for one analysis, every factor, and the original engine's decision (the benchmark). */
-export function FusionDetail({ f }: { f: any }) {
+export function FusionDetail({ f, analysisId }: { f: any; analysisId?: number | null }) {
   if (!f) return <div className="text-[11px] text-dim">No fused decision recorded for this signal (generated before Phase 13).</div>;
   if (f.error) return <div className="text-[11px] text-warn">Fusion unavailable for this analysis: {f.error}</div>;
   const changed = f.decision !== f.benchmark.decision;
@@ -38,6 +39,7 @@ export function FusionDetail({ f }: { f: any }) {
           { k: "effect", h: "Effect", r: (x) => x.effect === "explains" ? <span className="text-dim">explains</span> : <span className="text-warn">{x.effect.replace(/_/g, " ")}</span> },
           { k: "detail", h: "Evidence", cls: "whitespace-normal", sort: false }, { k: "source", h: "Source", r: (x) => <span className="text-dim">{x.source}</span> }]} />
       <p className="mt-1 text-dim">{f.explanation}</p>
+      {analysisId ? <ExplainButton key={analysisId} subject="fusion" id={analysisId} /> : null}
     </div>
   );
 }

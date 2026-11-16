@@ -263,7 +263,7 @@ def experiment_rollback(exp_id: int, user: User = Depends(require("strategy.mana
 def experiment_develop(exp_id: int, user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
     from app.ai import gateway as _gw
     if not _gw.configured("strategy_discovery"):
-        raise HTTPException(409, "no AI provider is configured for strategy discovery (AI Providers page)")
+        raise HTTPException(409, "no AI provider is configured for strategy discovery (AI Studio page)")
     from app.agents.claude_agent import AgentError
     from app.agents.strategy_discovery import agent
     e = db.get(StrategyExperiment, exp_id)
@@ -279,7 +279,7 @@ def experiment_develop(exp_id: int, user: User = Depends(require("strategy.manag
 def research(user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
     from app.ai import gateway as _gw
     if not _gw.configured("strategy_discovery"):
-        raise HTTPException(409, "no AI provider is configured for strategy discovery (AI Providers page)")
+        raise HTTPException(409, "no AI provider is configured for strategy discovery (AI Studio page)")
     from app.agents.claude_agent import AgentError
     from app.agents.strategy_discovery import agent
     summary = {d: {r.key: r.metrics.get("verdict") for r in perf.latest(db, "DEMO", d)} for d in ("strategy", "regime")}
@@ -484,7 +484,8 @@ def signal_intelligence(signal_id: int, _: User = Depends(current_user), db: Ses
     if not s:
         raise HTTPException(404)
     ar = db.get(AnalysisResult, s.analysis_id) if s.analysis_id else None
-    return {"signal_id": s.id, "intelligence": ((ar.score or {}).get("intelligence") if ar else None) or {},
+    return {"signal_id": s.id, "analysis_id": s.analysis_id,
+            "intelligence": ((ar.score or {}).get("intelligence") if ar else None) or {},
             # Phase 13: the fused decision, its evidence status and every factor, beside the original engine's
             "fusion": (ar.score or {}).get("fusion") if ar else None}
 
@@ -568,7 +569,7 @@ def trade_research(mode: str = "DEMO", user: User = Depends(require("strategy.ma
     from app.orchestration.orchestrator import record
     _mode(mode)
     if not gateway.configured("trade_research"):
-        raise HTTPException(409, "no AI provider is configured for trade research (AI Providers page)")
+        raise HTTPException(409, "no AI provider is configured for trade research (AI Studio page)")
     trades = perf.load_trades(db, mode)
     if not trades:
         raise HTTPException(409, f"no closed {mode} trades to research")
@@ -598,6 +599,77 @@ def trade_research(mode: str = "DEMO", user: User = Depends(require("strategy.ma
            output={"findings": len(res.findings), "hypotheses": len(res.hypotheses_to_test), "recommendation_id": rec.id},
            evidence={"ai_output": "schema-validated; stored as an OPEN recommendation, applied to nothing"})
     audit(db, user.id, "TRADE_RESEARCH", mode, {"recommendation_id": rec.id, "trades": len(trades)})
+    return {"recommendation_id": rec.id, **res.model_dump(), "provider": meta["provider"], "model": meta["model"]}
+
+
+# ================================================================ AI STUDIO TASKS (Phase 14, Part 14) =====
+class ExplainIn(BaseModel):
+    subject: str = Field(pattern="^(model|fusion)$")      # a model / weight profile, or one fused decision (analysis id)
+    id: int
+
+
+@learning.post("/explain")
+def explain(body: ExplainIn, user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
+    """Plain-language explanation of a learning result through the AI gateway (task 'learning_explanation'). Shown as
+    AI-generated text; it is not evidence and changes nothing."""
+    from app.ai import gateway, studio
+    from app.orchestration.orchestrator import record
+    if not gateway.configured("learning_explanation"):
+        raise HTTPException(409, "no AI provider is configured for learning explanations (AI Studio page)")
+    facts = studio.model_facts(db, body.id) if body.subject == "model" else studio.fusion_facts(db, body.id)
+    if facts is None:
+        raise HTTPException(404, f"no {body.subject} with id {body.id}")
+    started = datetime.now(UTC)
+    try:
+        res, meta = gateway.run("learning_explanation", studio.EXPLANATION_SYSTEM, facts, studio.EXPLANATION_SCHEMA,
+                                studio.Explanation, max_tokens=4000)
+    except gateway.GatewayError as exc:
+        record("ai_learning", "learning_explanation", started_at=started, duration_ms=None, status="error",
+               errors=[str(exc)[:300]])
+        raise HTTPException(502, str(exc)) from None
+    record("ai_learning", "learning_explanation", started_at=started, duration_ms=meta["latency_ms"],
+           provider=meta["provider"], model=meta["model"], input_refs={"subject": body.subject, "id": body.id},
+           output={"key_points": len(res.key_points)},
+           evidence={"ai_output": "schema-validated; displayed as AI-generated text, used as evidence nowhere"})
+    audit(db, user.id, "AI_EXPLANATION", f"{body.subject}:{body.id}", {"provider": meta["provider"]})
+    return {**res.model_dump(), "subject": body.subject, "id": body.id, "provider": meta["provider"], "model": meta["model"],
+            "label": "AI-generated explanation of recorded results; not evidence"}
+
+
+class SummaryIn(BaseModel):
+    days: int = Field(default=14, ge=1, le=90)
+
+
+@learning.post("/research-summary")
+def research_summary(body: SummaryIn, user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
+    """Digest of recent research records through the AI gateway (task 'research_summary'), stored as an OPEN
+    recommendation for reading. It applies nothing."""
+    from app.ai import gateway, studio
+    from app.orchestration.orchestrator import record
+    if not gateway.configured("research_summary"):
+        raise HTTPException(409, "no AI provider is configured for research summaries (AI Studio page)")
+    facts = studio.research_records(db, body.days)
+    if not (facts["recommendations"] or facts["strategy_proposals"] or facts["models"]):
+        raise HTTPException(409, f"no research records in the last {body.days} days to summarise")
+    started = datetime.now(UTC)
+    try:
+        res, meta = gateway.run("research_summary", studio.SUMMARY_SYSTEM, facts, studio.SUMMARY_SCHEMA,
+                                studio.ResearchSummary, max_tokens=6000)
+    except gateway.GatewayError as exc:
+        record("strategy_discovery", "research_summary", started_at=started, duration_ms=None, status="error",
+               errors=[str(exc)[:300]])
+        raise HTTPException(502, str(exc)) from None
+    rec = AIRecommendation(source="research_summary", kind="RESEARCH_SUMMARY", subject=f"last {body.days} days",
+                           recommendation=res.headline,
+                           evidence={**res.model_dump(), "provider": meta["provider"], "model": meta["model"],
+                                     "inputs": {k: len(v) for k, v in facts.items() if isinstance(v, list)}})
+    db.add(rec)
+    db.flush()
+    record("strategy_discovery", "research_summary", started_at=started, duration_ms=meta["latency_ms"],
+           provider=meta["provider"], model=meta["model"], input_refs={"days": body.days},
+           output={"items": len(res.items), "recommendation_id": rec.id},
+           evidence={"ai_output": "schema-validated; stored as an OPEN recommendation for reading, applied to nothing"})
+    audit(db, user.id, "RESEARCH_SUMMARY", f"{body.days}d", {"recommendation_id": rec.id})
     return {"recommendation_id": rec.id, **res.model_dump(), "provider": meta["provider"], "model": meta["model"]}
 
 

@@ -15,7 +15,7 @@ export const NAV = [
   { href: "/", label: "Command Center", icon: LayoutDashboard },
   { href: "/ai", label: "AI Intelligence", icon: BrainCircuit },
   { href: "/agents", label: "Agent Control Room", icon: Network },
-  { href: "/ai-providers", label: "AI Providers", icon: KeyRound },
+  { href: "/ai-providers", label: "AI Studio", icon: KeyRound },
   { href: "/scanner", label: "Market Scanner", icon: Radar },
   { href: "/symbols", label: "Broker Symbols", icon: Globe },
   { href: "/signals", label: "Live Signals", icon: Zap },

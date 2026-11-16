@@ -37,7 +37,10 @@ def test_registry_is_closed_and_only_two_agents_touch_execution():
     assert {a.id for a in ag.REGISTRY if a.execution_path} == {"trade_execution", "trade_management"}
     assert all(a.kind in ("deterministic", "llm", "hybrid") for a in ag.REGISTRY)
     llm = {a.id for a in ag.REGISTRY if a.kind != "deterministic"}
-    assert llm == {"signal_quality", "strategy_discovery"}, "LLMs only for review of shortlisted candidates and research"
+    # LLMs only for review of shortlisted candidates, research (strategy discovery, trade research, summaries) and
+    # learning explanations (Phase 10 / 14) -- and never on the execution path
+    assert llm == {"signal_quality", "strategy_discovery", "post_trade_learning", "ai_learning"}
+    assert not any(ag.BY_ID[a].execution_path for a in llm)
     assert set(ag.SPECIALIST_AGENT.values()) | set(ag.LEARNER_AGENT.values()) <= set(ag.BY_ID)
     assert set(ag.LEARNER_AGENT) == {j.name for j in ls.JOBS}, "every learner job belongs to an agent"
 

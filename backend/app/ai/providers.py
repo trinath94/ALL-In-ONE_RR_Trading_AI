@@ -19,9 +19,30 @@ import httpx
 
 KINDS = ("anthropic", "openai_compatible")
 
+# Phase 14: named starting points for the console. They only pre-fill the form (kind, base URL, whether a key is
+# needed); the models offered come from the provider itself (``list_models``), never from a hard-coded list.
+PRESETS = [
+    {"id": "anthropic", "label": "Anthropic Claude (API)", "kind": "anthropic", "base_url": None, "key_required": True,
+     "note": "Needs an API key from the Anthropic Console. A Claude.ai subscription does not include API credits."},
+    {"id": "qwen_intl", "label": "Qwen (Alibaba Cloud Model Studio, international)", "kind": "openai_compatible",
+     "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "key_required": True,
+     "note": "OpenAI-compatible mode of DashScope. Needs a DashScope API key for the international region."},
+    {"id": "qwen_cn", "label": "Qwen (Alibaba Cloud Model Studio, mainland China)", "kind": "openai_compatible",
+     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "key_required": True,
+     "note": "OpenAI-compatible mode of DashScope, Beijing region. Keys are region-specific."},
+    {"id": "ollama", "label": "Ollama on this computer", "kind": "openai_compatible",
+     "base_url": "http://host.docker.internal:11434/v1", "key_required": False,
+     "note": "The engine runs in Docker, so 'localhost' would be the container: host.docker.internal reaches Ollama on "
+             "this PC. Pull a model first (ollama pull ...). Local models are free but slower and may follow the "
+             "required JSON less reliably; every answer is still validated."},
+    {"id": "openai_compatible", "label": "Other OpenAI-compatible API", "kind": "openai_compatible", "base_url": "",
+     "key_required": None, "note": "Any /chat/completions API with JSON mode."},
+]
+
 
 class ProviderError(Exception):
-    """kind: rate_limited | connection | api | refusal | truncated | invalid_output | error."""
+    """kind: rate_limited | local_limit (Phase 14: our own per-minute limit) | connection | api | refusal | truncated |
+    invalid_output | error."""
 
     def __init__(self, message: str, kind: str = "error", retry_after: float | None = None):
         super().__init__(message)
@@ -48,6 +69,12 @@ class AnthropicProvider:
     def __init__(self, api_key: str | None, timeout_s: float, client=None):
         import anthropic
         self.client = client or anthropic.Anthropic(api_key=api_key or None, max_retries=0, timeout=timeout_s)
+
+    def list_models(self) -> list[str]:
+        try:
+            return sorted(m.id for m in self.client.models.list(limit=100).data)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user as a provider error
+            raise ProviderError(f"model list unavailable: {type(exc).__name__}: {str(exc)[:160]}", "api") from exc
 
     def complete_json(self, system: str, user: dict, schema: dict, model: str, max_tokens: int) -> Completion:
         from app.agents.claude_agent import AgentError, ClaudeAgent
@@ -79,6 +106,20 @@ class OpenAICompatibleProvider:
             headers["Authorization"] = f"Bearer {api_key}"
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.http = httpx.Client(timeout=timeout_s, headers=headers, transport=transport)
+
+    def list_models(self) -> list[str]:
+        """GET {base}/models (OpenAI-compatible; Ollama and DashScope compatible mode implement it)."""
+        url = self.url.rsplit("/chat/completions", 1)[0] + "/models"
+        try:
+            r = self.http.get(url)
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"connection error: {exc}", "connection") from exc
+        if r.status_code >= 400:
+            raise ProviderError(f"model list rejected HTTP {r.status_code}: {r.text[:160]}", "api")
+        try:
+            return sorted({str(m["id"]) for m in r.json().get("data") or []})
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise ProviderError(f"unexpected model list shape: {exc}", "invalid_output") from exc
 
     def complete_json(self, system: str, user: dict, schema: dict, model: str, max_tokens: int) -> Completion:
         sys = (system + "\n\nRespond with ONLY one JSON object that conforms to this JSON Schema. No prose, no code "

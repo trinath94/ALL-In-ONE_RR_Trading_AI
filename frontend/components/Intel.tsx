@@ -1,4 +1,5 @@
 "use client";
+import { ExplainButton } from "@/components/AiText";
 // Shared Part 25/26 panels (models, research lab, drift, jobs). All data comes from /api/learning & /api/intelligence.
 import { useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
@@ -83,6 +84,7 @@ export function ModelsPanel() {
               : sel.metrics.baseline_comparison.note}</div>}
             <div className="mt-1 text-dim">Artefact signature: {sel.signature}{sel.signature === "unsigned" || sel.signature === "invalid" ? ": never loaded or promoted; retrain to obtain a signed model" : ""}</div>
             <div className="mt-1 text-dim">Dataset: {JSON.stringify(sel.dataset)}</div>
+            <ExplainButton key={sel.id} subject="model" id={sel.id} />
           </div>
           <div><div className="text-[10px] uppercase text-dim">Reliability diagram (final test)</div><ReliabilityChart bins={sel.calibration?.test_reliability?.bins} /></div>
         </div>

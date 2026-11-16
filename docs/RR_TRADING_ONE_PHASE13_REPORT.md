@@ -54,6 +54,7 @@ fused decision is stored with the analysis.
 | End-to-end on the running install (real scan cycles in the analysis container) | **13 / 13** (section 3) |
 | Backend suite, including the 215-strategy preservation test | **283 passed** (276 + 7 new) in one full run |
 | Frontend `next build` | Passed, 29 pages |
+| CI (`a8464b4`) | backend 43899962930, desktop (installer build + silent install/uninstall) 43899962816, frontend 43899962936, windows-connector 43899962953. All passed. |
 
 ## 2. Findings and fixes
 

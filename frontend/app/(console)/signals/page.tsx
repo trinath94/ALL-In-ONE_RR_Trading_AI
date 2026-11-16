@@ -13,7 +13,7 @@ export default function Signals() {
   const { data: rows, error, reload } = useApi<any[]>("/api/signals?limit=300", 30000, live.tick);
   const { data: st } = useApi<any>("/api/control/state");
   const [sel, setSel] = useState<any>(null);
-  const [fusion, setFusion] = useState<any>(undefined);
+  const [fusion, setFusion] = useState<any>(undefined); const [analysisId, setAnalysisId] = useState<number | null>(null);
   const [tf, setTf] = useState("H1");
   const [confirm, setConfirm] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -21,7 +21,7 @@ export default function Signals() {
   const [busy, setBusy] = useState(false);
   async function open(r: any) {
     setSel(await api(`/api/signals/${r.id}`)); setTf(r.timeframe); setMsg(null); setErr(null); setFusion(undefined);
-    try { setFusion((await api<any>(`/api/intelligence/signals/${r.id}`)).fusion); } catch { setFusion(null); }
+    try { const x = await api<any>(`/api/intelligence/signals/${r.id}`); setFusion(x.fusion); setAnalysisId(x.analysis_id); } catch { setFusion(null); setAnalysisId(null); }
   }
   async function execute() {
     setBusy(true); setErr(null);
@@ -56,7 +56,7 @@ export default function Signals() {
             <p className="mt-2 text-[12px] leading-relaxed">{sel.explanation}</p>
             <div className="mt-2 text-[11px] text-dim">Confidence: {sel.calibrated_confidence === null ? `not reported — only ${sel.confidence_sample} out-of-sample outcomes (min 30)` : fmt.pct(sel.calibrated_confidence, 1) + ` (n=${sel.confidence_sample})`}</div>
             <div className="mt-3 rounded border border-line p-2"><div className="mb-1 text-[10px] uppercase tracking-wider text-dim">Signal fusion (all evidence)</div>
-              {fusion === undefined ? <div className="text-[11px] text-dim">loading…</div> : <FusionDetail f={fusion} />}</div>
+              {fusion === undefined ? <div className="text-[11px] text-dim">loading…</div> : <FusionDetail f={fusion} analysisId={analysisId} />}</div>
             <div className="mt-2 flex flex-wrap gap-1">{sel.strategies.map((s: any, i: number) => <Badge key={i} tone="violet">{s.strategy}</Badge>)}</div>
             {sel.ai_review && (
               <div className="mt-3 rounded border border-violet/40 p-2 text-[11px]">

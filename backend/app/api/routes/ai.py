@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai import gateway
-from app.ai.providers import KINDS
+from app.ai.providers import KINDS, PRESETS, ProviderError
 from app.api.deps import current_user, require
 from app.db.models import User
 from app.db.models_ai import AgentRun, AIProvider, AITaskRoute, AIUsage
@@ -74,7 +74,7 @@ def _provider(p: AIProvider) -> dict:
     return {"id": p.id, "name": p.name, "kind": p.kind, "base_url": p.base_url, "has_key": bool(p.api_key_enc),
             "enabled": p.enabled, "timeout_s": p.timeout_s, "max_retries": p.max_retries,
             "price_in_per_mtok": p.price_in_per_mtok, "price_out_per_mtok": p.price_out_per_mtok,
-            "updated_at": p.updated_at}
+            "max_requests_per_minute": p.max_requests_per_minute, "updated_at": p.updated_at}
 
 
 class ProviderIn(BaseModel):
@@ -87,6 +87,7 @@ class ProviderIn(BaseModel):
     max_retries: int = Field(default=2, ge=0, le=5)
     price_in_per_mtok: float | None = Field(default=None, ge=0)
     price_out_per_mtok: float | None = Field(default=None, ge=0)
+    max_requests_per_minute: int | None = Field(default=None, ge=1, le=10000)
 
 
 class ProviderPatch(BaseModel):
@@ -97,6 +98,7 @@ class ProviderPatch(BaseModel):
     max_retries: int | None = Field(default=None, ge=0, le=5)
     price_in_per_mtok: float | None = Field(default=None, ge=0)
     price_out_per_mtok: float | None = Field(default=None, ge=0)
+    max_requests_per_minute: int | None = Field(default=None, ge=1, le=10000)
 
 
 def _check_url(kind: str, url: str | None) -> str | None:
@@ -129,7 +131,8 @@ def create_provider(body: ProviderIn, user: User = Depends(require("system.manag
     p = AIProvider(name=body.name, kind=body.kind, base_url=_check_url(body.kind, body.base_url),
                    api_key_enc=_encrypt(body.api_key) if body.api_key else None, enabled=body.enabled,
                    timeout_s=body.timeout_s, max_retries=body.max_retries, price_in_per_mtok=body.price_in_per_mtok,
-                   price_out_per_mtok=body.price_out_per_mtok, updated_by=user.id)
+                   price_out_per_mtok=body.price_out_per_mtok, max_requests_per_minute=body.max_requests_per_minute,
+                   updated_by=user.id)
     db.add(p)
     db.flush()
     audit(db, user.id, "AI_PROVIDER_CREATE", p.name, {**body.model_dump(exclude={"api_key"}), "key_set": bool(body.api_key)})
@@ -279,3 +282,57 @@ def test_provider(provider_id: int, model: str, user: User = Depends(require("sy
         return {"ok": False, "error": str(exc)}
     return {"ok": True, "model": meta["model"], "latency_ms": round(meta["latency_ms"], 1),
             "input_tokens": meta["input_tokens"], "output_tokens": meta["output_tokens"]}
+
+
+# ---- Phase 14: presets, model discovery, model version history ------------------------------------------------------
+@router.get("/ai/presets")
+def presets(_: User = Depends(current_user)):
+    return PRESETS
+
+
+@router.get("/ai/providers/{provider_id}/models")
+def provider_models(provider_id: int, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """The models this provider reports it offers (its own model list endpoint), to choose from per task."""
+    p = db.get(AIProvider, provider_id)
+    if p is None:
+        raise HTTPException(404)
+    try:
+        key = gateway._decrypt(p.api_key_enc)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(409, "the stored key cannot be decrypted (RR_AI_KEYS_KEY changed?)") from None
+    hop = gateway.Hop(p.name, p.kind, "", p.base_url, key, float(min(p.timeout_s, 30)), 0, None, None)
+    try:
+        models = gateway._provider(hop, None).list_models()
+    except ProviderError as exc:
+        return {"ok": False, "provider": p.name, "error": str(exc), "models": []}
+    return {"ok": True, "provider": p.name, "models": models}
+
+
+@router.get("/ai/models/history")
+def model_history(days: int = 90, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Model version history: per provider and requested model, every model version the provider actually served
+    (first and last seen, calls, by task), plus the audit trail of route and provider changes."""
+    from app.db.models import AuditLog
+    since = datetime.now(UTC) - timedelta(days=min(max(days, 1), 365))
+    rows = db.execute(select(AIUsage.provider, AIUsage.requested_model, AIUsage.model, AIUsage.task, func.count(),
+                             func.min(AIUsage.created_at), func.max(AIUsage.created_at))
+                      .where(AIUsage.created_at >= since, AIUsage.status.in_(("ok", "invalid_output")))
+                      .group_by(AIUsage.provider, AIUsage.requested_model, AIUsage.model, AIUsage.task)).all()
+    groups: dict[tuple, dict] = {}
+    for prov, req, served, task, n, first, last in rows:
+        g = groups.setdefault((prov, req), {"provider": prov, "requested_model": req, "served": {}})
+        v = g["served"].setdefault(served, {"model": served, "calls": 0, "first_seen": first, "last_seen": last, "tasks": []})
+        v["calls"] += n
+        v["first_seen"], v["last_seen"] = min(v["first_seen"], first), max(v["last_seen"], last)
+        v["tasks"] = sorted(set(v["tasks"]) | {task})
+    out = []
+    for g in groups.values():
+        served = sorted(g["served"].values(), key=lambda v: v["first_seen"])
+        out.append({**g, "served": served, "versions": len(served),
+                    "changed": len(served) > 1, "current": served[-1]["model"] if served else None})
+    changes = [{"at": a.created_at, "action": a.action, "target": a.target, "details": a.detail, "user_id": a.user_id}
+               for a in db.scalars(select(AuditLog).where(AuditLog.action.in_(
+                   ("AI_ROUTE_SET", "AI_PROVIDER_CREATE", "AI_PROVIDER_UPDATE")), AuditLog.created_at >= since)
+                   .order_by(AuditLog.id.desc()).limit(200))]
+    return {"days": days, "models": sorted(out, key=lambda g: (g["provider"], g["requested_model"] or "")),
+            "configuration_changes": changes}
