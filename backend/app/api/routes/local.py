@@ -89,6 +89,8 @@ def status(db: Session = Depends(get_db)):
             "live_approved": bool(active.live_approved_by)},
         "live_accounts_approved": db.scalar(select(func.count(TradingAccount.id)).where(
             TradingAccount.mode == "LIVE", TradingAccount.live_approved_by.isnot(None))) or 0,
+        # Phase 18 first-run wizard: is any AI task routed to a provider (or the RR_ANTHROPIC_API_KEY fallback set)?
+        "ai_configured": _ai_configured(),
         "connector": None if agent is None else {
             "online": relay.is_online(agent.id), "login": mask(acct.get("login")), "server": acct.get("server"),
             "account_type": acct.get("account_type"), "live_authorized_on_pc": bool(ast.get("live_authorized")),
@@ -163,3 +165,11 @@ def demo_account(body: DemoAccountIn, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "created": created, "account_id": a.id, "mode": a.mode, "login": mask(a.login), "server": a.server,
             "agent_id": agent.id}
+
+
+def _ai_configured() -> bool:
+    try:
+        from app.ai import gateway
+        return any(gateway.configured(t) for t in gateway.TASKS)
+    except Exception:  # noqa: BLE001 - a status field; unknown reads as not configured
+        return False

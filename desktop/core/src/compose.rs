@@ -15,6 +15,25 @@ pub const WAIT_TIMEOUT_SECS: u32 = 300;
 pub const STOP_TIMEOUT_SECS: u32 = 30;
 /// Where a backup is placed inside the database container for `pg_restore` (Phase 17).
 pub const RESTORE_FILE: &str = "/tmp/rr-restore.dump";
+/// Phase 18: the backup converted to SQL inside the database container, applied by `psql` in one transaction.
+pub const RESTORE_SQL: &str = "/tmp/rr-restore.sql";
+/// Phase 18: the restore replaces the whole `public` schema, in the same transaction as the backup's SQL. `pg_restore
+/// --clean` only drops the objects the *backup* knows about, so an older backup (e.g. the Ubuntu server's schema 0003)
+/// could not be restored over a newer database: newer tables still referenced the tables being dropped.
+pub const RESET_SCHEMA: &str = "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION pg_database_owner; \
+    GRANT USAGE ON SCHEMA public TO PUBLIC;";
+/// Phase 18: scratch database an import is verified in before the real database is replaced.
+pub const SCRATCH_DB: &str = "rr_import_check";
+/// Phase 18: exact row count of every table (one statement, no input).
+pub const COUNT_ALL_TABLES: &str = "SELECT table_name, (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM %I', \
+    table_name), false, true, '')))[1]::text FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' \
+    ORDER BY 1";
+/// Phase 18: an imported database starts like a new installation (DEMO, auto trading OFF, LIVE approvals cleared,
+/// reconciliation required), recorded in the audit trail.
+pub const RESET_FOR_NEW_INSTALLATION: &str = "BEGIN; UPDATE trading_state SET active_mode = 'DEMO', auto_trading = false, \
+    startup_checks_passed = false; UPDATE trading_accounts SET live_approved_by = NULL, live_approved_at = NULL, is_active = false \
+    WHERE mode = 'LIVE'; INSERT INTO audit_logs (action, target, detail, created_at) VALUES ('DATABASE_IMPORTED', 'desktop', \
+    '{\"reset\": \"DEMO, auto trading off, LIVE approvals cleared, reconciliation required\"}', now()); COMMIT;";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compose {
@@ -63,19 +82,36 @@ impl Compose {
         v
     }
 
-    /// Phase 17: restore in one transaction (all or nothing), replacing existing objects.
-    pub fn pg_restore(&self) -> Vec<String> {
-        self.with(&["exec", "-T", "postgres", "pg_restore", "-U", "rr", "-d", "rr_trading", "--clean", "--if-exists",
-            "--no-owner", "--single-transaction", RESTORE_FILE], &[])
+    /// Phase 18: convert the copied backup to SQL. Reading the whole dump first means a damaged file fails here,
+    /// before the database is touched.
+    pub fn pg_restore_to_sql(&self) -> Vec<String> {
+        self.with(&["exec", "-T", "postgres", "pg_restore", "--no-owner", "--exit-on-error", "-f", RESTORE_SQL, RESTORE_FILE], &[])
+    }
+
+    /// Restore in one transaction (all or nothing): the schema is replaced and the backup applied, or nothing changes.
+    pub fn psql_restore(&self) -> Vec<String> {
+        self.with(&["exec", "-T", "postgres", "psql", "-U", "rr", "-d", "rr_trading", "-q", "-o", "/dev/null",
+            "--set=ON_ERROR_STOP=1", "--single-transaction", "-c", RESET_SCHEMA, "-f", RESTORE_SQL], &[])
     }
 
     pub fn remove_restore_file(&self) -> Vec<String> {
-        self.with(&["exec", "-T", "postgres", "rm", "-f", RESTORE_FILE], &[])
+        self.with(&["exec", "-T", "postgres", "rm", "-f", RESTORE_FILE, RESTORE_SQL], &[])
+    }
+
+    /// Phase 18: run one fixed SQL statement (a constant from this crate, never input) in a database of the stack.
+    pub fn psql(&self, database: &str, sql: &str) -> Vec<String> {
+        self.with(&["exec", "-T", "postgres", "psql", "-U", "rr", "-d", database, "--set=ON_ERROR_STOP=1", "-At", "-c", sql], &[])
+    }
+
+    /// Phase 18: restore the copied dump into the scratch database, stopping at the first error.
+    pub fn pg_restore_scratch(&self) -> Vec<String> {
+        self.with(&["exec", "-T", "postgres", "pg_restore", "-U", "rr", "-d", SCRATCH_DB, "--no-owner", "--exit-on-error",
+            RESTORE_FILE], &[])
     }
 
     /// Phase 17: after a restore, auto trading OFF and reconciliation required. Fixed SQL, no input.
     pub fn reset_trading_state(&self) -> Vec<String> {
-        self.with(&["exec", "-T", "postgres", "psql", "-U", "rr", "-d", "rr_trading", "-v", "ON_ERROR_STOP=1", "-c",
+        self.with(&["exec", "-T", "postgres", "psql", "-U", "rr", "-d", "rr_trading", "--set=ON_ERROR_STOP=1", "-c",
             "UPDATE trading_state SET auto_trading = false, startup_checks_passed = false"], &[])
     }
 
@@ -163,6 +199,22 @@ mod tests {
         for a in all_argvs().into_iter().filter(|a| a[1] != "version") {
             assert_eq!(&a[..5], &["compose", "-p", PROJECT, "-f", "/opt/rr/infrastructure/compose.yml"], "{a:?}");
         }
+    }
+
+    #[test]
+    fn database_commands_run_inside_the_postgres_container_only() {
+        let p = std::path::Path::new("/b/manual-1.dump");
+        for a in [c().copy_into_postgres(p), c().pg_restore_to_sql(), c().psql_restore(), c().psql(SCRATCH_DB, "SELECT 1"),
+                  c().pg_restore_scratch(), c().remove_restore_file(), c().reset_trading_state()] {
+            assert_eq!(&a[..5], &["compose", "-p", PROJECT, "-f", "/opt/rr/infrastructure/compose.yml"], "{a:?}");
+            if a[5] == "cp" { continue; }
+            assert_eq!(&a[5..8], &["exec", "-T", "postgres"], "{a:?}");
+            for bad in ["down", "-v", "--volumes", "prune", "kill", "--remove-orphans"] {
+                assert!(!a.iter().any(|x| x == bad), "{bad} in {a:?}");
+            }
+        }
+        let r = c().psql_restore();
+        assert!(r.contains(&"--single-transaction".to_string()) && r.contains(&"--set=ON_ERROR_STOP=1".to_string()), "{r:?}");
     }
 
     #[test]

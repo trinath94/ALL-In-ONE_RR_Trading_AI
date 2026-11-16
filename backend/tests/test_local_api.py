@@ -72,6 +72,7 @@ def test_status_reports_live_state_masked(client):
     assert s["state"]["active_mode"] == "DEMO" and s["state"]["auto_trading"] is False
     assert s["state"]["kill_switch"] is False and s["active_account"] is None and s["connector"] is None
     assert set(s["roles"]) == {"monitor", "analysis", "trading", "learner"}
+    assert s["ai_configured"] is False, "Phase 18 wizard: no AI provider configured in a fresh test database"
 
 
 def test_bootstrap_admin_once(client):

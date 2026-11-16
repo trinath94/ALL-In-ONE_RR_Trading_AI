@@ -9,6 +9,7 @@
   <script src="mt5.js" defer></script>
   <script src="engine.js" defer></script>
   <script src="backup.js" defer></script>
+  <script src="wizard.js" defer></script>
 </head>
 <body>
   <header class="top">
@@ -18,6 +19,13 @@
 
   <main>
     <div id="banner" class="banner" hidden></div>
+
+    <section class="card" id="wizard" aria-labelledby="h-wizard">
+      <div class="row"><h2 id="h-wizard">First-run setup</h2><button id="wizard-refresh" type="button">Refresh</button></div>
+      <p class="muted">Each step is checked against the running system. Do them in order; the sections below hold the buttons.</p>
+      <ol class="steps" id="wizard-steps"></ol>
+      <p id="wizard-next"></p>
+    </section>
 
     <section class="card" id="setup" aria-labelledby="h-setup" hidden>
       <h2 id="h-setup">First-time setup: create the administrator</h2>
@@ -110,6 +118,22 @@
           <button id="bk-cancel" type="button">Cancel</button></div>
       </div>
       <pre class="plan" id="bk-out" aria-live="polite"></pre>
+      <h3>Import from the previous Ubuntu server</h3>
+      <p class="muted">Use a dump made by the server's <code>scripts/backup.sh</code> (PostgreSQL custom format,
+        <code>rr_&lt;stamp&gt;.dump</code>), copied to this computer. It is first restored into a scratch database: if it does not
+        restore cleanly, nothing is replaced. Then a safety backup is taken, the dump is restored and migrated to this version, every
+        table's row count is compared with the verified dump, and the engine starts like a new installation (DEMO, auto trading OFF,
+        LIVE approvals cleared). Afterwards: sign in with the server's user accounts, link the MT5 connector on this PC, re-enter AI
+        provider keys and broker passwords (they were encrypted with the server's keys), and retrain models (the server's are unsigned here).</p>
+      <div class="row"><input id="imp-path" placeholder="C:\Users\you\Downloads\rr_20261101.dump" autocomplete="off" spellcheck="false">
+        <button id="imp-add" type="button">Add dump</button></div>
+      <div class="confirm" id="imp-confirm" hidden>
+        <label for="imp-phrase">Import <code id="imp-id"></code>? It replaces this installation's database (after a safety backup).
+          Type <code>IMPORT DATABASE</code> to continue.</label>
+        <div class="row"><input id="imp-phrase" autocomplete="off" spellcheck="false">
+          <button id="imp-go" type="button" class="danger">Import</button>
+          <button id="imp-cancel" type="button">Cancel</button></div>
+      </div>
     </section>
 
     <section class="card" aria-labelledby="h-paths">

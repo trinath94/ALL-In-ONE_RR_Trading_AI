@@ -2,7 +2,9 @@
 // Backup and Recovery (Phase 17). All dynamic text via textContent. Depends on helpers from app.js
 // (invoke, $, el, describeStep, OUTCOME, runAction). Restoring needs the typed phrase, checked again in the supervisor.
 
-const KIND_LABEL = { manual: "on request", "pre-migrate": "before a migration", "pre-restore": "before a restore" };
+const KIND_LABEL = { manual: "on request", "pre-migrate": "before a migration", "pre-restore": "before a restore",
+  import: "from the Ubuntu server" };
+let importId = null;
 let restoreId = null;
 
 function bkOut(text) {
@@ -37,9 +39,16 @@ async function refreshBackups() {
     tr.appendChild(el("td", new Date(b.created * 1000).toLocaleString()));
     tr.appendChild(el("td", size(b.bytes)));
     const td = el("td");
-    const btn = el("button", "Restore…");
+    const btn = el("button", b.kind === "import" ? "Import…" : "Restore…");
     btn.type = "button";
     btn.addEventListener("click", () => {
+      if (b.kind === "import") {
+        importId = b.id;
+        $("imp-id").textContent = b.id;
+        $("imp-phrase").value = "";
+        $("imp-confirm").hidden = false;
+        return;
+      }
       restoreId = b.id;
       $("bk-id").textContent = b.id;
       $("bk-phrase").value = "";
@@ -71,6 +80,40 @@ async function restoreBackup() {
   refreshBackups();
 }
 
+async function addImport() {
+  const path = $("imp-path").value.trim();
+  if (!path) return;
+  try {
+    importId = await invoke("backup_import_file", { path });
+    $("imp-id").textContent = importId;
+    $("imp-phrase").value = "";
+    $("imp-confirm").hidden = false;
+    bkOut(`Added ${importId}. Type the phrase to import it.`);
+    refreshBackups();
+  } catch (e) {
+    bkOut(`Not added: ${e}`);
+  }
+}
+
+async function runImport() {
+  const id = importId;
+  const phrase = $("imp-phrase").value;
+  $("imp-confirm").hidden = true;
+  bkOut(`Importing ${id}: running… (verification first; the engine is stopped during the restore)`);
+  try {
+    const rep = await invoke("backup_import", { backup: id, confirmation: phrase });
+    const lines = [`Import ${id}: ${rep.ok ? "completed and verified" : "FAILED"}`];
+    rep.steps.forEach((s, i) => {
+      lines.push(`  ${i + 1}. [${OUTCOME[s.outcome] || s.outcome}] ${describeStep(s.step)} (${(s.duration_ms / 1000).toFixed(1)} s)`);
+      if (s.detail) lines.push(`        ${s.detail}`);
+    });
+    bkOut(lines.join("\n"));
+  } catch (e) {
+    bkOut(`Import ${id}: ${e}`);
+  }
+  refreshBackups();
+}
+
 function initBackup() {
   $("bk-refresh").addEventListener("click", refreshBackups);
   $("bk-now").addEventListener("click", async () => {
@@ -78,6 +121,9 @@ function initBackup() {
     refreshBackups();
   });
   $("bk-go").addEventListener("click", restoreBackup);
+  $("imp-add").addEventListener("click", addImport);
+  $("imp-go").addEventListener("click", runImport);
+  $("imp-cancel").addEventListener("click", () => { $("imp-confirm").hidden = true; });
   $("bk-cancel").addEventListener("click", () => { $("bk-confirm").hidden = true; restoreId = null; });
   refreshBackups();
 }

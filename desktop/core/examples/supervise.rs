@@ -62,6 +62,15 @@ fn main() {
         }
         // Same calls as the desktop app's Backup and Recovery section (Phase 17).
         "backups" => serde_json::to_value(sup.list_backups()).unwrap(),
+        "import-file" => serde_json::to_value(sup.import_dump(std::path::Path::new(args.get(1).map(String::as_str).unwrap_or("")))
+            .unwrap_or_else(|e| fail(&e))).unwrap(),
+        "import" => {
+            let rep = sup.import(args.get(1).map(String::as_str).unwrap_or(""), args.get(2).map(String::as_str))
+                .unwrap_or_else(|e| fail(&e.to_string()));
+            let ok = rep.ok;
+            println!("{}", serde_json::to_string_pretty(&rep).unwrap());
+            std::process::exit(if ok { 0 } else { 1 });
+        }
         "restore" => {
             let rep = sup.restore(args.get(1).map(String::as_str).unwrap_or(""), args.get(2).map(String::as_str))
                 .unwrap_or_else(|e| fail(&e.to_string()));

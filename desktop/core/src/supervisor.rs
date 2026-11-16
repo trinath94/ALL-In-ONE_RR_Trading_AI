@@ -12,14 +12,16 @@
 //!   engine's `/api/health` through the loopback gateway whenever the API is running.
 //! * The native MT5 connector (a user-session process, never a container) is driven through [`NativeConnector`].
 
-use crate::actions::{restore_plan, valid_backup_id, Action, ActionError, BackupPurpose, Service, Step};
+use crate::actions::{import_plan, restore_plan, valid_backup_id, Action, ActionError, BackupPurpose, Service, Step};
+use crate::compose::{COUNT_ALL_TABLES, RESET_FOR_NEW_INSTALLATION, SCRATCH_DB};
+use std::collections::BTreeMap;
 use crate::compose::{self, Compose, ServiceStatus};
 use crate::health::{HealthState, ProbeResult};
 use crate::runner::{CommandOutput, CommandSpec, Runner};
 use crate::secrets::StackSecrets;
 use serde::Serialize;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const T_UP: Duration = Duration::from_secs(1800); // first start may build images
@@ -31,6 +33,8 @@ const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const WARN_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 pub const KEEP_PRE_MIGRATION_BACKUPS: usize = 10;
 pub const KEEP_MANUAL_BACKUPS: usize = 30;
+/// Phase 18: largest dump accepted for an import.
+const MAX_IMPORT_BYTES: u64 = 50_000_000_000;
 
 /// One backup in the backups folder (Phase 17).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -274,6 +278,115 @@ impl<'a> Supervisor<'a> {
         Ok(self.run_plan("restore_backup", plan))
     }
 
+    /// Phase 18: bring a dump from the previous Ubuntu server (its `scripts/backup.sh` output, PostgreSQL custom format)
+    /// into this installation's backups folder as `import-<time>.dump`. The file is only read and copied by this
+    /// process (never passed to a command); everything after this uses the backup id. Returns the id.
+    pub fn import_dump(&self, source: &Path) -> Result<String, String> {
+        let meta = std::fs::metadata(source).map_err(|e| format!("cannot read the file: {e}"))?;
+        if !meta.is_file() || meta.len() < 5 {
+            return Err("not a file, or empty".into());
+        }
+        if meta.len() > MAX_IMPORT_BYTES {
+            return Err(format!("larger than {} GB", MAX_IMPORT_BYTES / 1_000_000_000));
+        }
+        let mut head = [0u8; 5];
+        std::fs::File::open(source).and_then(|mut f| { use std::io::Read; f.read_exact(&mut head) })
+            .map_err(|e| format!("cannot read the file: {e}"))?;
+        if &head != b"PGDMP" {
+            return Err("not a PostgreSQL custom-format dump (make it with pg_dump -Fc, as the server's backup.sh does)".into());
+        }
+        std::fs::create_dir_all(&self.cfg.backups_dir).map_err(|e| format!("backup directory: {e}"))?;
+        let mut ts = now_secs();
+        while self.cfg.backups_dir.join(format!("import-{ts}.dump")).exists() {
+            ts += 1;
+        }
+        let id = format!("import-{ts}");
+        std::fs::copy(source, self.cfg.backups_dir.join(format!("{id}.dump"))).map_err(|e| format!("copy failed: {e}"))?;
+        Ok(id)
+    }
+
+    /// Phase 18: import a dump brought in with `import_dump` (typed phrase required). Runs the fixed `import_plan`.
+    pub fn import(&self, backup: &str, confirmation: Option<&str>) -> Result<PlanReport, ActionError> {
+        let plan = import_plan(backup, confirmation)?;
+        if !self.backup_files().iter().any(|b| b.id == backup) {
+            return Err(ActionError::Unknown(format!("import {backup} (not in the backups folder)")));
+        }
+        Ok(self.run_plan("import_database", plan))
+    }
+
+    fn table_counts(&self, database: &str) -> Result<BTreeMap<String, u64>, String> {
+        let out = self.run_ok(self.cfg.compose.psql(database, COUNT_ALL_TABLES), T_DUMP)?;
+        Ok(out.stdout.lines().filter_map(|l| {
+            let (t, n) = l.split_once('|')?;
+            Some((t.trim().to_string(), n.trim().parse().ok()?))
+        }).collect())
+    }
+
+    fn counts_file(&self, backup: &str) -> PathBuf {
+        self.cfg.backups_dir.join(format!("{backup}.counts.json"))
+    }
+
+    /// Restore into a scratch database and record every table's row count; the real database is not touched.
+    fn verify_dump(&self, backup: &str) -> (Outcome, String) {
+        if !valid_backup_id(backup) {
+            return (Outcome::Failed, "invalid backup id".into());
+        }
+        let file = self.cfg.backups_dir.join(format!("{backup}.dump"));
+        if let Err(e) = self.run_ok(self.cfg.compose.copy_into_postgres(&file), T_DUMP) {
+            return (Outcome::Failed, format!("copy into the database container failed: {e}"));
+        }
+        let drop_scratch = format!("DROP DATABASE IF EXISTS {SCRATCH_DB}");
+        let result = (|| {
+            self.run_ok(self.cfg.compose.psql("postgres", &drop_scratch), T_QUICK)?;
+            self.run_ok(self.cfg.compose.psql("postgres", &format!("CREATE DATABASE {SCRATCH_DB}")), T_QUICK)?;
+            self.run_ok(self.cfg.compose.pg_restore_scratch(), T_DUMP)
+                .map_err(|e| format!("the dump does not restore cleanly; nothing was replaced: {e}"))?;
+            let counts = self.table_counts(SCRATCH_DB)?;
+            if counts.is_empty() {
+                return Err("the dump contains no tables".into());
+            }
+            std::fs::write(self.counts_file(backup), serde_json::to_vec_pretty(&counts).unwrap_or_default())
+                .map_err(|e| format!("cannot record the row counts: {e}"))?;
+            Ok(counts)
+        })();
+        let _ = self.run_ok(self.cfg.compose.psql("postgres", &drop_scratch), T_QUICK);
+        let _ = self.run_ok(self.cfg.compose.remove_restore_file(), T_QUICK);
+        match result {
+            Ok(c) => (Outcome::Ok, format!("restored into a scratch database: {} tables, {} rows; nothing replaced yet",
+                                           c.len(), c.values().sum::<u64>())),
+            Err(e) => (Outcome::Failed, e),
+        }
+    }
+
+    /// After the real restore and the migrations: every table of the scratch restore has the same row count.
+    fn verify_restored(&self, backup: &str) -> (Outcome, String) {
+        let expected: BTreeMap<String, u64> = match std::fs::read(self.counts_file(backup)).ok()
+            .and_then(|b| serde_json::from_slice(&b).ok()) {
+            Some(c) => c,
+            None => return (Outcome::Failed, "no recorded row counts for this import".into()),
+        };
+        let actual = match self.table_counts("rr_trading") {
+            Ok(c) => c,
+            Err(e) => return (Outcome::Failed, e),
+        };
+        // No row may be lost. A table may only grow by the reference data this version's migrations and seed add
+        // (new permissions, roles, strategies); those are listed so the difference is visible.
+        let lost: Vec<String> = expected.iter().filter(|(t, n)| actual.get(*t).map_or(true, |a| a < *n))
+            .map(|(t, n)| format!("{t}: expected {n}, found {}", actual.get(t).map(|x| x.to_string()).unwrap_or("no table".into())))
+            .collect();
+        let grown: Vec<String> = expected.iter()
+            .filter_map(|(t, n)| actual.get(t).filter(|a| *a > n).map(|a| format!("{t} +{}", a - n)))
+            .collect();
+        if lost.is_empty() {
+            let added = if grown.is_empty() { String::new() } else { format!(" (added by this version: {})", grown.join(", ")) };
+            (Outcome::Ok, format!("no row lost: all {} tables of the verified dump present with at least their {} rows{added}; \
+                                   {} new tables from migrations", expected.len(), expected.values().sum::<u64>(),
+                                  actual.len().saturating_sub(expected.len())))
+        } else {
+            (Outcome::Failed, format!("rows lost in the import: {}", lost.join("; ")))
+        }
+    }
+
     fn restore_database(&self, backup: &str) -> (Outcome, String) {
         if !valid_backup_id(backup) {
             return (Outcome::Failed, "invalid backup id".into());
@@ -288,7 +401,8 @@ impl<'a> Supervisor<'a> {
         if let Err(e) = self.run_ok(self.cfg.compose.copy_into_postgres(&file), T_DUMP) {
             return (Outcome::Failed, format!("copy into the database container failed: {e}"));
         }
-        let res = self.run_ok(self.cfg.compose.pg_restore(), T_DUMP);
+        let res = self.run_ok(self.cfg.compose.pg_restore_to_sql(), T_DUMP)
+            .and_then(|_| self.run_ok(self.cfg.compose.psql_restore(), T_DUMP));
         let _ = self.run_ok(self.cfg.compose.remove_restore_file(), T_QUICK);
         match res {
             Ok(_) => (Outcome::Ok, format!("restored {backup} (single transaction)")),
@@ -433,6 +547,12 @@ impl<'a> Supervisor<'a> {
                 }
             }
             Step::RestoreDatabase { backup } => self.restore_database(backup),
+            Step::VerifyDump { backup } => self.verify_dump(backup),
+            Step::VerifyRestored { backup } => self.verify_restored(backup),
+            Step::ResetForNewInstallation => match self.run_ok(self.cfg.compose.psql("rr_trading", RESET_FOR_NEW_INSTALLATION), T_QUICK) {
+                Ok(_) => (Outcome::Ok, "DEMO, auto trading OFF, LIVE approvals cleared, reconciliation required (audited)".into()),
+                Err(e) => (Outcome::Failed, e),
+            },
             Step::ResetTradingState => match self.run_ok(self.cfg.compose.reset_trading_state(), T_QUICK) {
                 Ok(_) => (Outcome::Ok, "auto trading OFF; reconciliation required before any entry".into()),
                 Err(e) => (Outcome::Failed, e),
@@ -905,7 +1025,10 @@ mod tests {
         let safety = at(&|c| c.contains(&"pg_dump".to_string()));
         let stop = at(&|c| c[0] == "stop");
         let copy = at(&|c| c[0] == "cp");
-        let restore = at(&|c| c.contains(&"pg_restore".to_string()));
+        let to_sql = at(&|c| c.contains(&"pg_restore".to_string()));
+        let restore = at(&|c| c.contains(&"--single-transaction".to_string()));
+        assert!(to_sql < restore, "the whole dump is read before the database is touched");
+        assert!(cmds[restore].iter().any(|a| a.starts_with("DROP SCHEMA public CASCADE")), "{:?}", cmds[restore]);
         let reset = at(&|c| c.iter().any(|a| a.starts_with("UPDATE trading_state SET auto_trading = false")));
         let up_api = at(&|c| c[0] == "up" && c.contains(&"api".to_string()));
         assert!(safety < stop && stop < copy && copy < restore && restore < reset && reset < up_api, "{cmds:?}");
@@ -941,5 +1064,87 @@ mod tests {
         let rep = s.restore("manual-1700000000", Some(RESTORE_PHRASE)).unwrap();
         assert!(!rep.ok);
         assert!(!compose_cmds(&r).iter().any(|c| c.contains(&"pg_restore".to_string())));
+    }
+
+    // ---- Phase 18: import of the previous Ubuntu server's database -------------------------------------------------
+    use crate::actions::IMPORT_PHRASE;
+
+    fn counts_script(scratch: &'static str, real: &'static str) -> Script {
+        Box::new(move |s: &CommandSpec| {
+            if has(s, "ps") { ok(ALL_HEALTHY) }
+            else if has(s, crate::compose::COUNT_ALL_TABLES) && has(s, SCRATCH_DB) { ok(scratch) }
+            else if has(s, crate::compose::COUNT_ALL_TABLES) { ok(real) }
+            else { ok("29.0") }
+        })
+    }
+
+    #[test]
+    fn import_dump_copies_only_postgres_dumps_into_the_backups_folder() {
+        let e = env();
+        let r = fake(default_script(ALL_HEALTHY));
+        let s = sup(&e, &r, healthy_probe());
+        let src = e.cfg.data_dir.join("rr_20261101.dump");
+        std::fs::write(&src, b"PGDMP-ubuntu").unwrap();
+        let id = s.import_dump(&src).unwrap();
+        assert!(id.starts_with("import-") && valid_backup_id(&id));
+        assert!(s.list_backups().iter().any(|b| b.id == id && b.kind == "import"));
+        let txt = e.cfg.data_dir.join("notes.sql");
+        std::fs::write(&txt, b"DROP TABLE users;").unwrap();
+        assert!(s.import_dump(&txt).unwrap_err().contains("not a PostgreSQL custom-format dump"));
+        assert!(s.import_dump(&e.cfg.data_dir).is_err(), "a directory is refused");
+        assert!(r.calls.lock().unwrap().is_empty(), "bringing a file in runs no command");
+    }
+
+    #[test]
+    fn import_verifies_in_a_scratch_database_and_compares_row_counts() {
+        let e = env();
+        let r = fake(counts_script("users|2\ntrade_orders|7\nalembic_version|1", "users|2\ntrade_orders|7\nalembic_version|1\nai_usage|0"));
+        let s = sup(&e, &r, healthy_probe());
+        let src = e.cfg.data_dir.join("rr.dump");
+        std::fs::write(&src, b"PGDMP-ubuntu").unwrap();
+        let id = s.import_dump(&src).unwrap();
+        assert_eq!(s.import(&id, Some(RESTORE_PHRASE)).unwrap_err(), ActionError::ImportConfirmationRequired);
+        let rep = s.import(&id, Some(IMPORT_PHRASE)).unwrap();
+        assert!(rep.ok && rep.action == "import_database", "{rep:?}");
+        let vr = rep.steps.iter().find(|x| matches!(x.step, Step::VerifyRestored { .. })).unwrap();
+        assert!(vr.detail.contains("no row lost: all 3 tables") && vr.detail.contains("1 new tables"), "{}", vr.detail);
+        let cmds = compose_cmds(&r);
+        let scratch_restore = cmds.iter().position(|c| c.contains(&"pg_restore".to_string()) && c.contains(&SCRATCH_DB.to_string())).unwrap();
+        let real_restore = cmds.iter().position(|c| c.contains(&"--single-transaction".to_string())).unwrap();
+        let reset = cmds.iter().position(|c| c.iter().any(|a| a.contains("active_mode = 'DEMO'"))).unwrap();
+        assert!(scratch_restore < real_restore && real_restore < reset);
+        assert!(!cmds.iter().any(|c| c[0] == "up" && c.contains(&"trading-worker".to_string())));
+    }
+
+    #[test]
+    fn an_unrestorable_dump_never_touches_the_real_database() {
+        let e = env();
+        let r = fake(Box::new(|s: &CommandSpec| if has(s, "pg_restore") { fail("pg_restore: error: invalid TOC") }
+                              else if has(s, "ps") { ok(ALL_HEALTHY) } else { ok("29.0") }));
+        let s = sup(&e, &r, healthy_probe());
+        let src = e.cfg.data_dir.join("rr.dump");
+        std::fs::write(&src, b"PGDMP-broken").unwrap();
+        let id = s.import_dump(&src).unwrap();
+        let rep = s.import(&id, Some(IMPORT_PHRASE)).unwrap();
+        assert!(!rep.ok);
+        let cmds = compose_cmds(&r);
+        assert!(!cmds.iter().any(|c| c[0] == "stop"), "nothing was stopped");
+        assert!(!cmds.iter().any(|c| c.contains(&"--single-transaction".to_string())), "the real database was never restored");
+        assert!(!s.list_backups().iter().any(|b| b.kind == "pre-restore"), "it failed before the safety backup");
+    }
+
+    #[test]
+    fn a_lost_row_fails_the_import_but_added_reference_data_does_not() {
+        let e = env();
+        let r = fake(counts_script("users|2\ntrade_orders|7\npermissions|20", "users|2\ntrade_orders|6\npermissions|25"));
+        let s = sup(&e, &r, healthy_probe());
+        let src = e.cfg.data_dir.join("rr.dump");
+        std::fs::write(&src, b"PGDMP-ubuntu").unwrap();
+        let id = s.import_dump(&src).unwrap();
+        let rep = s.import(&id, Some(IMPORT_PHRASE)).unwrap();
+        assert!(!rep.ok);
+        let vr = rep.steps.iter().find(|x| matches!(x.step, Step::VerifyRestored { .. })).unwrap();
+        assert!(vr.outcome == Outcome::Failed && vr.detail.contains("trade_orders: expected 7, found 6"), "{}", vr.detail);
+        assert!(!vr.detail.contains("permissions"), "growth of reference data is not a loss");
     }
 }

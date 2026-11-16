@@ -19,6 +19,8 @@ use std::fmt;
 pub const START_WORKER_PHRASE: &str = "START TRADING WORKER";
 /// Phrase the operator must type to restore the database from a backup (Phase 17).
 pub const RESTORE_PHRASE: &str = "RESTORE DATABASE";
+/// Phrase the operator must type to import the database of the previous Ubuntu server (Phase 18).
+pub const IMPORT_PHRASE: &str = "IMPORT DATABASE";
 
 /// Services the supervisor manages. Roles follow decision D1 (Phase 1 report): the original monolithic worker
 /// loop is split into `Monitor` (heartbeat, sync, reconciliation, position protection), `Analysis` (scanner and
@@ -130,6 +132,43 @@ pub enum Step {
     RestoreDatabase { backup: String },
     /// Phase 17: after a restore, auto trading OFF and reconciliation required, whatever the backup contained.
     ResetTradingState,
+    /// Phase 18: restore the dump into a scratch database first and record every table's row count. If the dump cannot
+    /// be restored, the real database is never touched.
+    VerifyDump { backup: String },
+    /// Phase 18: after the real restore and the migrations, every table of the scratch restore must have the same row
+    /// count in the real database.
+    VerifyRestored { backup: String },
+    /// Phase 18: an imported database starts like a new installation: DEMO, auto trading OFF, LIVE approvals cleared,
+    /// reconciliation required (recorded in the audit trail).
+    ResetForNewInstallation,
+}
+
+/// The fixed plan of an import of the previous Ubuntu server's database (Phase 18): verified in a scratch database
+/// before anything is replaced, a safety backup, the restore, migrations to the current schema, row counts compared,
+/// then the state of a new installation. The trading worker is not restarted.
+pub fn import_plan(backup: &str, confirmation: Option<&str>) -> Result<Vec<Step>, ActionError> {
+    if confirmation != Some(IMPORT_PHRASE) {
+        return Err(ActionError::ImportConfirmationRequired);
+    }
+    if !backup.starts_with("import-") || !valid_backup_id(backup) {
+        return Err(ActionError::Unknown(format!("import {}", backup.chars().take(48).collect::<String>())));
+    }
+    use Step::*;
+    Ok(vec![
+        CheckPrerequisites,
+        StartServices { services: INFRA.to_vec() },
+        VerifyDump { backup: backup.to_string() },
+        BackupDatabase { purpose: BackupPurpose::PreRestore },
+        StopServices { services: stop_order(&[Service::TradingWorker, Service::Learner, Service::Analysis, Service::Monitor,
+            Service::Gateway, Service::Frontend, Service::Api]) },
+        RestoreDatabase { backup: backup.to_string() },
+        RunMigrations,
+        VerifyRestored { backup: backup.to_string() },
+        ResetForNewInstallation,
+        StartServices { services: BACKEND.to_vec() },
+        StartServices { services: vec![Service::Learner] },
+        VerifyHealth,
+    ])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -151,7 +190,7 @@ impl BackupPurpose {
 /// Backup ids are `<kind>-<unix seconds>` for the kinds this supervisor writes. Anything else (paths, dots,
 /// separators, other prefixes) is refused before a file name is ever built from it.
 pub fn valid_backup_id(id: &str) -> bool {
-    ["manual-", "pre-migrate-", "pre-restore-"].iter().any(|p| {
+    ["manual-", "pre-migrate-", "pre-restore-", "import-"].iter().any(|p| {
         id.strip_prefix(p).is_some_and(|ts| !ts.is_empty() && ts.len() <= 12 && ts.chars().all(|c| c.is_ascii_digit()))
     })
 }
@@ -165,6 +204,10 @@ pub fn restore_plan(backup: &str, confirmation: Option<&str>) -> Result<Vec<Step
     }
     if !valid_backup_id(backup) {
         return Err(ActionError::Unknown(format!("backup {}", backup.chars().take(48).collect::<String>())));
+    }
+    if backup.starts_with("import-") {
+        // An import is verified and reset to a new installation's state: only through `import_plan`.
+        return Err(ActionError::Unknown(format!("backup {backup}: use Import, which verifies it first")));
     }
     use Step::*;
     Ok(vec![
@@ -209,6 +252,8 @@ pub enum ActionError {
     ConfirmationRequired,
     #[error("restoring the database requires typing exactly: {RESTORE_PHRASE}")]
     RestoreConfirmationRequired,
+    #[error("importing a database requires typing exactly: {IMPORT_PHRASE}")]
+    ImportConfirmationRequired,
 }
 
 impl Action {
@@ -349,6 +394,27 @@ mod tests {
             })
             .flatten()
             .collect()
+    }
+
+    #[test]
+    fn import_is_verified_before_anything_is_replaced() {
+        assert_eq!(import_plan("import-1", None), Err(ActionError::ImportConfirmationRequired));
+        assert_eq!(import_plan("import-1", Some(RESTORE_PHRASE)), Err(ActionError::ImportConfirmationRequired));
+        assert!(matches!(import_plan("manual-1", Some(IMPORT_PHRASE)), Err(ActionError::Unknown(_))), "imports only");
+        assert!(matches!(restore_plan("import-1", Some(RESTORE_PHRASE)), Err(ActionError::Unknown(_))), "never unverified");
+        let plan = import_plan("import-1", Some(IMPORT_PHRASE)).unwrap();
+        assert!(!starts(&plan).contains(&Service::TradingWorker));
+        let pos = |want: &dyn Fn(&Step) -> bool| plan.iter().position(want).unwrap();
+        let verify = pos(&|s| matches!(s, Step::VerifyDump { .. }));
+        let safety = pos(&|s| matches!(s, Step::BackupDatabase { purpose: BackupPurpose::PreRestore }));
+        let stop = pos(&|s| matches!(s, Step::StopServices { .. }));
+        let restore = pos(&|s| matches!(s, Step::RestoreDatabase { .. }));
+        let migrate = pos(&|s| matches!(s, Step::RunMigrations));
+        let counts = pos(&|s| matches!(s, Step::VerifyRestored { .. }));
+        let reset = pos(&|s| matches!(s, Step::ResetForNewInstallation));
+        let start = pos(&|s| matches!(s, Step::StartServices { services } if services.contains(&Service::Api)));
+        assert!(verify < safety && safety < stop && stop < restore && restore < migrate && migrate < counts
+            && counts < reset && reset < start, "{plan:?}");
     }
 
     #[test]

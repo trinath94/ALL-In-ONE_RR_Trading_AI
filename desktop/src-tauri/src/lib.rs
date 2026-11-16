@@ -179,6 +179,25 @@ async fn backup_restore(state: State<'_, AppState>, backup: String, confirmation
     with_supervisor(&state, move |sup, _| sup.restore(&backup, confirmation.as_deref()).map_err(|e| e.to_string())).await
 }
 
+/// Phase 18: bring a dump of the previous Ubuntu server into the backups folder (read and copied, never executed).
+#[tauri::command]
+async fn backup_import_file(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    with_supervisor(&state, move |sup, _| sup.import_dump(std::path::Path::new(&path))).await
+}
+
+/// Phase 18: verified import of that dump, with the typed phrase (checked again inside the supervisor).
+#[tauri::command]
+async fn backup_import(state: State<'_, AppState>, backup: String, confirmation: Option<String>) -> Result<PlanReport, String> {
+    rr_one_core::actions::import_plan(&backup, confirmation.as_deref()).map_err(|e| e.to_string())?;
+    with_supervisor(&state, move |sup, _| sup.import(&backup, confirmation.as_deref()).map_err(|e| e.to_string())).await
+}
+
+/// Phase 18 first-run wizard: the prerequisite checks (Windows, Docker Desktop, WSL2, disk space, port).
+#[tauri::command]
+async fn prerequisites(state: State<'_, AppState>) -> Result<Vec<rr_one_core::supervisor::Check>, String> {
+    with_supervisor(&state, |sup, _| Ok(sup.prerequisites())).await
+}
+
 /// Live container states for the Services table.
 #[tauri::command]
 async fn service_status(state: State<'_, AppState>) -> Result<Vec<ServiceStatus>, String> {
@@ -411,7 +430,7 @@ pub fn run() {
         .manage(state)
         .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console,
             mt5_overview, mt5_detect, mt5_save_profile, mt5_select_profile, mt5_delete_profile, mt5_link,
-            engine_status, engine_bootstrap_admin, engine_use_demo_account, backup_list, backup_restore])
+            engine_status, engine_bootstrap_admin, engine_use_demo_account, backup_list, backup_restore, backup_import_file, backup_import, prerequisites])
         .setup(move |app| {
             build_tray(app.handle())?;
             if !start_minimized {

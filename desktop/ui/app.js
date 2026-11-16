@@ -43,6 +43,9 @@ function describeStep(s) {
     case "backup_database": return s.purpose === "pre_restore" ? "Safety backup of the current database" : "Back up the database";
     case "restore_database": return "Restore the database from " + s.backup + " (one transaction: all or nothing)";
     case "reset_trading_state": return "Auto trading OFF; reconciliation required before any entry";
+    case "verify_dump": return "Verify " + s.backup + " in a scratch database (nothing replaced yet)";
+    case "verify_restored": return "Compare every table's row count with the verified dump";
+    case "reset_for_new_installation": return "Start like a new installation: DEMO, auto trading OFF, LIVE approvals cleared";
     default: return s.step;
   }
 }

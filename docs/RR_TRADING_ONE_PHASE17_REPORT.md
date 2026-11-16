@@ -32,6 +32,7 @@ Phase 17 audited the console against every item, then:
 | Backend suite, including the 215-strategy preservation test | **302 passed** (295 + 7 new) in one full run |
 | Desktop core tests (Rust) | **98 passed** (91 + 7 new); clippy clean with warnings as errors |
 | Frontend `next build` | Passed, 34 pages (5 new) |
+| CI (`461dc3f`) | frontend 43945858386, backend 43945858657, desktop 43945858555: all passed |
 
 ## 2. Backup and Recovery
 
@@ -120,7 +121,7 @@ left behind still fails.
 * **The desktop window was not exercised in a real Windows session here.** The new Tauri commands are thin wrappers, tested through the supervisor and the `supervise` CLI. The Windows installer build in CI compiles them.
 * **Quote values on the scanner are those at the last scan,** labelled so. Live quotes are on the charts.
 * **Backups stay on the computer.** The page says to copy the backups folder to external storage; automatic off-machine copies are not implemented.
-* **Restore across versions:** an older backup is migrated forward. Restoring a backup from a *newer* version than the installed one fails at the migration step, with the database already replaced. The safety backup from step 2 restores the previous state.
+* **Restore across versions:** an older backup is migrated forward. **Correction (Phase 18):** this was only tested with same-version backups; restoring an older backup failed (safely, rolled back) because `pg_restore --clean` could not drop tables the newer schema still referenced. Fixed and verified in Phase 18 (report section 3). Restoring a backup from a *newer* version than the installed one fails at the migration step, with the database already replaced. The safety backup from step 2 restores the previous state.
 
 ## 7. Security implications
 

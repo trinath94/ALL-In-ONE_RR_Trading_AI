@@ -43,3 +43,7 @@ h3 { margin: 16px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600;
 .form label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
 .form input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
 .form .row { grid-column: 1 / -1; }
+/* Phase 18 first-run wizard */
+.badge.muted { opacity: .7; }
+ol.steps { margin: .4rem 0; padding-left: 1.2rem; display: grid; gap: .3rem; }
+#wizard.done { opacity: .75; }
