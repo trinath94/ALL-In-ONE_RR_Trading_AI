@@ -187,7 +187,9 @@ export function JobsPanel() {
           {can(me, "strategy.manage") && <button className="ml-1 text-cyan" onClick={async () => { await post(`/api/learning/jobs/${j.name}/run`); reload(); }}>run</button>}</span>))}</div>
       <Table rows={data?.history} empty="No jobs have run yet — start the learner service"
         cols={[{ k: "started_at", h: "Started", r: (j) => fmt.time(j.started_at) }, { k: "job", h: "Job" },
-          { k: "status", h: "Status", r: (j) => <Badge tone={j.status === "DONE" ? "neon" : j.status === "SKIPPED" ? "dim" : j.status === "RUNNING" ? "cyan" : "bear"}>{j.status}</Badge> },
+          { k: "status", h: "Status", r: (j) => <span><Badge tone={j.status === "DONE" ? "neon" : j.status === "SKIPPED" ? "dim" : j.status === "RUNNING" ? "cyan" : j.status === "CANCELLED" || j.status === "INTERRUPTED" ? "warn" : "bear"}>{j.status}</Badge>
+            {j.status === "RUNNING" && can(me, "strategy.manage") && <button className="ml-1 text-bear" title="Terminates the job's process (Phase 20)"
+              onClick={async () => { try { await post(`/api/learning/jobs/${j.job}/cancel`); } catch { /* already finished */ } reload(); }}>cancel</button>}</span> },
           { k: "attempts", h: "Tries" }, { k: "result", h: "Result", sort: false, r: (j) => <span className="block max-w-[420px] truncate text-dim">{j.error || JSON.stringify(j.result)}</span> }]} />
     </Panel>
   );

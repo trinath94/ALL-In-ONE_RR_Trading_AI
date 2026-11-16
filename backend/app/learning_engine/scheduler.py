@@ -4,10 +4,18 @@ Run: ``python -m app.learning_engine.scheduler`` (docker service ``learner``). A
 single learner. Every job run is a ``learning_jobs`` row with an idempotency key per period
 (``<job>:<bucket>``), so the same job/period never runs twice; failures retry up to MAX_ATTEMPTS; each
 run has a timeout. Jobs never place orders.
+
+Phase 20: the production jobs are **isolated**: each run is a separate process. A thread cannot be stopped, so before
+this a job that exceeded its timeout kept running in the background, was marked TIMEOUT, and was started again on the
+next loop while the first copy was still running (a slow job could pile up copies, competing for CPU and the
+database). An isolated run is terminated when it times out, when an operator cancels it, or when the learner stops,
+so it never overlaps itself. Ad-hoc ``Job``s keep the original in-process behaviour (``isolated=False``).
 """
 from __future__ import annotations
 
+import json
 import logging
+import multiprocessing
 import signal
 import threading
 import time
@@ -28,6 +36,26 @@ log = logging.getLogger("learner")
 UTC = timezone.utc
 LOCK = "rr:learner:lock"
 MAX_ATTEMPTS = 3
+POLL_SECONDS = 1.0          # isolated runs: how often the parent checks for a result, timeout, cancel or stop
+KILL_GRACE_SECONDS = 5.0    # SIGTERM first, then SIGKILL
+# CANCELLED (by an operator) is final for its period; TIMEOUT, FAILED and INTERRUPTED (learner stopping) may retry.
+FINAL = ("DONE", "RUNNING", "SKIPPED", "CANCELLED")
+
+
+_usage = None
+
+
+def _report_usage() -> None:
+    """Phase 20: the learner container's CPU and memory (it includes a running isolated job's process)."""
+    global _usage
+    if _usage is None:
+        from app.services.resources import Reporter
+        _usage = Reporter("learner")
+    _usage.tick()
+
+
+def cancel_key(name: str) -> str:
+    return f"rr:learner:cancel:{name}"
 
 
 @dataclass
@@ -37,6 +65,7 @@ class Job:
     timeout: int
     fn: Callable[[], dict]
     module: str = "strategy_optimisation"
+    isolated: bool = False   # Phase 20: run in its own process (fn must be a module-level function)
 
 
 def bucket(period: int, now: datetime | None = None) -> str:
@@ -44,7 +73,67 @@ def bucket(period: int, now: datetime | None = None) -> str:
     return str(t - t % period)
 
 
-def run_job(job: Job, now: datetime | None = None, force: bool = False) -> dict:
+def _isolated_child(fn: Callable[[], dict], conn) -> None:
+    """Child process of an isolated run: fresh imports, connections and logging; the result goes back as JSON."""
+    configure_logging()
+    try:
+        res = fn()
+        conn.send({"result": json.loads(json.dumps(res, default=str)) if res is not None else None})
+    except BaseException as exc:  # noqa: BLE001 - reported to the parent, which records it
+        log.exception("job failed")
+        conn.send({"error": repr(exc)[:2000]})
+    finally:
+        conn.close()
+
+
+def _run_isolated(job: Job, should_stop: Callable[[], bool]) -> tuple[dict, str | None]:
+    """Run ``job.fn`` in a separate process. Returns (box, forced status): forced is TIMEOUT, CANCELLED or INTERRUPTED
+    when the parent ended the run, else None (box holds "result" or "error")."""
+    ctx = multiprocessing.get_context("spawn")   # nothing inherited: no shared database sockets or locks
+    recv, send = ctx.Pipe(duplex=False)
+    proc = ctx.Process(target=_isolated_child, args=(job.fn, send), name=f"learner-{job.name}")
+    proc.start()
+    send.close()
+    r = get_redis()
+    r.delete(cancel_key(job.name))
+    deadline = time.monotonic() + job.timeout
+    box: dict = {}
+    forced = None
+    try:
+        while True:
+            _report_usage()
+            if recv.poll(POLL_SECONDS):
+                try:
+                    box.update(recv.recv())
+                except EOFError:
+                    box["error"] = f"the job process exited without a result (exit code {proc.exitcode})"
+                break
+            if not proc.is_alive() and not recv.poll(0):
+                box["error"] = f"the job process exited without a result (exit code {proc.exitcode})"
+                break
+            if time.monotonic() > deadline:
+                forced = "TIMEOUT"
+            elif r.get(cancel_key(job.name)):
+                r.delete(cancel_key(job.name))
+                forced = "CANCELLED"
+            elif should_stop():
+                forced = "INTERRUPTED"
+            if forced:
+                break
+    finally:
+        recv.close()
+        proc.join(0.5 if forced is None else 0)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(KILL_GRACE_SECONDS)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(KILL_GRACE_SECONDS)
+    return box, forced
+
+
+def run_job(job: Job, now: datetime | None = None, force: bool = False,
+            should_stop: Callable[[], bool] = lambda: False) -> dict:
     key = f"{job.name}:{'manual-' + str(time.time_ns()) if force else bucket(job.period_seconds, now)}"
     with session_scope() as db:
         row = db.scalar(select(LearningJob).where(LearningJob.idempotency_key == key))
@@ -53,28 +142,38 @@ def run_job(job: Job, now: datetime | None = None, force: bool = False) -> dict:
                                                   params={}).on_conflict_do_nothing(index_elements=["idempotency_key"]))
             db.flush()
             row = db.scalar(select(LearningJob).where(LearningJob.idempotency_key == key))
-        if row.status in ("DONE", "RUNNING", "SKIPPED") or row.attempts >= MAX_ATTEMPTS:
+        if row.status in FINAL or row.attempts >= MAX_ATTEMPTS:
             return {"skipped": True, "status": row.status}
         row.status, row.attempts, row.started_at = "RUNNING", row.attempts + 1, datetime.now(UTC)
         job_id = row.id
-    box: dict = {}
-
-    def target():
-        try:
-            box["result"] = job.fn()
-        except Exception as exc:  # noqa: BLE001
-            log.exception("job %s failed", job.name)
-            box["error"] = repr(exc)[:2000]
     started_at = datetime.now(UTC)
     agent_activity(job.module, "processing", f"learning job {job.name} started")
-    th = threading.Thread(target=target, daemon=True)
-    th.start()
-    th.join(job.timeout)
+    forced = None
+    if job.isolated:
+        box, forced = _run_isolated(job, should_stop)
+        alive = False
+    else:
+        box = {}
+
+        def target():
+            try:
+                box["result"] = job.fn()
+            except Exception as exc:  # noqa: BLE001
+                log.exception("job %s failed", job.name)
+                box["error"] = repr(exc)[:2000]
+        th = threading.Thread(target=target, daemon=True)
+        th.start()
+        th.join(job.timeout)
+        alive = th.is_alive()
     with session_scope() as db:
         row = db.get(LearningJob, job_id)
         row.finished_at = datetime.now(UTC)
-        if th.is_alive():
-            row.status, row.error = "TIMEOUT", f"exceeded {job.timeout}s"
+        if alive or forced == "TIMEOUT":
+            row.status, row.error = "TIMEOUT", f"exceeded {job.timeout}s" + (" (process terminated)" if forced else "")
+        elif forced == "CANCELLED":
+            row.status, row.error = "CANCELLED", "cancelled by an operator (process terminated)"
+        elif forced == "INTERRUPTED":
+            row.status, row.error = "INTERRUPTED", "the learner is stopping (process terminated); retried on the next start"
         elif "error" in box:
             row.status, row.error = "FAILED", box["error"]
         else:
@@ -100,7 +199,8 @@ def _record_agent_run(job: Job, key: str, status: str, box: dict, started_at: da
            status={"DONE": "ok", "SKIPPED": "skipped"}.get(status, "error"), input_refs={"job": key},
            output={k: v for k, v in res.items() if isinstance(v, (int, float, str, bool)) and k != "skipped"},
            evidence={"skipped_reason": res["skipped"]} if res.get("skipped") else {},
-           errors=[box["error"][:300]] if "error" in box else ([f"{status}"] if status == "TIMEOUT" else []))
+           errors=[box["error"][:300]] if "error" in box else
+           ([status] if status in ("TIMEOUT", "CANCELLED", "INTERRUPTED") else []))
 
 
 # ---------------------------------------------------------------- job implementations ------------
@@ -275,17 +375,17 @@ def job_discovery() -> dict:
 
 
 JOBS = [
-    Job("trade_sync", 300, 240, job_trade_sync, "execution"),
-    Job("failure_analysis", 900, 600, job_failure_analysis),
-    Job("portfolio", 900, 300, job_portfolio, "risk_engine"),
-    Job("performance_snapshot", 86400, 900, job_performance_snapshot),
-    Job("drift", 86400, 900, job_drift),
-    Job("fingerprints", 86400, 600, job_fingerprints),
-    Job("experiments", 3600, 1800, job_experiments),
-    Job("train_probability", 7 * 86400, 3600, job_train_probability, "quantitative_engine"),
-    Job("consensus_weights", 7 * 86400, 600, job_consensus_weights),
-    Job("adaptive_weights", 7 * 86400, 900, job_adaptive_weights),
-    Job("discovery", 7 * 86400, 900, job_discovery, "claude_agent"),
+    Job("trade_sync", 300, 240, job_trade_sync, "execution", isolated=True),
+    Job("failure_analysis", 900, 600, job_failure_analysis, isolated=True),
+    Job("portfolio", 900, 300, job_portfolio, "risk_engine", isolated=True),
+    Job("performance_snapshot", 86400, 900, job_performance_snapshot, isolated=True),
+    Job("drift", 86400, 900, job_drift, isolated=True),
+    Job("fingerprints", 86400, 600, job_fingerprints, isolated=True),
+    Job("experiments", 3600, 1800, job_experiments, isolated=True),
+    Job("train_probability", 7 * 86400, 3600, job_train_probability, "quantitative_engine", isolated=True),
+    Job("consensus_weights", 7 * 86400, 600, job_consensus_weights, isolated=True),
+    Job("adaptive_weights", 7 * 86400, 900, job_adaptive_weights, isolated=True),
+    Job("discovery", 7 * 86400, 900, job_discovery, "claude_agent", isolated=True),
 ]
 JOB_MAP = {j.name: j for j in JOBS}
 
@@ -303,14 +403,15 @@ def main() -> None:
         log.info("experimental library: %s", lifecycle.register_library(db))
     while not stop["flag"]:
         r.expire(LOCK, 300)
+        _report_usage()
         for job in JOBS:
             if stop["flag"]:
                 break
             if r.get(f"rr:learner:trigger:{job.name}"):
                 r.delete(f"rr:learner:trigger:{job.name}")
-                run_job(job, force=True)
+                run_job(job, force=True, should_stop=lambda: stop["flag"])
             else:
-                run_job(job)
+                run_job(job, should_stop=lambda: stop["flag"])
             r.expire(LOCK, 300)
         time.sleep(get_settings().learner_interval_seconds)
     r.delete(LOCK)

@@ -36,6 +36,7 @@ This is fixed. A warning was also added for the standalone connector from the Ub
 | Desktop core tests (Rust) | **106 passed** (104 + 2 new); clippy clean with warnings as errors; the desktop app crate compiles |
 | Desktop window in a browser (mocked supervisor) | wizard check (with the new warning) and the earlier window check both passed |
 | Backend | unchanged in this phase (last full run: 302 passed, Phase 18) |
+| CI for Phase 19 (`097336d`) | desktop 43955734152: passed (only desktop files changed) |
 | CI for Phase 18 (`b78955a`) | desktop 43951669672, backend 43951669764: passed |
 
 ## 2. The gap: imported server identities

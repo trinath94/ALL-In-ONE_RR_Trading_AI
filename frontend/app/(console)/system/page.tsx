@@ -4,10 +4,13 @@ import { Badge, ErrorLine, Panel, Stat, Table } from "@/components/ui";
 import { fmt } from "@/lib/api";
 import { useApi, useLive } from "@/lib/hooks";
 
+const TONE: Record<string, any> = { OK: "neon", WARN: "warn", CRITICAL: "bear", UNKNOWN: "dim", NO_REPORT: "dim" };
+
 export default function SystemPage() {
   const me = useMe();
   const live = useLive(["system_event"]);
   const { data: s, error } = useApi<any>("/api/system/status", 5000);
+  const { data: res } = useApi<any>("/api/system/resources", 15000);
   const { data: ev } = useApi<any[]>("/api/system/events?limit=100", 0, live.tick);
   const { data: audit } = useApi<any[]>(can(me, "users.manage") ? "/api/system/audit?limit=100" : null);
   const h = s?.host;
@@ -26,6 +29,16 @@ export default function SystemPage() {
         <Stat label="Errors 1h" value={s?.errors_1h ?? "—"} tone={s?.errors_1h ? "down" : "plain"} />
         <Stat label="WebSockets" value={s?.services?.websocket?.connections ?? "—"} />
       </div>
+      <Panel title="Role resources (each against its own container limit)" right={res && <span className="text-[10px] text-dim">
+        database {(res.database_bytes / 1e9).toFixed(2)} GB · data disk {res.disk.free_gb} GB free <Badge tone={TONE[res.disk.status]}>{res.disk.status}</Badge></span>}>
+        <Table rows={res ? Object.entries(res.roles).map(([role, v]: any) => ({ role, ...v })) : []} rowKey={(r) => r.role} empty="Loading…"
+          cols={[{ k: "role", h: "Role" },
+            { k: "status", h: "Status", r: (r) => <Badge tone={TONE[r.status]}>{r.status === "NO_REPORT" ? "no report" : r.status}</Badge> },
+            { k: "mem", h: "Memory", r: (r) => r.mem_bytes == null ? "—" : `${(r.mem_bytes / 2 ** 20).toFixed(0)} MB${r.mem_limit ? ` / ${(r.mem_limit / 2 ** 20).toFixed(0)} MB (${r.mem_pct}%)` : ""}` },
+            { k: "cpu", h: "CPU", r: (r) => r.cpu_cores == null ? "—" : `${r.cpu_cores.toFixed(2)} cores${r.cpu_cap ? ` of ${r.cpu_cap} (${r.cpu_pct_of_cap}%)` : ""}` },
+            { k: "reasons", h: "Notes", r: (r) => (r.reasons || []).join("; ") },
+            { k: "at", h: "Reported", r: (r) => r.at ? fmt.time(new Date(r.at * 1000).toISOString()) : "—" }]} />
+      </Panel>
       <Panel title="Services">
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {svc.map(([k, v]: any) => (

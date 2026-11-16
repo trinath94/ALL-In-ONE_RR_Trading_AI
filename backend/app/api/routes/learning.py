@@ -188,6 +188,24 @@ def trigger_job(name: str, user: User = Depends(require("strategy.manage")), db:
     return {"queued": name, "note": "the learner process picks this up on its next cycle"}
 
 
+@learning.post("/jobs/{name}/cancel")
+def cancel_job(name: str, user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
+    """Phase 20: stop a running learning job. Its process is terminated within about a second; the run is recorded
+    as CANCELLED and is not retried in the same period. Only a job that is running can be cancelled."""
+    from app.learning_engine.scheduler import JOB_MAP, cancel_key
+    if name not in JOB_MAP:
+        raise HTTPException(404, "unknown job")
+    if not JOB_MAP[name].isolated:
+        raise HTTPException(409, "this job runs in-process and cannot be cancelled")
+    running = db.scalar(select(LearningJob).where(LearningJob.job_type == name, LearningJob.status == "RUNNING")
+                        .order_by(LearningJob.id.desc()).limit(1))
+    if running is None:
+        raise HTTPException(409, f"{name} is not running")
+    get_redis().set(cancel_key(name), "1", ex=600)
+    audit(db, user.id, "LEARNING_JOB_CANCEL", name, {"run": running.id})
+    return {"cancelling": name, "run": running.id}
+
+
 # ---- experiments --------------------------------------------------------------------------------
 def exp_out(e: StrategyExperiment, full: bool = False) -> dict:
     v = e.validation or {}

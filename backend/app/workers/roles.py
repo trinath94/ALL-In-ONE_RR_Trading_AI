@@ -300,8 +300,11 @@ def run(role: str) -> int:
         last_ok, clock, last_scan, last_agent_check, agent_key = [True], {}, 0.0, 0.0, None
         agent = None
         auto = None
+        from app.services.resources import Reporter
+        usage = Reporter(role)       # Phase 20: this container's CPU and memory against its limits
         while not stop["flag"]:
             r.expire(lock_key(role), LOCK_TTL)
+            usage.tick(r)
             try:
                 # (Re)connect: none registered yet, another agent selected, or the same agent re-linked (its
                 # credentials rotated) — a stale secret would otherwise fail every request with "bad signature".

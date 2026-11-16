@@ -562,6 +562,14 @@ def overview(_: User = Depends(current_user), db: Session = Depends(get_db)):
     for k, v in services.items():
         if v["status"] == "DOWN":
             alerts.append({"kind": f"{k.upper()} DOWN", "detail": str(v["detail"])[:200]})
+    # Phase 20: a role about to run out of memory, or a nearly full data disk, is an active critical condition.
+    try:
+        from app.services import resources
+        for a in resources.overview(db)["alerts"]:
+            if a["severity"] == "critical":
+                alerts.append({"kind": a["kind"], "detail": a["detail"]})
+    except Exception:  # noqa: BLE001 - monitoring must not break the overview
+        pass
     worst = ("DOWN" if any(s["status"] == "DOWN" for s in services.values()) else "DEGRADED" if alerts else "HEALTHY")
     return {
         "overall_health": worst,

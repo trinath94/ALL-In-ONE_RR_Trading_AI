@@ -39,7 +39,9 @@ def agents(_: User = Depends(current_user), db: Session = Depends(get_db)):
     counts = {(a, st): n for a, st, n in db.execute(
         select(AgentRun.agent_id, AgentRun.status, func.count()).where(AgentRun.created_at >= since)
         .group_by(AgentRun.agent_id, AgentRun.status))}
-    last_ids = dict(db.execute(select(AgentRun.agent_id, func.max(AgentRun.id)).group_by(AgentRun.agent_id)).all())
+    # One index lookup per registered agent (Phase 20): a GROUP BY over the whole run log grew with its history.
+    last_ids = {a.id: i for a in REGISTRY
+                if (i := db.scalar(select(func.max(AgentRun.id)).where(AgentRun.agent_id == a.id))) is not None}
     last = {r.agent_id: r for r in db.scalars(select(AgentRun).where(AgentRun.id.in_(list(last_ids.values()) or [0])))}
     out = []
     for a in REGISTRY:

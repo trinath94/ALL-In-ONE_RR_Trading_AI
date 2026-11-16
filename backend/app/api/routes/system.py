@@ -52,6 +52,14 @@ def health_public(db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 
+@router.get("/system/resources")
+def resources(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Phase 20: each role's CPU and memory against its own container limits, the data disk, the database size and
+    the alerts these raise. Read from the roles' own reports (a role that stopped reporting shows NO_REPORT)."""
+    from app.services import resources as res
+    return res.overview(db)
+
+
 @router.get("/system/status")
 def status(_: User = Depends(current_user), db: Session = Depends(get_db)):
     s = get_settings()

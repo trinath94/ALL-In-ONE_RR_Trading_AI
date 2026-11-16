@@ -10,7 +10,8 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import String, func, select, true
+from sqlalchemy.dialects.postgresql import array as sa_array
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,7 @@ from app.news import service as news
 from app.notifications.service import KINDS
 from app.risk.engine import RiskParams
 from app.scanner.service import bars_to_df
+from app.signals.engine import TF_MINUTES
 from app.scanner import peers as peer_sugg
 from app.services import strategy_library as lib
 from app.services import trading as tr
@@ -240,9 +242,13 @@ def _scan_extra(a: AnalysisResult, s: Symbol) -> dict:
 @router.get("/scanner")
 def scanner(_: User = Depends(current_user), db: Session = Depends(get_db), timeframe: str | None = None):
     """Latest analysis per symbol/timeframe (real scan output)."""
-    sub = select(AnalysisResult.symbol_id, AnalysisResult.timeframe, func.max(AnalysisResult.id).label("mid")) \
-        .group_by(AnalysisResult.symbol_id, AnalysisResult.timeframe).subquery()
-    q = select(AnalysisResult, Symbol).join(sub, AnalysisResult.id == sub.c.mid).join(Symbol, Symbol.id == AnalysisResult.symbol_id)
+    # Latest analysis id of every symbol x timeframe: one index lookup per pair (Phase 20). A GROUP BY over every
+    # analysis ever stored grew with history.
+    tfs = func.unnest(sa_array(list(TF_MINUTES), type_=String)).table_valued("tf").render_derived()
+    latest = select(func.max(AnalysisResult.id)).where(AnalysisResult.symbol_id == Symbol.id,
+                                                       AnalysisResult.timeframe == tfs.c.tf).scalar_subquery()
+    mids = [i for i in db.scalars(select(latest).select_from(Symbol).join(tfs, true())) if i is not None]
+    q = select(AnalysisResult, Symbol).join(Symbol, Symbol.id == AnalysisResult.symbol_id).where(AnalysisResult.id.in_(mids or [0]))
     if timeframe:
         q = q.where(AnalysisResult.timeframe == timeframe)
     out = []
