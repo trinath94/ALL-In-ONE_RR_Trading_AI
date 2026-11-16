@@ -3,7 +3,7 @@ import clsx from "clsx";
 import {
   Activity, Bell, BookOpen, Bot, BrainCircuit, CandlestickChart, Cpu, FlaskConical, Gauge, Globe, History, LayoutDashboard,
   LogOut, Menu, Newspaper, Sparkles, Target, PieChart, Radar, Settings, ShieldAlert, Sliders, Terminal, Users, X, Zap,
-  BarChart3, KeyRound, Network,
+  BarChart3, KeyRound, Network, Shuffle,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -35,6 +35,7 @@ export const NAV = [
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/trade-intelligence", label: "Trade Intelligence", icon: BarChart3 },
   { href: "/learning", label: "AI Learning & Evolution", icon: Sparkles },
+  { href: "/adaptive", label: "Adaptive Intelligence", icon: Shuffle },
   { href: "/predictive", label: "Predictive Intelligence", icon: Target },
 ];
 

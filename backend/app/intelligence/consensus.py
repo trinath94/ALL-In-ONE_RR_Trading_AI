@@ -113,7 +113,14 @@ def validated_weights(db: Session) -> tuple[dict[str, float] | None, str]:
                                                 ModelRegistry.status == "PRODUCTION"))
     if reg is None:
         return None, "UNVALIDATED_PRIOR"
-    return reg.metrics.get("weights"), f"consensus_weights:v{reg.version}"
+    import json
+
+    from app.learning_engine import models as mreg
+    try:
+        mreg.require_usable(reg)        # signature verified on every use (Phase 11/12)
+    except mreg.ModelIntegrityError:
+        return None, f"UNVALIDATED_PRIOR:cw_v{reg.version}_unusable"
+    return json.loads(reg.artifact)["weights"], f"consensus_weights:v{reg.version}"
 
 
 def combine(views: list[SpecialistView], weights: dict[str, float] | None, weights_version: str) -> dict:

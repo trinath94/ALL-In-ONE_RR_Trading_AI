@@ -1,12 +1,16 @@
 """Fit specialist weights from realised outcomes (out-of-sample validated, never auto-promoted)."""
 from __future__ import annotations
 
+import hashlib
+import json
+
 import numpy as np
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models_intel import ConsensusDecision, ModelRegistry, TradeFeatures
 from app.intelligence.consensus import SPECIALISTS
+from app.learning_engine import models as mreg
 from app.learning_engine.models import brier, log_loss, skill_significance
 
 MIN_ROWS = 200
@@ -66,6 +70,10 @@ def fit(db: Session) -> ModelRegistry:
     reg.metrics = {"weights": weights, "raw_coefficients": dict(zip(VOTERS, np.round(lr.coef_[0], 4).tolist())),
                    "test": {"n": int(len(y) - cut), "log_loss": round(log_loss(y[cut:], p), 4), "brier": round(brier(y[cut:], p), 4),
                             "brier_base_rate": round(brier(y[cut:], np.full(len(p), base)), 4), **sig}}
+    # Phase 12: the weights are the artefact, signed like every model (Phase 11), so they can be approved and are only
+    # ever read back from the verified artefact (see consensus.validated_weights), never from the editable metrics.
+    blob = json.dumps({"weights": weights}, sort_keys=True, separators=(",", ":")).encode()
+    reg.artifact, reg.artifact_sha256, reg.artifact_hmac = blob, hashlib.sha256(blob).hexdigest(), mreg.sign(blob)
     ok = sig["brier_gain_ci95_low"] > 0 and coef.sum() > 0
     reg.status = "VALIDATED" if ok else "REJECTED"
     reg.notes = ("Weights show significant out-of-sample value; awaiting authorised approval." if ok else

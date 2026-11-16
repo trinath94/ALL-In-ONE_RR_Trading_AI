@@ -576,3 +576,85 @@ def trade_research(mode: str = "DEMO", user: User = Depends(require("strategy.ma
            evidence={"ai_output": "schema-validated; stored as an OPEN recommendation, applied to nothing"})
     audit(db, user.id, "TRADE_RESEARCH", mode, {"recommendation_id": rec.id, "trades": len(trades)})
     return {"recommendation_id": rec.id, **res.model_dump(), "provider": meta["provider"], "model": meta["model"]}
+
+
+# ================================================================ ADAPTIVE (Phase 12, Part 12) =====
+def _profiles(db: Session) -> list[dict]:
+    from app.learning_engine import adaptive
+    rows = db.scalars(select(ModelRegistry).where(ModelRegistry.model_key == adaptive.MODEL_KEY)
+                      .order_by(ModelRegistry.version.desc()).limit(20)).all()
+    out = []
+    for m in rows:
+        d = model_out(m)
+        d["role"] = ("applied to live decisions" if m.status == "PRODUCTION" else
+                     "shadow (recorded beside the original decision, not used)" if m.status in ("VALIDATED", "APPROVED") else
+                     "inactive")
+        if m.status in ("PRODUCTION", "VALIDATED", "APPROVED", "RETIRED"):
+            d["shadow_evaluation"] = adaptive.shadow_evaluation(db, m)
+        out.append(d)
+    return out
+
+
+@intel.get("/adaptive/overview")
+def adaptive_overview(mode: str = "DEMO", _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Strategy ranking, deterioration, combinations, failure intelligence and the weight profiles, from one account
+    mode's realised trades (never mixed with the other mode or with backtests, which are shown separately)."""
+    from app.learning_engine import adaptive
+    _mode(mode)
+    trades = adaptive.realised(db, mode)
+    prof = adaptive.active_profiles(db)
+    return {"mode": mode, "evidence": {"trades": len(trades), "min_per_slice": perf.MIN_TRADES,
+                                       "min_for_profile": adaptive.MIN_PROFILE_TRADES,
+                                       "from": trades[0]["closed_at"] if trades else None,
+                                       "to": trades[-1]["closed_at"] if trades else None},
+            "weighting": ("adaptive profile v%d (administrator-approved)" % prof["production"][0].version
+                          if prof["production"] else "original signal engine weights (baseline)"),
+            "shadow": f"v{prof['shadow'][0].version}" if prof["shadow"] else None,
+            "ranking": adaptive.ranking(trades, adaptive.backtest_evidence(db)),
+            "deterioration": adaptive.deterioration(db, trades),
+            "combinations": adaptive.combination_value(trades),
+            "failures": adaptive.failure_intelligence(db, mode),
+            "profiles": _profiles(db)}
+
+
+@intel.get("/adaptive/slices")
+def adaptive_slices(mode: str = "DEMO", _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.learning_engine import adaptive
+    _mode(mode)
+    return adaptive.best_by_slice(adaptive.realised(db, mode))
+
+
+@intel.get("/adaptive/redundancy")
+def adaptive_redundancy(days: int = 30, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.intelligence import fingerprint
+    from app.learning_engine import adaptive
+    return {"co_firing": adaptive.co_firing(db, days=min(max(days, 1), 365)),
+            "fingerprints": fingerprint.duplicate_report(db)}
+
+
+@intel.get("/adaptive/regimes")
+def adaptive_regimes(symbol: str, timeframe: str = "H1", mode: str = "DEMO", _: User = Depends(current_user),
+                     db: Session = Depends(get_db)):
+    from app.learning_engine import adaptive
+    _mode(mode)
+    return adaptive.regime_outlook(db, adaptive.realised(db, mode), symbol, timeframe)
+
+
+@intel.get("/adaptive/parameters")
+def adaptive_parameters(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.learning_engine import adaptive
+    return adaptive.parameter_stability(db)
+
+
+class AdaptiveFit(BaseModel):
+    mode: str = Field(default="DEMO", pattern="^(DEMO|LIVE)$")
+
+
+@intel.post("/adaptive/fit")
+def adaptive_fit(body: AdaptiveFit, user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
+    """Propose a profile now (the learner also does this weekly). The result is VALIDATED (shadow) or REJECTED; it is
+    never applied without administrator promotion."""
+    from app.learning_engine import adaptive
+    reg = adaptive.fit_profile(db, body.mode)
+    audit(db, user.id, "ADAPTIVE_PROFILE_FIT", f"{reg.model_key}:v{reg.version}", {"mode": body.mode, "status": reg.status})
+    return model_out(reg)

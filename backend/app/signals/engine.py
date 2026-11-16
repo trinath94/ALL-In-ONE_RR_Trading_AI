@@ -114,6 +114,9 @@ class MarketContext:
     news_status: str = "UNKNOWN"   # CLEAR | RESTRICTED | UNKNOWN
     strategy_regimes: dict[str, list[str]] = field(default_factory=dict)
     strategy_stats: dict[str, dict] = field(default_factory=dict)  # code -> {trades, win_rate, pf, source}
+    # Phase 12 (Part 12): per-strategy multipliers of a PRODUCTION adaptive profile, already resolved for the current
+    # regime. Empty (the default) keeps the original engine's behaviour exactly.
+    adaptive: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -158,6 +161,8 @@ def _component_scores(sigs: list[StrategySignal], ctx: MarketContext, cfg: Signa
         if stats and stats.get("trades", 0) >= 30:  # evidence-weighted: poor OOS PF shrinks influence
             pf = stats.get("profit_factor") or 0
             strength *= float(np.clip(pf / 1.3, 0.3, 1.2))
+        if ctx.adaptive:
+            strength *= ctx.adaptive.get(s.strategy, 1.0)
         comp.setdefault(s.component, []).append(min(strength, 1.0))
     out = {}
     for k, vals in comp.items():

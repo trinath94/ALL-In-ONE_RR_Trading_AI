@@ -229,6 +229,12 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     with cyc.step("signal_quality", ref):
         res = build_signal(sigs, mctx, cfg, calib)
     cyc.note("signal_quality", {f"decision_{res.decision}": 1})
+    adaptive_recs: list = []
+    try:
+        with cyc.step("adaptive_optimisation", ref):
+            res, adaptive_recs = _adaptive(db, sigs, mctx, cfg, calib, res)
+    except Exception as exc:  # noqa: BLE001 - adaptive weighting must never break the scan; the baseline result stands
+        log.warning("adaptive weighting skipped for %s: %s", ref, exc)
     intel, consensus_rec = _intelligence(db, df, sym, tf, sigs, res, news, tick, mctx, metas, enabled, cyc, ref)
     ar = AnalysisResult(symbol_id=sym.id, timeframe=tf, bar_time=df.index[-1].to_pydatetime(), regime=reg.primary,
                         structure={"regime": reg.dict(), "htf_bias": mctx.htf_bias, "sessions": mctx.sessions,
@@ -248,7 +254,29 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     agent_activity("market_scanner", "evaluating", f"{sym.broker_symbol} {tf}: {len(sigs)} setups, "
                                                    f"{res.decision} {res.grade} ({res.score})")
     return {"analysis": ar, "result": res, "symbol": sym, "regime": reg, "price": mctx.price, "spread": spread,
-            "intel": intel, "consensus_record": consensus_rec}
+            "intel": intel, "consensus_record": consensus_rec, "adaptive_records": adaptive_recs}
+
+
+def _adaptive(db: Session, sigs, mctx: MarketContext, cfg: SignalConfig, calib: Calibrator, baseline):
+    """Phase 12. A PRODUCTION adaptive profile (administrator-approved, signature verified) re-weights strategies and
+    its result is used; a VALIDATED/APPROVED one runs in shadow beside the original result. Either way both decisions
+    are recorded. With no usable profile the original engine's result is returned unchanged."""
+    from dataclasses import replace
+
+    from app.learning_engine import adaptive
+    prof = adaptive.active_profiles(db)
+    used, recs = baseline, []
+    for kind in ("production", "shadow"):
+        if prof[kind] is None:
+            continue
+        reg, mults = prof[kind]
+        applied = adaptive.resolve(mults, mctx.regime)
+        alt = build_signal(sigs, replace(mctx, adaptive=applied), cfg, calib)
+        live = kind == "production"
+        recs.append(adaptive.record_shadow(db, reg, baseline, alt, applied, live))
+        if live:
+            used = alt
+    return used, recs
 
 
 def _intelligence(db: Session, df, sym, tf, sigs, res, news, tick, mctx, metas, enabled, cyc=None, ref=None):
@@ -338,6 +366,8 @@ def persist_signal(db: Session, item: dict) -> TradingSignal | None:
     db.flush()
     if item.get("consensus_record") is not None:
         item["consensus_record"].signal_id = sig.id
+    for rec in item.get("adaptive_records") or []:
+        rec.signal_id = sig.id
     publish("signal", {"id": sig.id, "symbol": item["symbol"].broker_symbol, "decision": sig.decision, "grade": sig.grade,
                        "score": sig.score, "timeframe": sig.timeframe})
     if r.grade == "A+":

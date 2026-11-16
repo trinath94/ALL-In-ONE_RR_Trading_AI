@@ -219,6 +219,15 @@ def job_consensus_weights() -> dict:
         return {"model": f"consensus_weights:v{reg.version}", "status": reg.status}
 
 
+def job_adaptive_weights() -> dict:
+    """Phase 12: propose an adaptive strategy weight profile from DEMO realised trades (validated on unseen trades;
+    shadow until an administrator promotes it)."""
+    from app.learning_engine import adaptive
+    with session_scope() as db:
+        reg = adaptive.fit_profile(db, "DEMO")
+        return {"model": f"{reg.model_key}:v{reg.version}", "status": reg.status, "trades": reg.dataset_ref.get("trades")}
+
+
 def job_experiments() -> dict:
     """Advance experiments that are waiting on evidence: unit tests, validation, DEMO forward tests."""
     from app.db.models import StrategyExperiment, Symbol
@@ -275,6 +284,7 @@ JOBS = [
     Job("experiments", 3600, 1800, job_experiments),
     Job("train_probability", 7 * 86400, 3600, job_train_probability, "quantitative_engine"),
     Job("consensus_weights", 7 * 86400, 600, job_consensus_weights),
+    Job("adaptive_weights", 7 * 86400, 900, job_adaptive_weights),
     Job("discovery", 7 * 86400, 900, job_discovery, "claude_agent"),
 ]
 JOB_MAP = {j.name: j for j in JOBS}
