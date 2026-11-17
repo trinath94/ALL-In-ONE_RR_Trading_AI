@@ -44,11 +44,15 @@ def fetch_events() -> list[dict]:
 
 
 def refresh(db: Session) -> dict:
+    from app.services import sources
     try:
         items = fetch_events()
     except Exception as exc:  # noqa: BLE001
         log.warning("news refresh failed: %s", exc)
+        if "not configured" not in str(exc):
+            sources.observe("economic_calendar", False, str(exc)[:300])
         return {"ok": False, "error": str(exc)}
+    sources.observe("economic_calendar", True)
     n = 0
     for it in items:
         pid = str(it.get("id") or f"{it['currency']}-{it['time']}-{it['title']}")[:128]

@@ -112,6 +112,14 @@ class Settings(BaseSettings):
     # Phase 13: advisory records the fused decision beside the original engine's (the benchmark); enforce uses it for
     # signals. Either way the fused decision can only keep, or make more cautious, the original one.
     fusion_mode: str = "advisory"
+    # Parts 27-30 Phase 4. advisory: entry-validation price/spread checks and HIGH failure risk are recorded in the
+    # opportunity's decision trace; enforce: they downgrade BUY/SELL to WAIT (never upgrade). Stop/target geometry
+    # errors always make the setup NO_TRADE.
+    opportunity_gate: str = "advisory"
+    entry_max_chase_atr: float = 0.5          # current price at most this many ATR from the entry
+    entry_max_spread_sl: float = 0.25         # spread at most this fraction of the stop distance
+    reanalysis_throttle_seconds: int = 300    # event-driven re-analysis: at most once per symbol per this period
+    opportunity_retention_days: int = 90      # terminal opportunities older than this are pruned
     max_quote_age_seconds: int = 120          # stale quotes cannot authorise entries
     regime_intel_enabled: bool = True
     learner_interval_seconds: int = 60

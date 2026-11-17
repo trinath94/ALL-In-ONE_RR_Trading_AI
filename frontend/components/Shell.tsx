@@ -3,7 +3,7 @@ import clsx from "clsx";
 import {
   Activity, Bell, BookOpen, Bot, BrainCircuit, CandlestickChart, Cpu, FlaskConical, Gauge, Globe, History, LayoutDashboard,
   LogOut, Menu, Newspaper, Sparkles, Target, PieChart, Radar, Settings, ShieldAlert, Sliders, Terminal, Users, X, Zap,
-  BarChart3, KeyRound, Network, Shuffle, LineChart, GitCompareArrows, Microscope, DatabaseBackup,
+  BarChart3, KeyRound, Network, Shuffle, LineChart, GitCompareArrows, Microscope, DatabaseBackup, Workflow,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -41,6 +41,7 @@ export const NAV = [
   { href: "/backup", label: "Backup and Recovery", icon: DatabaseBackup },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/trade-intelligence", label: "Trade Intelligence", icon: BarChart3 },
+  { href: "/opportunities", label: "Opportunity Lifecycle", icon: Workflow },
   { href: "/notifications", label: "Notifications", icon: Bell },
   { href: "/users", label: "User Management", icon: Users },
 ];

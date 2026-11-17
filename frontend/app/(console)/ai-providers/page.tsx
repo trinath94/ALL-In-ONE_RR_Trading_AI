@@ -7,7 +7,7 @@ import { useApi } from "@/lib/hooks";
 
 const HEALTH: Record<string, any> = { healthy: "neon", degraded: "warn", failing: "bear", "cooling down": "bear" };
 
-/** AI Studio (Part 14): providers (presets for Anthropic, Qwen, Ollama) and encrypted keys, the provider's own model
+/** AI Studio (Part 14): providers (presets for Anthropic, OpenAI, Qwen, Ollama) and encrypted keys, the provider's own model
  *  list, which model handles which task (with fallback), per-minute limits, health, the usage / token / cost ledger and
  *  the model version history. Every provider gets the same schema validation and trading boundaries. */
 export default function AIProviders() {
@@ -42,6 +42,9 @@ export default function AIProviders() {
     try { const r = await fn(); setMsg(ok(r)); reload(); reloadRoutes(); reloadHealth(); reloadUsage(); reloadHist(); } catch (e: any) { setErr(e.message); }
   }
   const chainOf = (r: any) => edit[r.task] ?? r.chain.map((h: any) => ({ provider_id: h.provider_id, model: h.model }));
+  // Parts 27-30: candidate review can ask the first two providers independently (both must confirm).
+  const [modes, setModes] = useState<Record<string, string>>({});
+  const modeOf = (r: any) => modes[r.task] ?? r.mode ?? "fallback";
   const setChain = (task: string, c: any[]) => setEdit({ ...edit, [task]: c });
   return (
     <div>
@@ -114,8 +117,13 @@ export default function AIProviders() {
                     <Btn small tone="dim" onClick={() => setChain(r.task, chainOf(r).filter((_: any, j: number) => j !== i))}>×</Btn>
                   </div>))}
                 {(provs || []).length > 0 && chainOf(r).length < 4 && <Btn small tone="dim" onClick={() => setChain(r.task, [...chainOf(r), { provider_id: provs![0].id, model: "" }])}>+ provider</Btn>}
-                {edit[r.task] && <Btn small tone="neon" disabled={edit[r.task].some((h) => !h.model)} onClick={() => run(() => put(`/api/ai/routes/${r.task}`, { chain: edit[r.task] }), () => { const { [r.task]: _, ...rest } = edit; setEdit(rest); return `Route for ${r.label} saved.`; })}>Save</Btn>}
-              </div>) }]} />
+                {(edit[r.task] || modes[r.task]) && <Btn small tone="neon" disabled={chainOf(r).some((h: any) => !h.model)} onClick={() => run(() => put(`/api/ai/routes/${r.task}`, { chain: chainOf(r), mode: modeOf(r) }), () => { const { [r.task]: _, ...rest } = edit; setEdit(rest); const { [r.task]: _m, ...restM } = modes; setModes(restM); return `Route for ${r.label} saved (${modeOf(r)}).`; })}>Save</Btn>}
+              </div>) },
+            { k: "mode", h: "Mode", sort: false, r: (r) => !r.consensus_supported ? <span className="text-dim">fallback</span> : !admin ? <Badge tone={r.mode === "consensus" ? "violet" : "dim"}>{r.mode}</Badge> : (
+              <div className="w-48" title="Consensus: the first two providers review independently; the candidate is confirmed only if both confirm the engine's direction. Any rejection rejects; if either gives no valid answer the candidate stays unreviewed and is never auto-executed.">
+                <select className={inputCls} value={modeOf(r)} onChange={(e) => setModes({ ...modes, [r.task]: e.target.value })}>
+                  <option value="fallback">fallback (first valid answer)</option>
+                  <option value="consensus">consensus (first two must agree)</option></select></div>) }]} />
       </Panel>
       <Panel title="Model version history (what each requested model was actually served as)" className="mt-3">
         <Table rows={hist?.models} empty="No AI calls recorded yet." rowKey={(g) => `${g.provider}|${g.requested_model}`}

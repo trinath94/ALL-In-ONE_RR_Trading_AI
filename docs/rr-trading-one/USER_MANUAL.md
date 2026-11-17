@@ -38,9 +38,9 @@ Sign in with your user. The menu follows the specification:
 | Area | Pages |
 |---|---|
 | **Overview** | Command Centre (health, services, roles, account, signals, executions, critical alerts); AI Trading Engine |
-| **Agents** | Multi-Agent Control Room (21 agents: status, task, market, provider/model, output, errors, health) |
+| **Agents** | Multi-Agent Control Room (26 agents: status, task, market, provider/model, output, errors, health) |
 | **Broker connection** | MT5 Manager; Broker Symbol Discovery (choose which symbols are scanned; new ones start disabled) |
-| **Scanning** | Market Scanner (bid/ask, spread, regime, consensus, calibrated probability or "insufficient data", data quality); Market Analysis; Signal Centre |
+| **Scanning** | Market Scanner (bid/ask, spread, regime, consensus, calibrated probability or "insufficient data", data quality); Market Analysis; Signal Centre; Opportunity Lifecycle (every researched setup, its state and its decision trace, stage by stage, plus the observed health of each data source) |
 | **Trading** | Trading Worker; Open Positions; Trade History |
 | **Learning** | AI Learning Centre (trades, verdicts, models, drift, jobs, with a cancel button for running jobs); Adaptive Intelligence; Strategy Performance; Strategy Correlation; Predictive Intelligence |
 | **Research** | Backtesting Lab; Optimisation Lab; Strategy Library (the 215 original strategies and their data needs); Strategy Research Lab |

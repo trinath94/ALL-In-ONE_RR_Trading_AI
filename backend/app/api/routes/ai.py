@@ -6,6 +6,7 @@ API keys are write-only: they are encrypted on arrival (RR_AI_KEYS_KEY) and neve
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -195,6 +196,8 @@ class Hop(BaseModel):
 
 class RouteIn(BaseModel):
     chain: list[Hop] = Field(max_length=4)        # [] removes the route (original behaviour: RR_ANTHROPIC_API_KEY)
+    # Parts 27-30: "consensus" (candidate review only) asks the first two providers independently; both must confirm.
+    mode: Literal["fallback", "consensus"] = "fallback"
 
 
 @router.get("/ai/routes")
@@ -207,6 +210,8 @@ def routes(_: User = Depends(current_user), db: Session = Depends(get_db)):
         chain = [{**h, "provider": names.get(h["provider_id"], "?")} for h in (r.chain if r else [])]
         hops = gateway.chain_for(task)
         out.append({"task": task, "label": label, "used_by_engine": task in gateway.WIRED_TASKS, "chain": chain,
+                    "mode": (r.mode if r and r.chain else "fallback"),
+                    "consensus_supported": task in gateway.CONSENSUS_TASKS,
                     "effective": [{"provider": h.name, "model": h.model} for h in hops],
                     "source": "route" if r and r.chain else ("RR_ANTHROPIC_API_KEY" if hops else "not configured")})
     return out
@@ -219,16 +224,21 @@ def set_route(task: str, body: RouteIn, user: User = Depends(require("system.man
     for h in body.chain:
         if db.get(AIProvider, h.provider_id) is None:
             raise HTTPException(422, f"provider {h.provider_id} does not exist")
+    if body.mode == "consensus":
+        if task not in gateway.CONSENSUS_TASKS:
+            raise HTTPException(422, f"consensus mode is available for {', '.join(gateway.CONSENSUS_TASKS)} only")
+        if len({h.provider_id for h in body.chain[:2]}) < 2:
+            raise HTTPException(422, "consensus mode needs two different providers first in the chain")
     r = db.get(AITaskRoute, task)
     if not body.chain:
         if r:
             db.delete(r)
     else:
         r = r or AITaskRoute(task=task, chain=[])
-        r.chain, r.updated_by = [h.model_dump() for h in body.chain], user.id
+        r.chain, r.mode, r.updated_by = [h.model_dump() for h in body.chain], body.mode, user.id
         db.add(r)
-    audit(db, user.id, "AI_ROUTE_SET", task, {"chain": [h.model_dump() for h in body.chain]})
-    return {"task": task, "chain": [h.model_dump() for h in body.chain]}
+    audit(db, user.id, "AI_ROUTE_SET", task, {"chain": [h.model_dump() for h in body.chain], "mode": body.mode})
+    return {"task": task, "chain": [h.model_dump() for h in body.chain], "mode": body.mode}
 
 
 # ---- usage, health, test ---------------------------------------------------------------------------------------------

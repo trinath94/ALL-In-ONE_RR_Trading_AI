@@ -55,6 +55,9 @@ class AITaskRoute(Base):
     __tablename__ = "ai_task_routes"
     task: Mapped[str] = mapped_column(String(48), primary_key=True)
     chain: Mapped[list] = mapped_column(JSONB)                 # [{"provider_id": 1, "model": "..."}], tried in order
+    # Parts 27-30 (migration 0012): "fallback" (original: first valid answer) or "consensus" (the first two providers
+    # answer independently and must agree; candidate review only).
+    mode: Mapped[str] = mapped_column(String(16), default="fallback", server_default="fallback")
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

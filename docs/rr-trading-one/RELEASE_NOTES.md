@@ -1,5 +1,18 @@
 # RR Trading One: release notes
 
+## In development: Parts 27-30 (autonomous research and AI orchestration)
+
+Incremental additions to 0.2.0; nothing existing is replaced.
+
+* **Phase 4 (Part 27):**
+  * **Opportunity Lifecycle:** each researched setup moves through states (monitoring, waiting, qualified, rejected, no trade, expired, executed), with a stage-by-stage decision trace;
+  * **five new agents** in the same registry: fundamental (economic calendar), entry validation, exit plan, failure-risk factors, AI consensus;
+  * **OpenAI preset**, and an optional **consensus mode** in which two AI providers must agree;
+  * **regime tags**: volatility expansion/contraction, accumulation/distribution, uncertain, news-driven;
+  * **data-source registry** with observed health;
+  * **event-driven re-analysis** on news releases, anomalies, and price reaching a waiting entry.
+  * Database migration 0012 only adds tables and one column.
+
 ## Version 0.2.0 (development release, 2026-11-17)
 
 The first complete development release of RR Trading One: the RR Trading AI Engine as one Windows desktop

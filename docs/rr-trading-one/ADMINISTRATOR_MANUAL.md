@@ -47,10 +47,31 @@ Every order passes the Risk Engine; nothing (including AI) can bypass it.
 
 ## 5. AI providers
 
-**AI Studio** configures providers: Anthropic, OpenAI-compatible, Qwen, local Ollama. For each:
+**AI Studio** configures providers: Anthropic, OpenAI, other OpenAI-compatible APIs, Qwen, local Ollama. For each:
 * the API key is encrypted and write-only;
 * one route per task, with fallbacks;
 * a per-minute limit; usage and cost are recorded in the ledger.
+
+API access is billed separately from chat subscriptions: a Claude.ai or ChatGPT subscription does not include API
+credits.
+
+**Consensus mode (candidate review only).** Set the route's mode to *consensus* and put two different providers first
+(for example Claude, then OpenAI). Each reviews the candidate independently; each answer is schema-checked and
+boundary-checked on its own. The candidate is confirmed only if **both** confirm the engine's direction; any rejection
+rejects it; any other combination waits. If either provider gives no valid answer, the candidate stays unreviewed and
+is never auto-executed. Consensus costs two calls per candidate.
+
+**Opportunity gate.** Each analysis with a setup is checked by the entry-validation and failure-prediction agents
+(see the Opportunity Lifecycle page). A stop or target on the wrong side of the entry always makes the setup NO_TRADE.
+The other checks are advisory by default; to let them downgrade BUY/SELL to WAIT, set in the engine's environment:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `RR_OPPORTUNITY_GATE` | `advisory` | `enforce`: chased entries, wide spreads and HIGH failure risk downgrade BUY/SELL to WAIT (never upgrade) |
+| `RR_ENTRY_MAX_CHASE_ATR` | `0.5` | maximum distance from entry to the current price, in ATR |
+| `RR_ENTRY_MAX_SPREAD_SL` | `0.25` | maximum spread as a fraction of the stop distance |
+| `RR_REANALYSIS_THROTTLE_SECONDS` | `300` | event-driven re-analysis at most once per symbol per period |
+| `RR_OPPORTUNITY_RETENTION_DAYS` | `90` | finished opportunities older than this are pruned |
 
 AI output is schema-checked and advisory. AI cannot place orders, enable LIVE, change permissions or raise
 confidence. Broker passwords are never sent to a provider.

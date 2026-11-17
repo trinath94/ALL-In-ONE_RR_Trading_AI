@@ -38,6 +38,8 @@ def migrated_db():
     seed()
     import redis
     redis.Redis.from_url(os.environ["RR_REDIS_URL"]).flushdb()
+    from app.services import sources
+    sources._pending.clear()                    # the registry batches in memory between flushes
     yield
     reset_engine()
 
@@ -55,7 +57,9 @@ TRANSIENT = ["login_history", "user_sessions", "audit_logs", "notifications", "s
              # RR MT5 Connector desktop agents
              "mt5_agent_tokens", "mt5_agents",
              # RR Trading One (scanner settings, agent run log, AI gateway)
-             "scanner_settings", "agent_runs", "ai_usage", "ai_task_routes", "ai_providers"]
+             "scanner_settings", "agent_runs", "ai_usage", "ai_task_routes", "ai_providers",
+             # Parts 27-30 Phase 4 (opportunities, source registry)
+             "opportunity_transitions", "opportunities", "data_sources"]
 
 
 @pytest.fixture
@@ -72,4 +76,6 @@ def db_clean(migrated_db):
                         "kill_switch=false, risk_lock=false, startup_checks_passed=false"))
     import redis
     redis.Redis.from_url(os.environ["RR_REDIS_URL"]).flushdb()
+    from app.services import sources
+    sources._pending.clear()                    # the registry batches in memory between flushes
     yield

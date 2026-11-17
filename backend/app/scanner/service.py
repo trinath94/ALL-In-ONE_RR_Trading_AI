@@ -186,7 +186,15 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     ref = f"{sym.broker_symbol}:{tf}"
     now = datetime.now(UTC)
     from app.signals.engine import TF_MINUTES
-    df = drop_forming_bar(bars_to_df(bridge.rates(sym.broker_symbol, tf, s.scan_bars)), TF_MINUTES[tf], now)
+    from app.services import sources
+    t_bars = time.perf_counter()
+    try:
+        raw = bridge.rates(sym.broker_symbol, tf, s.scan_bars)
+    except Exception as exc:
+        sources.observe("mt5_market_data", False, f"{sym.broker_symbol} {tf}: {str(exc)[:300]}")
+        raise
+    sources.observe("mt5_market_data", True, latency_ms=(time.perf_counter() - t_bars) * 1000)
+    df = drop_forming_bar(bars_to_df(raw), TF_MINUTES[tf], now)
     if len(df) < 120:
         return None
     enabled, not_applicable = applicable(enabled, tf)
@@ -244,6 +252,13 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     except Exception as exc:  # noqa: BLE001 - fusion must never break the scan; the original decision stands
         log.warning("fusion skipped for %s: %s", ref, exc)
         fused = {"error": str(exc)[:200]}
+    opp = None
+    if sigs:
+        try:
+            opp = _opportunity(db, sym, tf, df, reg, sigs, outcomes, news, mctx, res, intel, fused, spread, caps, htf,
+                               peers, adaptive_recs, stats, cyc, ref, now)
+        except Exception as exc:  # noqa: BLE001 - the trace must not break the scan; the engine's decision stands
+            log.warning("opportunity record skipped for %s: %s", ref, exc)
     ar = AnalysisResult(symbol_id=sym.id, timeframe=tf, bar_time=df.index[-1].to_pydatetime(), regime=reg.primary,
                         structure={"regime": reg.dict(), "htf_bias": mctx.htf_bias, "sessions": mctx.sessions,
                                    "news": news, "atr": mctx.atr, "price": mctx.price,
@@ -262,7 +277,95 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     agent_activity("market_scanner", "evaluating", f"{sym.broker_symbol} {tf}: {len(sigs)} setups, "
                                                    f"{res.decision} {res.grade} ({res.score})")
     return {"analysis": ar, "result": res, "symbol": sym, "regime": reg, "price": mctx.price, "spread": spread,
-            "intel": intel, "consensus_record": consensus_rec, "adaptive_records": adaptive_recs}
+            "intel": intel, "consensus_record": consensus_rec, "adaptive_records": adaptive_recs, "opportunity": opp}
+
+
+def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res, intel, fused, spread, caps, htf, peers,
+                 adaptive_recs, stats, cyc, ref, now) -> dict:
+    """Parts 27-30 Phase 4: the new specialist views and the decision trace for this analysis. Entry geometry errors
+    make the setup NO_TRADE; with RR_OPPORTUNITY_GATE=enforce, entry WAIT or HIGH failure risk downgrade BUY/SELL to
+    WAIT. Nothing here can upgrade a decision."""
+    import json
+
+    from app.intelligence import opportunity as opx
+    from app.services import trading as tr
+    s = get_settings()
+    with cyc.step("fundamental_analysis", ref):
+        fund = opx.fundamental_view(db, sym, sym.broker_symbol, now)
+    cyc.note("fundamental_analysis", {"calendar_available": int(bool(fund.get("available")))})
+    if news == "RESTRICTED" or fund.get("high_impact_released_last_hour"):
+        if "NEWS_DRIVEN" not in reg.tags:
+            reg.tags.append("NEWS_DRIVEN")
+    original = res.decision
+    with cyc.step("entry_validation", ref):
+        entry = opx.entry_validation(res, mctx.price, spread, mctx.atr, max_chase_atr=s.entry_max_chase_atr,
+                                     max_spread_sl=s.entry_max_spread_sl)
+    cyc.note("entry_validation", {f"entry_{entry['outcome']}": 1})
+    with cyc.step("exit_optimisation", ref):
+        acct = tr.active_account(db)
+        plan = opx.exit_plan(res, tr.risk_params(db, acct.mode if acct else "DEMO"))
+    with cyc.step("failure_prediction", ref):
+        fail = opx.failure_prediction(res, stats, intel, news, reg.tags, mctx.htf_bias)
+    cyc.note("failure_prediction", {f"failure_risk_{fail['level']}": 1})
+    gate = []
+    if entry["outcome"] == "FAIL" and res.decision in ("BUY", "SELL", "WAIT"):
+        res.decision = "NO_TRADE"
+        res.warnings.append(f"entry validation failed ({entry['reason']}): NO_TRADE")
+        gate.append("entry geometry: NO_TRADE")
+    elif s.opportunity_gate == "enforce" and res.decision in ("BUY", "SELL"):
+        if entry["outcome"] == "WAIT":
+            res.decision = "WAIT"
+            res.warnings.append(f"entry validation {entry['reason']} (enforce mode): downgraded to WAIT")
+            gate.append("entry validation: WAIT")
+        elif fail["level"] == "HIGH":
+            res.decision = "WAIT"
+            res.warnings.append("failure risk HIGH (enforce mode): downgraded to WAIT")
+            gate.append("failure risk HIGH: WAIT")
+    cons = intel.get("consensus") or {}
+    prob = intel.get("probability") or {}
+    lead = sorted(sigs, key=lambda x: -x.strength)[:8]
+    trace = [
+        opx.stage("data", "symbol_scanner", "ok", {"closed_bars": len(df), "last_closed_bar": df.index[-1].isoformat(),
+                                                   "data_caps": sorted(caps), "higher_timeframes": sorted(htf),
+                                                   "peers": sorted(peers)}),
+        opx.stage("market_regime", "market_regime", reg.primary, {"tags": list(reg.tags), "adx": reg.adx,
+                                                                  "atr_percentile": reg.atr_pct}),
+        opx.stage("strategies", "original_strategy_analysis", f"{len(sigs)} setups",
+                  {"outcomes": outcomes, "top": [{"strategy": x.strategy, "direction": x.direction, "strength": x.strength}
+                                                 for x in lead]}),
+        opx.stage("multi_timeframe", "multi_timeframe", mctx.htf_bias, {}),
+        opx.stage("news", "news_events", news, {}),
+        opx.stage("fundamental", "fundamental_analysis", "available" if fund.get("available") else "unavailable", fund),
+        opx.stage("signal_engine", "signal_quality", f"{original} {res.grade}",
+                  {"score": res.score, "components": res.components, "opposing_score": res.opposing_score}),
+        opx.stage("adaptive", "adaptive_optimisation",
+                  "production profile used" if any(not r.shadow for r in adaptive_recs) else
+                  ("shadow only" if adaptive_recs else "original weights"), {}),
+        opx.stage("consensus", "strategy_correlation", cons.get("decision"),
+                  {k: cons.get(k) for k in ("agreement", "conflicts", "weights_version")}),
+        opx.stage("probability", "signal_quality", "available" if prob.get("available") else "unavailable",
+                  {k: prob.get(k) for k in ("tp_before_sl_probability", "model", "status", "sample") if k in prob}),
+        opx.stage("anomalies", "signal_quality", len((intel.get("anomalies") or {}).get("found") or []),
+                  {"blocking": (intel.get("anomalies") or {}).get("blocking") or []}),
+        opx.stage("fusion", "signal_quality", (fused or {}).get("decision"),
+                  {k: (fused or {}).get(k) for k in ("evidence", "mode", "error") if k in (fused or {})}),
+        opx.stage("entry_validation", "entry_validation", entry["outcome"], entry),
+        opx.stage("exit_plan", "exit_optimisation", "available" if plan.get("available") else "unavailable", plan),
+        opx.stage("failure_prediction", "failure_prediction", fail["level"], fail),
+        opx.stage("decision", "master_orchestrator", res.decision,
+                  {"engine_decision": original, "gate_mode": s.opportunity_gate, "gate": gate,
+                   "next": "shortlist and AI review, then the Risk Engine at execution" if res.decision in ("BUY", "SELL")
+                   else None}),
+    ]
+    breakdown = {"engine": {"score": res.score, "grade": res.grade, "components": res.components,
+                            "opposing_score": res.opposing_score, "calibrated_confidence": res.calibrated_confidence,
+                            "confidence_sample": res.confidence_sample},
+                 "consensus": {"decision": cons.get("decision"), "agreement": cons.get("agreement")},
+                 "probability": prob.get("tp_before_sl_probability") if prob.get("available") else None,
+                 "fusion": (fused or {}).get("decision"), "entry_validation": entry["outcome"],
+                 "failure_risk": fail["level"], "fundamental_available": bool(fund.get("available"))}
+    safe = json.loads(json.dumps({"trace": trace, "breakdown": breakdown, "entry": entry}, default=str))
+    return safe
 
 
 def _fuse(db: Session, sym, res, intel: dict, news: str, spread: float, mctx: MarketContext, cfg: SignalConfig,
@@ -432,6 +535,7 @@ def claude_review(db: Session, agent: ClaudeAgent, sig: TradingSignal, item: dic
         agent_activity("claude_agent", "error", str(exc))
         # Without a review the candidate is not auto-executed (conservative)
         sig.ai_review = {"decision": "UNREVIEWED", "error": str(exc)}
+        _review_to_opportunity(db, sig, sig.ai_review, None)
         return
     conv.response, conv.input_tokens, conv.output_tokens = review.model_dump(), meta["input_tokens"], meta["output_tokens"]
     conv.latency_ms, conv.model = meta["latency_ms"], meta["model"]
@@ -439,6 +543,12 @@ def claude_review(db: Session, agent: ClaudeAgent, sig: TradingSignal, item: dic
         cycle.add("signal_quality", ref=f"signal:{sig.id}", ms=meta["latency_ms"], out={f"ai_review_{review.decision}": 1},
                   provider=meta.get("provider", "anthropic"), model=meta["model"],
                   evidence={"ai_output": "schema-validated and boundary-checked (confirm / downgrade / reject only)"})
+        if meta.get("mode") == "consensus":
+            agree = len({v["decision"] for v in meta["consensus"]["votes"]}) == 1
+            cycle.add("ai_consensus", ref=f"signal:{sig.id}", ms=meta["latency_ms"],
+                      out={f"consensus_{review.decision}": 1, "agreed": int(agree)},
+                      provider=meta["provider"], model=meta["model"],
+                      evidence={"votes": meta["consensus"]["votes"], "rule": meta["consensus"]["rule"]})
     prob = extra.get("probability") or {}
     sig.ai_review = {**review.model_dump(), "model_versions": {
         "claude": meta["model"], "consensus": (extra.get("consensus") or {}).get("weights_version"),
@@ -450,6 +560,71 @@ def claude_review(db: Session, agent: ClaudeAgent, sig: TradingSignal, item: dic
         sig.decision, sig.status = "NO_TRADE", "REJECTED"
     elif review.decision == "WAIT_FOR_CONFIRMATION" and sig.decision in ("BUY", "SELL"):
         sig.decision = "WAIT"
+    _review_to_opportunity(db, sig, review.model_dump(), meta)
+
+
+def _review_to_opportunity(db: Session, sig: TradingSignal, review: dict, meta: dict | None) -> None:
+    from app.db.models_opportunity import Opportunity
+    from app.intelligence import opportunity as opx
+    try:
+        with db.begin_nested():
+            opp = db.scalar(select(Opportunity).where(Opportunity.signal_id == sig.id).order_by(Opportunity.id.desc())
+                            .limit(1))
+            if opp is not None:
+                opx.after_review(db, opp, review, meta)
+    except Exception as exc:  # noqa: BLE001 - the trace must not break the review
+        log.warning("opportunity review stage skipped for signal %s: %s", sig.id, exc)
+
+
+def supersede_same_bar(db: Session, item: dict, trigger: str) -> str | None:
+    """An event-driven re-analysis of a bar that already has a signal: still-NEW signals of that bar are expired
+    (superseded) so there is never more than one NEW signal per symbol, timeframe and bar. If one of them was already
+    executed, no new signal is created (returned reason)."""
+    ar = item["analysis"]
+    rows = db.scalars(select(TradingSignal).join(AnalysisResult, AnalysisResult.id == TradingSignal.analysis_id)
+                      .where(TradingSignal.symbol_id == ar.symbol_id, TradingSignal.timeframe == ar.timeframe,
+                             AnalysisResult.bar_time == ar.bar_time, AnalysisResult.id != ar.id)
+                      .with_for_update(of=TradingSignal)).all()
+    if any(x.status == "EXECUTED" for x in rows):
+        return "a signal from this bar was already executed; the re-analysis creates no second signal"
+    for x in rows:
+        if x.status == "NEW":
+            x.status = "EXPIRED"
+            x.explanation = f"{x.explanation} [Superseded by re-analysis ({trigger})]"
+    return None
+
+
+def record_opportunity(db: Session, item: dict, sig: TradingSignal | None, trigger: str, blocked: str | None) -> None:
+    """Persist the opportunity built by analyse() (only analyses in which a strategy produced a setup)."""
+    info = item.get("opportunity")
+    if not info:
+        return
+    from app.intelligence import opportunity as opx
+    try:
+        with db.begin_nested():
+            ar = item["analysis"]
+            opp = opx.create(db, symbol_id=ar.symbol_id, timeframe=ar.timeframe, bar_time=ar.bar_time,
+                             analysis_id=ar.id, res=item["result"], trigger=trigger, trace=info["trace"],
+                             breakdown=info["breakdown"], entry=info["entry"])
+            opp.signal_id = sig.id if sig is not None else None
+            if blocked and opp.state not in opx.TERMINAL:
+                opx.transition(db, opp, "REJECTED", blocked)
+    except Exception as exc:  # noqa: BLE001 - the trace must not break the scan
+        log.warning("opportunity not recorded: %s", exc)
+
+
+def prune_opportunities(days: int) -> int:
+    from sqlalchemy import delete
+
+    from app.db.models_opportunity import Opportunity
+    from app.intelligence.opportunity import TERMINAL
+    try:
+        with session_scope() as db:
+            res = db.execute(delete(Opportunity).where(Opportunity.state.in_(TERMINAL),
+                                                       Opportunity.updated_at < datetime.now(UTC) - timedelta(days=days)))
+            return res.rowcount or 0
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def closed_bar_epoch(bridge: BridgeClient, symbol: str, tf: str, now: datetime) -> int | None:
@@ -482,8 +657,16 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
     cycle = Cycle("scan_cycle")
     agent_activity("market_scanner", "processing", f"Scanning {len(targets)} symbols x {timeframes}")
 
-    # 1. Which jobs are due: a closed bar newer than the last one analysed (or every job, if once-per-bar is off).
+    # 1. Which jobs are due: a closed bar newer than the last one analysed (or every job, if once-per-bar is off),
+    # or an event asked for a re-analysis (Parts 27-30 Phase 4: news release, anomaly, price at a waiting entry).
     now = datetime.now(UTC)
+    from app.scanner import triggers
+    try:
+        with session_scope() as db:
+            triggers.check(db, bridge, rds, timeframes, now, s.reanalysis_throttle_seconds)
+    except Exception as exc:  # noqa: BLE001 - event detection must not stop the scan
+        log.warning("event trigger check failed: %s", exc)
+    triggered: dict[tuple[int, str], str] = {}
     jobs: list[sched.Job] = []
     for sid, name, prio in targets:
         for tf in timeframes:
@@ -492,9 +675,12 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
                 break
             bar = closed_bar_epoch(bridge, name, tf, now) if s.scan_once_per_bar else None
             last = rds.get(sched.last_key(sid, tf)) if s.scan_once_per_bar else None
-            if s.scan_once_per_bar and not sched.is_due(int(last) if last else None, bar):
+            trig = triggers.pending(rds, sid, tf)
+            if s.scan_once_per_bar and not sched.is_due(int(last) if last else None, bar) and not trig:
                 report.not_due += 1
                 continue
+            if trig:
+                triggered[(sid, tf)] = trig
             jobs.append(sched.Job(priority=prio, bar_epoch=bar or 0, tf=tf, symbol_id=sid, symbol=name))
     report.due = len(jobs)
 
@@ -510,16 +696,23 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
                 except Exception as exc:  # noqa: BLE001 - one symbol failing must not stop the scan
                     log.exception("scan %s %s failed", sym.broker_symbol, job.tf)
                     return {"symbol": sym.broker_symbol, "tf": job.tf, "error": str(exc)}
+                trig = triggered.get((job.symbol_id, job.tf))
                 if not item:
                     if job.bar_epoch:
                         rds.set(sched.last_key(job.symbol_id, job.tf), job.bar_epoch)
+                    if trig:
+                        triggers.clear(rds, job.symbol_id, job.tf)
                     return {"outcome": "insufficient_data", "symbol": sym.broker_symbol, "tf": job.tf}
-                sig = persist_signal(db, item)
+                blocked = supersede_same_bar(db, item, trig) if trig else None
+                sig = persist_signal(db, item) if blocked is None else None
+                record_opportunity(db, item, sig, trig or "bar_close", blocked)
                 analysed_bar = int(item["analysis"].bar_time.timestamp())
                 out = {"signal_id": sig.id if sig else None, "score": item["result"].score,
                        "decision": item["result"].decision, "symbol": sym.broker_symbol, "tf": job.tf}
             # marker after the commit: a crash before it leaves the bar due, so it is retried, never lost
             rds.set(sched.last_key(job.symbol_id, job.tf), max(analysed_bar, job.bar_epoch))
+            if trig:
+                triggers.clear(rds, job.symbol_id, job.tf)
             return out
         finally:
             rds.delete(lock)
@@ -559,6 +752,7 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
                 claude_review(db, agent, sig, item, extra, cycle)
             else:
                 sig.ai_review = {"decision": "UNREVIEWED", "error": "no AI provider is configured for candidate review"}
+                _review_to_opportunity(db, sig, sig.ai_review, None)
         auto_execute(r["signal_id"])
     sched.publish_status(rds, report)
     cycle.finish({"analysed": report.analysed, "due": report.due, "candidates": len(ranked),
@@ -566,6 +760,7 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
     if rds.set("rr:agents:prune", "1", nx=True, ex=3600):
         from app.orchestration.orchestrator import prune
         prune(s.agent_run_retention_days)
+        prune_opportunities(s.opportunity_retention_days)
     agent_activity("market_scanner", "waiting", f"Scan complete: {report.analysed} analyses ({report.not_due} not due, "
                                                 f"{report.deferred} deferred), {len(ranked)} candidates")
     return {"analyses": report.analysed, "candidates": len(ranked), "errors": report.errors + report.timed_out,
@@ -612,5 +807,13 @@ def expire_signals(db: Session) -> int:
                                                       TradingSignal.expires_at < datetime.now(UTC))):
         sig.status = "EXPIRED"
         n += 1
+    # Parts 27-30 Phase 4: opportunities follow their signals (executed, rejected by the Risk Engine, expired).
+    try:
+        from app.intelligence import opportunity as opx
+        with db.begin_nested():
+            db.flush()
+            opx.sync(db)
+    except Exception as exc:  # noqa: BLE001 - the lifecycle record must not break expiry
+        log.warning("opportunity sync failed: %s", exc)
     return n
 _ = timedelta

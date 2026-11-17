@@ -919,3 +919,60 @@ def system_data(_: User = Depends(current_user), db: Session = Depends(get_db)):
             "database_bytes": db.execute(text("select pg_database_size(current_database())")).scalar(),
             "records": {t: db.execute(text(f"select count(*) from {t}")).scalar() for t in tables},  # noqa: S608 - fixed names
             "managed_by": "desktop application: Backup and Recovery (back up now, list, restore with RESTORE DATABASE)"}
+
+
+# ---- Parts 27-30 Phase 4: opportunities (lifecycle + decision trace) and the data-source registry -------------------
+@router.get("/opportunities")
+def opportunities(state: str | None = None, symbol: str | None = None, timeframe: str | None = None, limit: int = 100,
+                  _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import Opportunity
+    from app.intelligence.opportunity import STATES
+    if state is not None and state not in STATES:
+        raise HTTPException(422, f"state must be one of {', '.join(STATES)}")
+    q = select(Opportunity, Symbol.broker_symbol).join(Symbol, Symbol.id == Opportunity.symbol_id)
+    if state:
+        q = q.where(Opportunity.state == state)
+    if symbol:
+        q = q.where(Symbol.broker_symbol == symbol)
+    if timeframe:
+        q = q.where(Opportunity.timeframe == timeframe.upper())
+    rows = db.execute(q.order_by(Opportunity.id.desc()).limit(max(1, min(limit, 500)))).all()
+    return [{"id": o.id, "symbol": name, "timeframe": o.timeframe, "bar_time": o.bar_time, "direction": o.direction,
+             "state": o.state, "state_reason": o.state_reason, "trigger": o.trigger, "signal_id": o.signal_id,
+             "analysis_id": o.analysis_id, "score_breakdown": o.score_breakdown, "created_at": o.created_at,
+             "updated_at": o.updated_at} for o, name in rows]
+
+
+@router.get("/opportunities/summary")
+def opportunities_summary(hours: int = 24, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import Opportunity
+    from app.intelligence.opportunity import STATES
+    since = datetime.now(timezone.utc) - timedelta(hours=max(1, min(hours, 24 * 30)))
+    counts = dict(db.execute(select(Opportunity.state, func.count()).where(Opportunity.created_at >= since)
+                             .group_by(Opportunity.state)).all())
+    triggers = dict(db.execute(select(Opportunity.trigger, func.count()).where(Opportunity.created_at >= since)
+                               .group_by(Opportunity.trigger)).all())
+    return {"hours": hours, "states": {s: counts.get(s, 0) for s in STATES}, "triggers": triggers,
+            "gate_mode": get_settings().opportunity_gate}
+
+
+@router.get("/opportunities/{opp_id}")
+def opportunity_detail(opp_id: int, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import Opportunity, OpportunityTransition
+    o = db.get(Opportunity, opp_id)
+    if o is None:
+        raise HTTPException(404, "opportunity not found")
+    sym = db.get(Symbol, o.symbol_id)
+    trans = db.scalars(select(OpportunityTransition).where(OpportunityTransition.opportunity_id == o.id)
+                       .order_by(OpportunityTransition.id)).all()
+    return {"id": o.id, "symbol": sym.broker_symbol if sym else None, "timeframe": o.timeframe, "bar_time": o.bar_time,
+            "direction": o.direction, "state": o.state, "state_reason": o.state_reason, "trigger": o.trigger,
+            "signal_id": o.signal_id, "analysis_id": o.analysis_id, "score_breakdown": o.score_breakdown,
+            "trace": o.trace, "created_at": o.created_at, "updated_at": o.updated_at,
+            "transitions": [{"from": t.from_state, "to": t.to_state, "reason": t.reason, "at": t.at} for t in trans]}
+
+
+@router.get("/data-sources")
+def data_sources(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.services import sources
+    return sources.listing(db)

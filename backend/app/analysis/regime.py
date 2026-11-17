@@ -18,6 +18,10 @@ REGIMES = [
     "STRONG_BULL", "STRONG_BEAR", "WEAK_BULL", "WEAK_BEAR", "SIDEWAYS", "CONSOLIDATION",
     "HIGH_VOLATILITY", "LOW_VOLATILITY", "BREAKOUT", "REVERSAL",
 ]
+# Parts 27-30 Phase 4: additional *tags* (the primary label above is unchanged, so strategy suitability and scoring
+# behave as before; no strategy declares these). NEWS_DRIVEN is added by the scanner, which knows the calendar.
+EXTRA_TAGS = ["VOLATILITY_EXPANSION", "VOLATILITY_CONTRACTION", "ACCUMULATION", "DISTRIBUTION", "UNCERTAIN",
+              "NEWS_DRIVEN"]
 
 
 @dataclass
@@ -96,4 +100,34 @@ def classify(df: pd.DataFrame) -> RegimeResult:
         tags.append("REVERSAL")
     if vr is not None:
         tags.append("MEAN_REVERTING" if vr < 0.85 else ("PERSISTENT" if vr > 1.15 else "RANDOM_WALK"))
+    tags.extend(extra_tags(df, a14, primary, slope_atr, st))
     return RegimeResult(primary, tags, adx_v, slope_atr, atr_pct, bbw_pct, vr, st)
+
+
+def extra_tags(df: pd.DataFrame, a14: pd.Series, primary: str, slope_atr: float | None, structure_trend: int) -> list[str]:
+    """Volatility expansion/contraction (ATR now vs 10 bars ago), accumulation/distribution (in a range, where the
+    bars close within their range, weighted by volume, over the last 20 bars) and uncertainty (slope and
+    market structure point opposite ways). Deterministic and causal: only closed bars are used."""
+    out: list[str] = []
+    a = a14.dropna()
+    if len(a) > 11 and a.iloc[-11] > 0:
+        ratio = float(a.iloc[-1] / a.iloc[-11])
+        if ratio >= 1.3:
+            out.append("VOLATILITY_EXPANSION")
+        elif ratio <= 0.75:
+            out.append("VOLATILITY_CONTRACTION")
+    if primary in ("SIDEWAYS", "CONSOLIDATION") and len(df) >= 20:
+        w = df.iloc[-20:]
+        rng = (w["high"] - w["low"]).replace(0, np.nan)
+        clv = ((w["close"] - w["low"]) - (w["high"] - w["close"])) / rng          # close location value, -1..1
+        vol = w["volume"].astype(float) if "volume" in w and w["volume"].sum() > 0 else pd.Series(1.0, index=w.index)
+        score = float((clv.fillna(0) * vol).sum() / vol.sum())
+        if score >= 0.15:
+            out.append("ACCUMULATION")
+        elif score <= -0.15:
+            out.append("DISTRIBUTION")
+    if slope_atr is not None and structure_trend != 0:
+        d = 1 if slope_atr > 0.02 else (-1 if slope_atr < -0.02 else 0)
+        if d != 0 and d != structure_trend:
+            out.append("UNCERTAIN")
+    return out

@@ -24,6 +24,11 @@ KINDS = ("anthropic", "openai_compatible")
 PRESETS = [
     {"id": "anthropic", "label": "Anthropic Claude (API)", "kind": "anthropic", "base_url": None, "key_required": True,
      "note": "Needs an API key from the Anthropic Console. A Claude.ai subscription does not include API credits."},
+    # Parts 27-30 Phase 4: OpenAI's own API (OpenAI-compatible by definition). Billing is separate from ChatGPT.
+    {"id": "openai", "label": "OpenAI (API)", "kind": "openai_compatible", "base_url": "https://api.openai.com/v1",
+     "key_required": True,
+     "note": "Needs an API key from the OpenAI platform with API billing. A ChatGPT subscription does not include API "
+             "credits."},
     {"id": "qwen_intl", "label": "Qwen (Alibaba Cloud Model Studio, international)", "kind": "openai_compatible",
      "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "key_required": True,
      "note": "OpenAI-compatible mode of DashScope. Needs a DashScope API key for the international region."},
@@ -95,6 +100,11 @@ def _strip_fences(text: str) -> str:
     return t.strip()
 
 
+def _unsupported_param(text: str) -> bool:
+    t = text.lower()
+    return ("max_tokens" in t or "temperature" in t) and ("unsupported" in t or "not supported" in t)
+
+
 class OpenAICompatibleProvider:
     kind = "openai_compatible"
 
@@ -106,6 +116,14 @@ class OpenAICompatibleProvider:
             headers["Authorization"] = f"Bearer {api_key}"
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.http = httpx.Client(timeout=timeout_s, headers=headers, transport=transport)
+
+    def _post(self, body: dict) -> httpx.Response:
+        try:
+            return self.http.post(self.url, json=body)
+        except httpx.TimeoutException as exc:
+            raise ProviderError(f"timeout: {exc}", "connection") from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"connection error: {exc}", "connection") from exc
 
     def list_models(self) -> list[str]:
         """GET {base}/models (OpenAI-compatible; Ollama and DashScope compatible mode implement it)."""
@@ -129,12 +147,13 @@ class OpenAICompatibleProvider:
                 "messages": [{"role": "system", "content": sys},
                              {"role": "user", "content": json.dumps(user, default=str, separators=(",", ":"))}]}
         t0 = time.perf_counter()
-        try:
-            r = self.http.post(self.url, json=body)
-        except httpx.TimeoutException as exc:
-            raise ProviderError(f"timeout: {exc}", "connection") from exc
-        except httpx.HTTPError as exc:
-            raise ProviderError(f"connection error: {exc}", "connection") from exc
+        r = self._post(body)
+        if r.status_code == 400 and _unsupported_param(r.text):
+            # Some models (OpenAI reasoning models) reject max_tokens / temperature: the same request with
+            # max_completion_tokens and the model's default temperature, once.
+            body = {k: v for k, v in body.items() if k not in ("max_tokens", "temperature")}
+            body["max_completion_tokens"] = min(max_tokens, 8192)
+            r = self._post(body)
         latency = (time.perf_counter() - t0) * 1000
         if r.status_code == 429:
             ra = r.headers.get("retry-after")

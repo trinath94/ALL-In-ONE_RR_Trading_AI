@@ -32,14 +32,24 @@ def runs(**where):
         return [orch.AgentRunRecord.model_validate(r, from_attributes=True) for r in db.scalars(q)]
 
 
+ORIGINAL_21 = ["master_orchestrator", "broker_discovery", "symbol_scanner", "original_strategy_analysis", "smc_ict",
+               "price_action", "indicator_analysis", "market_regime", "multi_timeframe", "historical_performance",
+               "strategy_ranking", "strategy_correlation", "signal_quality", "news_events", "portfolio_risk",
+               "ai_learning", "adaptive_optimisation", "strategy_discovery", "trade_execution", "trade_management",
+               "post_trade_learning"]
+PARTS27_30_PHASE4 = ["fundamental_analysis", "entry_validation", "exit_optimisation", "failure_prediction", "ai_consensus"]
+
+
 def test_registry_is_closed_and_only_two_agents_touch_execution():
-    assert len(ag.REGISTRY) == 21
+    # Parts 27-30 Phase 4 added five agents to the same closed registry (no duplicates, the 21 originals unchanged
+    # and first, in order).
+    assert [a.id for a in ag.REGISTRY] == ORIGINAL_21 + PARTS27_30_PHASE4
     assert {a.id for a in ag.REGISTRY if a.execution_path} == {"trade_execution", "trade_management"}
     assert all(a.kind in ("deterministic", "llm", "hybrid") for a in ag.REGISTRY)
     llm = {a.id for a in ag.REGISTRY if a.kind != "deterministic"}
     # LLMs only for review of shortlisted candidates, research (strategy discovery, trade research, summaries) and
-    # learning explanations (Phase 10 / 14) -- and never on the execution path
-    assert llm == {"signal_quality", "strategy_discovery", "post_trade_learning", "ai_learning"}
+    # learning explanations (Phase 10 / 14), and the dual-provider review (Parts 27-30) -- never on the execution path
+    assert llm == {"signal_quality", "strategy_discovery", "post_trade_learning", "ai_learning", "ai_consensus"}
     assert not any(ag.BY_ID[a].execution_path for a in llm)
     assert set(ag.SPECIALIST_AGENT.values()) | set(ag.LEARNER_AGENT.values()) <= set(ag.BY_ID)
     assert set(ag.LEARNER_AGENT) == {j.name for j in ls.JOBS}, "every learner job belongs to an agent"
@@ -122,7 +132,7 @@ def test_control_room_api(scan):
     with TestClient(app) as c:
         login(c, "viewer9")
         rows = {a["id"]: a for a in c.get("/api/agents").json()}
-        assert len(rows) == 21 and rows["original_strategy_analysis"]["runs_24h"]["ok"] == 1
+        assert len(rows) == len(ORIGINAL_21 + PARTS27_30_PHASE4) and rows["original_strategy_analysis"]["runs_24h"]["ok"] == 1
         assert rows["trade_execution"]["last_run"] is None and rows["trade_execution"]["execution_path"] is True
         cyc = c.get("/api/agents/cycles").json()
         assert len(cyc) == 1 and cyc[0]["output"]["analysed"] == 6

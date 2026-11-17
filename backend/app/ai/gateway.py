@@ -44,6 +44,8 @@ TASKS = {
 # Tasks the engine calls (Phase 14: all of them).
 WIRED_TASKS = ("candidate_review", "strategy_discovery", "trade_research", "learning_explanation", "research_summary",
                "diagnostics")
+# Parts 27-30 Phase 4: tasks whose route may use mode "consensus" (two providers answer independently).
+CONSENSUS_TASKS = ("candidate_review",)
 ENV_PROVIDER = "anthropic (RR_ANTHROPIC_API_KEY)"
 MAX_RETRY_AFTER = 30.0
 COOLDOWN_S = 120
@@ -112,6 +114,53 @@ def chain_for(task: str) -> list[Hop]:
     if s.anthropic_api_key:
         return [Hop(ENV_PROVIDER, "anthropic", s.claude_model, None, s.anthropic_api_key, 180.0, 2, None, None)]
     return []
+
+
+def route_mode(task: str) -> str:
+    """'fallback' (original: first valid answer in chain order) or 'consensus'."""
+    try:
+        with session_scope() as db:
+            r = db.get(AITaskRoute, task)
+            mode = (r.mode if r and r.chain else None) or "fallback"
+    except Exception:  # noqa: BLE001
+        return "fallback"
+    return mode if mode == "consensus" and task in CONSENSUS_TASKS else "fallback"
+
+
+def run_consensus(task: str, hops: list[Hop], system: str, user: dict, schema: dict, model_cls: type[BaseModel],
+                  max_tokens: int = 16000, provider_factory=None, sleep=time.sleep) -> list[tuple]:
+    """Ask the first two *different* providers of the chain independently (each with its own retries, no fallback to
+    a third). Returns [(output | None, meta | None, error | None), ...] for both; the caller combines them."""
+    from concurrent.futures import ThreadPoolExecutor
+    pair, seen = [], set()
+    for h in hops:
+        if h.name not in seen:
+            pair.append(h)
+            seen.add(h.name)
+        if len(pair) == 2:
+            break
+    if len(pair) < 2:
+        raise GatewayError("consensus mode needs two different enabled providers in the route")
+
+    def one(h: Hop):
+        try:
+            out, meta = run_hops(task, [h], system, user, schema, model_cls, max_tokens, provider_factory, sleep)
+            return out, meta, None
+        except GatewayError as exc:
+            return None, None, f"{h.name}: {exc}"
+    with ThreadPoolExecutor(2) as ex:
+        return list(ex.map(one, pair))
+
+
+def combine_reviews(engine_direction: str | None, reviews: list) -> tuple[str, str]:
+    """Consensus rule for two boundary-checked reviews: confirm only when both confirm the engine's direction; any
+    rejection rejects; anything else waits. Returns (decision, reason)."""
+    ds = [r.decision for r in reviews]
+    if any(d == "NO_TRADE" for d in ds):
+        return "NO_TRADE", "at least one provider rejected the setup"
+    if all(d in ("BUY", "SELL") for d in ds) and len(set(ds)) == 1 and ds[0] == engine_direction:
+        return ds[0], "both providers confirmed the engine's direction"
+    return "WAIT_FOR_CONFIRMATION", f"providers did not agree ({' / '.join(ds)})"
 
 
 def configured(task: str) -> bool:
@@ -270,6 +319,8 @@ class GatewayReviewer:
         from app.services.events import agent_activity
         agent_activity("claude_agent", "analysing", f"Reviewing {candidate.get('symbol')} {candidate.get('timeframe')} "
                                                     f"{candidate.get('direction')}")
+        if route_mode("candidate_review") == "consensus":
+            return self._review_consensus(candidate)
         try:
             review, meta = run("candidate_review", SYSTEM_PROMPT, {"task": "review_candidate", "candidate": candidate},
                                REVIEW_SCHEMA, Review, provider_factory=self.provider_factory)
@@ -279,6 +330,40 @@ class GatewayReviewer:
         agent_activity("claude_agent", "approved" if review.decision in ("BUY", "SELL") else "rejected",
                        f"{candidate.get('symbol')}: {review.decision} via {meta['provider']}")
         return review, {**meta, "model": f"{meta['provider']}/{meta['model']}"}
+
+
+    def _review_consensus(self, candidate: dict):
+        """Two providers review independently; each answer is schema-validated and boundary-checked on its own, then
+        combined by ``combine_reviews``. If either provider gives no valid answer the candidate stays UNREVIEWED (an
+        error), so it is never auto-executed on one opinion."""
+        from app.agents.claude_agent import REVIEW_SCHEMA, SYSTEM_PROMPT, AgentError, Review, enforce_boundaries
+        from app.services.events import agent_activity
+        try:
+            answers = run_consensus("candidate_review", chain_for("candidate_review"), SYSTEM_PROMPT,
+                                    {"task": "review_candidate", "candidate": candidate}, REVIEW_SCHEMA, Review,
+                                    provider_factory=self.provider_factory)
+        except GatewayError as exc:
+            raise AgentError(f"consensus: {exc}") from exc
+        failed = [e for _, _, e in answers if e]
+        if failed:
+            raise AgentError("consensus: no valid answer from " + "; ".join(failed))
+        reviews = [enforce_boundaries(candidate, Review.model_validate(o.model_dump())) for o, _, _ in answers]
+        metas = [m for _, m, _ in answers]
+        decision, why = combine_reviews(candidate.get("direction"), reviews)
+        base = next((r for r in reviews if r.decision == decision), reviews[0])
+        out = Review.model_validate({**base.model_dump(), "decision": decision,
+                                     "explanation": f"[AI consensus: {why}] " + base.explanation})
+        votes = [{"provider": m["provider"], "model": m["model"], "decision": r.decision} for r, m in zip(reviews, metas)]
+        agent_activity("claude_agent", "approved" if decision in ("BUY", "SELL") else "rejected",
+                       f"{candidate.get('symbol')}: {decision} by consensus of "
+                       + " + ".join(v["provider"] for v in votes))
+        meta = {"provider": "consensus(" + "+".join(v["provider"] for v in votes) + ")",
+                "model": " + ".join(f"{v['provider']}/{v['model']}" for v in votes),
+                "input_tokens": sum(m["input_tokens"] for m in metas), "output_tokens": sum(m["output_tokens"] for m in metas),
+                "latency_ms": max(m["latency_ms"] for m in metas), "attempts": sum(m["attempts"] for m in metas),
+                "fallback_from": None, "mode": "consensus",
+                "consensus": {"votes": votes, "decision": decision, "rule": why}}
+        return out, meta
 
 
 def make_reviewer(provider_factory=None) -> GatewayReviewer | None:

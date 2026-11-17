@@ -1,4 +1,4 @@
-"""The 21 specialist agents of the RR Trading One control room (specification Part 9), as a closed registry.
+"""The specialist agents of the RR Trading One control room (specification Part 9), as a closed registry.
 
 They are **not** independent bots. Each entry maps an agent to the existing engine component that does the work
 (reused, not duplicated) and states what it may do. A central orchestrator (`app.orchestration.orchestrator`) runs
@@ -95,9 +95,28 @@ REGISTRY: list[AgentSpec] = [
     A("post_trade_learning", "Post-Trade Learning Agent", "1.0", HYBRID,
       "app.learning_engine.failure + performance (learner jobs); AI trade research via app.ai.gateway (trade_research)", "PostTradeAnalysis", "learner service",
       "Failure analysis and statistics; read-only"),
+    # Parts 27-30 Phase 4 (Part 27): views computed from data the engine already has, recorded in each opportunity's
+    # decision trace. None of them can size, submit or loosen anything.
+    A("fundamental_analysis", "Fundamental Analysis Agent", "1.0", DETERMINISTIC,
+      "app.intelligence.opportunity.fundamental_view (economic calendar)", "FundamentalView", "analysis service",
+      "Calendar context in the decision trace; 'unavailable' without a healthy calendar, never 'no news'"),
+    A("entry_validation", "Entry Validation Agent", "1.0", DETERMINISTIC, "app.intelligence.opportunity.entry_validation",
+      "EntryValidation", "analysis service",
+      "Wrong-side stop/target -> NO_TRADE; price/spread checks advisory, or downgrade to WAIT with RR_OPPORTUNITY_GATE=enforce"),
+    A("exit_optimisation", "Exit Optimisation Agent", "1.0", DETERMINISTIC, "app.intelligence.opportunity.exit_plan",
+      "ExitPlan", "analysis service", "Exit plan from the setup's levels and the Risk Engine's own parameters; read-only"),
+    A("failure_prediction", "Failure Prediction Agent", "1.0", DETERMINISTIC,
+      "app.intelligence.opportunity.failure_prediction", "FailureRisk", "analysis service",
+      "Named risk factors (not a probability); HIGH downgrades to WAIT only with RR_OPPORTUNITY_GATE=enforce"),
+    A("ai_consensus", "AI Consensus Agent", "1.0", LLM, "app.ai.gateway (route mode 'consensus': two providers answer "
+      "independently)", "ConsensusReview", "analysis service (shortlisted candidates)",
+      "Confirms only when both providers confirm the engine's direction; otherwise the more cautious answer"),
 ]
 BY_ID = {a.id: a for a in REGISTRY}
-assert len(REGISTRY) == 21 and len(BY_ID) == 21
+# 21 original agents (Part 9) + 5 added in Parts 27-30 Phase 4. The count is pinned so an agent cannot be added or
+# duplicated by accident.
+ORIGINAL_AGENTS = 21
+assert len(REGISTRY) == ORIGINAL_AGENTS + 5 and len(BY_ID) == len(REGISTRY)
 
 # Consensus specialists -> control-room agents
 SPECIALIST_AGENT = {"SMC": "smc_ict", "ICT": "smc_ict", "LIQUIDITY": "smc_ict", "PRICE_ACTION": "price_action",

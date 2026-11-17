@@ -8,7 +8,7 @@ import { useApi } from "@/lib/hooks";
 const KIND: Record<string, any> = { deterministic: "cyan", llm: "violet", hybrid: "warn" };
 const STATUS: Record<string, any> = { ok: "neon", partial: "warn", error: "bear", skipped: "dim" };
 
-/** The 21 specialist agents under one orchestrator: what each is, what it may do, and what it actually did. */
+/** The specialist agents under one orchestrator: what each is, what it may do, and what it actually did. */
 export default function Agents() {
   const { data, error } = useApi<any[]>("/api/agents", 20000);
   const { data: cycles } = useApi<any[]>("/api/agents/cycles", 20000);
