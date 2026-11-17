@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-backup-import-report"
+description = "Enables the backup_import_report command without any pre-configured scope."
+commands.allow = ["backup_import_report"]
+
+[[permission]]
+identifier = "deny-backup-import-report"
+description = "Denies the backup_import_report command without any pre-configured scope."
+commands.deny = ["backup_import_report"]

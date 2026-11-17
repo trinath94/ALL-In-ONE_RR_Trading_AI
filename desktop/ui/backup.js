@@ -108,6 +108,10 @@ async function runImport() {
       lines.push(`  ${i + 1}. [${OUTCOME[s.outcome] || s.outcome}] ${describeStep(s.step)} (${(s.duration_ms / 1000).toFixed(1)} s)`);
       if (s.detail) lines.push(`        ${s.detail}`);
     });
+    try {
+      // Phase 23: the migration report (Part 23 checklist, domains, tables, policy changes)
+      lines.push("", await invoke("backup_import_report", { backup: id }));
+    } catch { /* no report (refused before the plan ran) */ }
     bkOut(lines.join("\n"));
   } catch (e) {
     bkOut(`Import ${id}: ${e}`);

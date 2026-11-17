@@ -11,6 +11,7 @@ pub mod connector;
 pub mod engine;
 pub mod health;
 pub mod local;
+pub mod migration;
 pub mod paths;
 pub mod runner;
 pub mod secrets;

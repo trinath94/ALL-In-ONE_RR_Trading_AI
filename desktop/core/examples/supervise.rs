@@ -71,6 +71,9 @@ fn main() {
             println!("{}", serde_json::to_string_pretty(&rep).unwrap());
             std::process::exit(if ok { 0 } else { 1 });
         }
+        // Phase 23
+        "import-report" => serde_json::Value::String(sup.migration_report(args.get(1).map(String::as_str).unwrap_or(""))
+            .unwrap_or_else(|e| fail(&e))),
         // Phase 21
         "backup-key" => sup.export_backup_key(args.get(1).map(String::as_str)).unwrap_or_else(|e| fail(&e)),
         // the key comes from the environment, never from argv

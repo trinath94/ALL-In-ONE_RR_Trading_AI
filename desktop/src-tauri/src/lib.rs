@@ -192,6 +192,12 @@ async fn backup_import(state: State<'_, AppState>, backup: String, confirmation:
     with_supervisor(&state, move |sup, _| sup.import(&backup, confirmation.as_deref()).map_err(|e| e.to_string())).await
 }
 
+/// Phase 23: the migration report written after an import (Markdown).
+#[tauri::command]
+async fn backup_import_report(state: State<'_, AppState>, backup: String) -> Result<String, String> {
+    with_supervisor(&state, move |sup, _| sup.migration_report(&backup)).await
+}
+
 /// Phase 21: this installation's backup key, to keep offline (typed phrase, checked again in the supervisor).
 #[tauri::command]
 async fn backup_key_export(state: State<'_, AppState>, confirmation: Option<String>) -> Result<serde_json::Value, String> {
@@ -460,7 +466,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console,
             mt5_overview, mt5_detect, mt5_save_profile, mt5_select_profile, mt5_delete_profile, mt5_link,
             engine_status, engine_bootstrap_admin, engine_use_demo_account, backup_list, backup_restore, backup_import_file, backup_import, prerequisites,
-            backup_key_export, backup_key_add, rotate_secrets])
+            backup_key_export, backup_key_add, rotate_secrets, backup_import_report])
         .setup(move |app| {
             build_tray(app.handle())?;
             if !start_minimized {

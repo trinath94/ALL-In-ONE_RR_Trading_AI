@@ -112,7 +112,7 @@ impl Compose {
 
     /// Phase 21: run SQL read from stdin (so a value such as a new password never appears in a process's arguments).
     pub fn psql_stdin(&self, database: &str) -> Vec<String> {
-        self.with(&["exec", "-T", "postgres", "psql", "-U", "rr", "-d", database, "--set=ON_ERROR_STOP=1", "-q", "-f", "-"], &[])
+        self.with(&["exec", "-T", "postgres", "psql", "-U", "rr", "-d", database, "--set=ON_ERROR_STOP=1", "-q", "-At", "-f", "-"], &[])
     }
 
     /// Phase 18: restore the copied dump into the scratch database, stopping at the first error.

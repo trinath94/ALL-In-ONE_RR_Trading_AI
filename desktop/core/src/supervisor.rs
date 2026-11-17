@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use crate::compose::{self, Compose, ServiceStatus};
 use crate::health::{HealthState, ProbeResult};
 use crate::runner::{CommandOutput, CommandSpec, Runner};
+use crate::migration::{self, SourceRecord};
 use crate::secrets::StackSecrets;
 use serde::Serialize;
 use std::io::Write;
@@ -171,6 +172,35 @@ fn service_by_name(name: &str) -> Option<Service> {
 fn split(services: &[Service]) -> (Vec<Service>, bool) {
     let compose: Vec<Service> = services.iter().copied().filter(|s| s.compose_name().is_some()).collect();
     (compose, services.contains(&Service::Mt5Connector))
+}
+
+/// Phase 23: the manifest `scripts/migrate_export.sh` writes next to a dump (`rr_migrate_X.dump` ->
+/// `rr_migrate_X.manifest.json`). None when there is none; an error when it does not describe this exact file.
+fn read_manifest(source: &Path, size: u64) -> Result<Option<serde_json::Value>, String> {
+    let name = source.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let Some(stem) = name.strip_suffix(".dump") else { return Ok(None) };
+    let path = source.with_file_name(format!("{stem}.manifest.json"));
+    let Ok(text) = std::fs::read(&path) else { return Ok(None) };
+    let m: serde_json::Value = serde_json::from_slice(&text).map_err(|_| format!("{} is not a valid manifest", path.display()))?;
+    if m["format"].as_str() != Some("rr-migrate-manifest/1") || !m["tables"].is_object() {
+        return Err(format!("{} is not an RR Trading One migration manifest", path.display()));
+    }
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    let mut f = std::fs::File::open(source).map_err(|e| format!("cannot read the file: {e}"))?;
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        use std::io::Read;
+        let n = f.read(&mut buf).map_err(|e| format!("cannot read the file: {e}"))?;
+        if n == 0 { break; }
+        h.update(&buf[..n]);
+    }
+    let digest: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if m["sha256"].as_str() != Some(digest.as_str()) || m["bytes"].as_u64() != Some(size) {
+        return Err("the dump does not match its manifest (sha256 or size differ): it was damaged in transfer or is a different \
+                    file. Nothing was added; copy it again from the server.".into());
+    }
+    Ok(Some(m))
 }
 
 fn now_secs() -> u64 {
@@ -439,6 +469,9 @@ impl<'a> Supervisor<'a> {
         if &head != b"PGDMP" {
             return Err("not a PostgreSQL custom-format dump (make it with pg_dump -Fc, as the server's backup.sh does)".into());
         }
+        // Phase 23: the server's export (scripts/migrate_export.sh) writes a manifest next to the dump. When present,
+        // the file must be exactly the one it describes (sha256 and size): a dump damaged in transfer is refused here.
+        let manifest = read_manifest(source, meta.len())?;
         std::fs::create_dir_all(&self.cfg.backups_dir).map_err(|e| format!("backup directory: {e}"))?;
         let mut ts = now_secs();
         while self.backup_path(&format!("import-{ts}")).is_some() {
@@ -449,6 +482,10 @@ impl<'a> Supervisor<'a> {
         let key = self.secrets.own_backup_key()?;
         crate::backupcrypt::encrypt_file(source, &self.cfg.backups_dir.join(format!("{id}.rrbk")), &key)
             .map_err(|e| format!("copy failed: {e}"))?;
+        if let Some(m) = manifest {
+            std::fs::write(self.side_file(&id, "manifest.json"), serde_json::to_vec_pretty(&m).unwrap_or_default())
+                .map_err(|e| format!("cannot keep the manifest: {e}"))?;
+        }
         Ok(id)
     }
 
@@ -459,7 +496,58 @@ impl<'a> Supervisor<'a> {
             return Err(ActionError::Unknown(format!("import {backup} (not in the backups folder)")));
         }
         self.check_backup_key(backup)?;
-        Ok(self.run_plan("import_database", plan))
+        let started = now_secs();
+        for f in ["source.json", "result.json"] {
+            let _ = std::fs::remove_file(self.side_file(backup, f));      // results of an earlier attempt
+        }
+        let mut rep = self.run_plan("import_database", plan);
+        let t0 = Instant::now();
+        let (outcome, detail) = match self.write_migration_report(backup, &rep, started) {
+            Ok(p) => (Outcome::Ok, format!("migration report: {}", p.display())),
+            Err(e) => (Outcome::Failed, format!("the migration report could not be written: {e}")),
+        };
+        rep.steps.push(StepReport { step: Step::WriteMigrationReport { backup: backup.to_string() }, outcome, detail,
+                                    duration_ms: t0.elapsed().as_millis() as u64 });
+        Ok(rep)
+    }
+
+    /// Phase 23: the migration report of an import, if one was written.
+    pub fn migration_report(&self, backup: &str) -> Result<String, String> {
+        if !valid_backup_id(backup) {
+            return Err("invalid backup id".into());
+        }
+        std::fs::read_to_string(self.side_file(backup, "migration-report.md")).map_err(|_| format!("no migration report for {backup}"))
+    }
+
+    /// A file kept next to a backup (`<id>.<suffix>`): manifest, source record, result, report.
+    fn side_file(&self, backup: &str, suffix: &str) -> PathBuf {
+        self.cfg.backups_dir.join(format!("{backup}.{suffix}"))
+    }
+
+    /// Phase 23: run a SQL script through psql's stdin (generated SQL; identifiers validated by `migration`).
+    fn psql_script(&self, database: &str, sql: &str) -> Result<CommandOutput, String> {
+        let mut env = self.secrets.compose_env();
+        env.push(("RR_ONE_IMAGE_TAG".into(), self.cfg.image_tag.clone()));
+        let spec = CommandSpec { program: self.cfg.compose.docker.clone(), args: self.cfg.compose.psql_stdin(database), env,
+            timeout: T_DUMP, stdout_file: None, stdin: Some(sql.to_string()) };
+        let out = self.runner.run(&spec).map_err(|e| format!("could not run docker: {e}"))?;
+        if out.success() { Ok(out) } else { Err(self.secrets.redact(&out.failure_summary())) }
+    }
+
+    fn pairs(&self, database: &str, sql: &str) -> Result<BTreeMap<String, String>, String> {
+        let out = self.run_ok(self.cfg.compose.psql(database, sql), T_DUMP)?;
+        Ok(out.stdout.lines().filter_map(|l| l.trim().split_once('|').map(|(a, b)| (a.to_string(), b.to_string()))).collect())
+    }
+
+    /// Records the import could replace, or None when they cannot be read (then only the explicit policy proceeds).
+    fn local_records(&self) -> Option<BTreeMap<String, u64>> {
+        let m = self.pairs("rr_trading", migration::LOCAL_RECORDS_SQL).ok()?;
+        let counts: BTreeMap<String, u64> = m.iter().filter_map(|(k, v)| Some((k.clone(), v.parse().ok()?))).collect();
+        (counts.len() == 7).then_some(counts)
+    }
+
+    fn source_record(&self, backup: &str) -> Option<SourceRecord> {
+        std::fs::read(self.side_file(backup, "source.json")).ok().and_then(|b| serde_json::from_slice(&b).ok())
     }
 
     fn table_counts(&self, database: &str) -> Result<BTreeMap<String, u64>, String> {
@@ -470,14 +558,25 @@ impl<'a> Supervisor<'a> {
         }).collect())
     }
 
-    fn counts_file(&self, backup: &str) -> PathBuf {
-        self.cfg.backups_dir.join(format!("{backup}.counts.json"))
-    }
-
-    /// Restore into a scratch database and record every table's row count; the real database is not touched.
-    fn verify_dump(&self, backup: &str) -> (Outcome, String) {
+    /// Restore into a scratch database and record every table's row count and content fingerprint; the real database
+    /// is not touched. Phase 23: refuses first when this PC holds trading records and the REPLACE policy was not given.
+    fn verify_dump(&self, backup: &str, replace_local: bool) -> (Outcome, String) {
         if !valid_backup_id(backup) {
             return (Outcome::Failed, "invalid backup id".into());
+        }
+        let local = self.local_records();
+        let protected: Vec<String> = local.iter().flat_map(|m| migration::PROTECTED_LOCAL.iter()
+            .filter_map(|t| m.get(*t).filter(|n| **n > 0).map(|n| format!("{t} {n}")))).collect();
+        if !replace_local {
+            if local.is_none() {
+                return (Outcome::Failed, format!("this PC's database could not be checked for trading records, so nothing was \
+                    replaced. To replace whatever it holds, import with the explicit policy: {}", crate::actions::REPLACE_PHRASE));
+            }
+            if !protected.is_empty() {
+                return (Outcome::Failed, format!("this PC already holds trading records ({}); nothing was replaced. To replace \
+                    them with the server's database, import with the explicit policy: {} (a safety backup is taken first)",
+                    protected.join(", "), crate::actions::REPLACE_PHRASE));
+            }
         }
         let (file, temp) = match self.plain_dump(backup) {
             Ok(x) => x,
@@ -500,46 +599,157 @@ impl<'a> Supervisor<'a> {
             if counts.is_empty() {
                 return Err("the dump contains no tables".into());
             }
-            std::fs::write(self.counts_file(backup), serde_json::to_vec_pretty(&counts).unwrap_or_default())
-                .map_err(|e| format!("cannot record the row counts: {e}"))?;
-            Ok(counts)
+            let shapes = migration::parse_catalog(&self.run_ok(self.cfg.compose.psql(SCRATCH_DB, migration::CATALOG_SQL), T_DUMP)?.stdout);
+            let fingerprints = migration::fingerprints_for(&shapes, &self.psql_script(SCRATCH_DB, &migration::fingerprint_sql(&shapes, None))?.stdout);
+            if fingerprints.len() < shapes.len() || shapes.is_empty() {
+                return Err("the dump's content could not be fingerprinted".into());
+            }
+            let manifest: Option<serde_json::Value> = std::fs::read(self.side_file(backup, "manifest.json")).ok()
+                .and_then(|b| serde_json::from_slice(&b).ok());
+            if let Some(m) = &manifest {
+                // Same snapshot on the server: the restored dump must hold exactly the rows the manifest lists.
+                let listed: BTreeMap<String, u64> = m["tables"].as_object().map(|o| o.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), v.as_u64()?))).collect()).unwrap_or_default();
+                let version = self.pairs(SCRATCH_DB, "SELECT 'v|' || version_num FROM alembic_version").ok()
+                    .and_then(|p| p.get("v").cloned());
+                let diffs: Vec<String> = listed.keys().chain(counts.keys()).collect::<std::collections::BTreeSet<_>>().into_iter()
+                    .filter(|t| listed.get(*t) != counts.get(*t))
+                    .map(|t| format!("{t}: manifest {}, dump {}", listed.get(t).map_or("-".into(), |n| n.to_string()),
+                                     counts.get(t).map_or("-".into(), |n| n.to_string()))).collect();
+                if !diffs.is_empty() || version.as_deref() != m["alembic_version"].as_str() {
+                    return Err(format!("the restored dump does not match its manifest; nothing was replaced: {}{}",
+                        diffs.join("; "), if version.as_deref() != m["alembic_version"].as_str() { " (schema version differs)" } else { "" }));
+                }
+            }
+            let rec = SourceRecord { counts: counts.clone(), shapes, fingerprints, manifest: manifest.clone(),
+                local_before: local.clone().unwrap_or_default(),
+                policy: if replace_local { "REPLACE: the PC's database is replaced (explicit policy)".into() }
+                        else { "IMPORT: the PC held no trading records".into() } };
+            std::fs::write(self.side_file(backup, "source.json"), serde_json::to_vec(&rec).unwrap_or_default())
+                .map_err(|e| format!("cannot record the dump's content: {e}"))?;
+            Ok((counts, manifest.is_some()))
         })();
         let _ = self.run_ok(self.cfg.compose.psql("postgres", &drop_scratch), T_QUICK);
         let _ = self.run_ok(self.cfg.compose.remove_restore_file(), T_QUICK);
         match result {
-            Ok(c) => (Outcome::Ok, format!("restored into a scratch database: {} tables, {} rows; nothing replaced yet",
-                                           c.len(), c.values().sum::<u64>())),
+            Ok((c, m)) => (Outcome::Ok, format!("restored into a scratch database: {} tables, {} rows, every table's content \
+                fingerprinted; {}; nothing replaced yet", c.len(), c.values().sum::<u64>(),
+                if m { "matches the server's manifest (sha256, row counts, schema version)" }
+                else { "no server manifest (integrity checked by the restore alone)" })),
             Err(e) => (Outcome::Failed, e),
         }
     }
 
-    /// After the real restore and the migrations: every table of the scratch restore has the same row count.
+    /// After the real restore and the migrations: every row the server had is present and unchanged (content
+    /// fingerprints over the server's columns and rows), grouped into Part 23's domains. Also records what the reset
+    /// to a new installation is about to change, for the report.
     fn verify_restored(&self, backup: &str) -> (Outcome, String) {
-        let expected: BTreeMap<String, u64> = match std::fs::read(self.counts_file(backup)).ok()
-            .and_then(|b| serde_json::from_slice(&b).ok()) {
-            Some(c) => c,
-            None => return (Outcome::Failed, "no recorded row counts for this import".into()),
+        let Some(src) = self.source_record(backup) else {
+            return (Outcome::Failed, "no record of the verified dump for this import".into());
         };
-        let actual = match self.table_counts("rr_trading") {
-            Ok(c) => c,
+        let res = (|| -> Result<(Vec<migration::TableResult>, usize), String> {
+            let actual = self.table_counts("rr_trading")?;
+            let now_shapes = migration::parse_catalog(&self.run_ok(self.cfg.compose.psql("rr_trading", migration::CATALOG_SQL), T_DUMP)?.stdout);
+            let shapes: BTreeMap<String, migration::Shape> = src.shapes.iter()
+                .filter(|(t, sh)| now_shapes.get(*t).is_some_and(|n| n.has_id == sh.has_id && sh.columns.iter().all(|c| n.columns.contains(c))))
+                .map(|(t, sh)| (t.clone(), sh.clone())).collect();
+            let now = migration::fingerprints_for(&shapes, &self.psql_script("rr_trading", &migration::fingerprint_sql(&shapes, Some(&src.fingerprints)))?.stdout);
+            Ok((migration::compare(&src, &actual, &now), actual.len().saturating_sub(src.counts.len())))
+        })();
+        let (results, new_tables) = match res {
+            Ok(r) => r,
             Err(e) => return (Outcome::Failed, e),
         };
-        // No row may be lost. A table may only grow by the reference data this version's migrations and seed add
-        // (new permissions, roles, strategies); those are listed so the difference is visible.
-        let lost: Vec<String> = expected.iter().filter(|(t, n)| actual.get(*t).map_or(true, |a| a < *n))
-            .map(|(t, n)| format!("{t}: expected {n}, found {}", actual.get(t).map(|x| x.to_string()).unwrap_or("no table".into())))
-            .collect();
-        let grown: Vec<String> = expected.iter()
-            .filter_map(|(t, n)| actual.get(t).filter(|a| *a > n).map(|a| format!("{t} +{}", a - n)))
-            .collect();
-        if lost.is_empty() {
-            let added = if grown.is_empty() { String::new() } else { format!(" (added by this version: {})", grown.join(", ")) };
-            (Outcome::Ok, format!("no row lost: all {} tables of the verified dump present with at least their {} rows{added}; \
-                                   {} new tables from migrations", expected.len(), expected.values().sum::<u64>(),
-                                  actual.len().saturating_sub(expected.len())))
+        let observations = self.pairs("rr_trading", migration::POLICY_OBSERVATIONS_SQL).unwrap_or_default();
+        let _ = std::fs::write(self.side_file(backup, "result.json"), serde_json::to_vec(&serde_json::json!({
+            "tables": results, "new_tables": new_tables, "before_reset": observations })).unwrap_or_default());
+        let bad = migration::failed(&results);
+        let count = |v: migration::Verdict| results.iter().filter(|r| r.verdict == v).count();
+        if bad.is_empty() {
+            let grown: Vec<String> = results.iter().filter(|r| r.verdict == migration::Verdict::Grew)
+                .map(|r| format!("{} +{}", r.table, r.rows_now.unwrap_or(0).saturating_sub(r.source_rows))).collect();
+            (Outcome::Ok, format!("content verified: all {} tables of the server present; {} unchanged, {} with every server \
+                row unchanged plus rows this version adds ({}), {} changed by policy; {} new tables from migrations",
+                results.len(), count(migration::Verdict::Unchanged), grown.len(), grown.join(", "),
+                count(migration::Verdict::Policy), new_tables))
         } else {
-            (Outcome::Failed, format!("rows lost in the import: {}", lost.join("; ")))
+            (Outcome::Failed, format!("the migrated database differs from the server's: {}",
+                bad.iter().map(|r| format!("{}: {}", r.table, r.detail)).collect::<Vec<_>>().join("; ")))
         }
+    }
+
+    /// Phase 23 (Part 23 item 15): the migration report, from the plan's steps and the records kept next to the backup.
+    fn write_migration_report(&self, backup: &str, rep: &PlanReport, started: u64) -> Result<PathBuf, String> {
+        let src = self.source_record(backup);
+        let result: Option<serde_json::Value> = std::fs::read(self.side_file(backup, "result.json")).ok()
+            .and_then(|b| serde_json::from_slice(&b).ok());
+        let tables: Vec<migration::TableResult> = result.as_ref().and_then(|r| serde_json::from_value(r["tables"].clone()).ok())
+            .unwrap_or_default();
+        let step_ok = |f: &dyn Fn(&Step) -> bool| rep.steps.iter().find(|s| f(&s.step)).map(|s| s.outcome);
+        let mark = |o: Option<Outcome>| match o { Some(Outcome::Ok) => "PASS", Some(Outcome::Failed) => "FAIL", _ => "not reached" };
+        let safety = self.list_backups().into_iter().find(|b| b.kind == "pre-restore" && b.created >= started).map(|b| b.id);
+        let version_now = self.pairs("rr_trading", "SELECT 'v|' || version_num FROM alembic_version").ok().and_then(|p| p.get("v").cloned());
+        let manifest = src.as_ref().and_then(|s| s.manifest.clone());
+        let mut md = vec![format!("# Migration report: {backup}"), String::new(),
+            format!("* **Outcome:** {}", if rep.ok { "completed and verified" } else { "FAILED (see the steps below)" }),
+            format!("* **Written:** {} (Unix time) by RR Trading One {}", now_secs(), env!("CARGO_PKG_VERSION")),
+            format!("* **Policy:** {}", src.as_ref().map_or("not reached".to_string(), |s| s.policy.clone())),
+            format!("* **Source:** {}", manifest.as_ref().map_or("a dump without a manifest".to_string(), |m| format!(
+                "`{}` exported {} from database `{}` (PostgreSQL {}), schema {}, sha256 `{}`, {} bytes",
+                m["dump"].as_str().unwrap_or("?"), m["created_utc"].as_str().unwrap_or("?"), m["database"].as_str().unwrap_or("?"),
+                m["postgres_version"].as_str().unwrap_or("?"), m["alembic_version"].as_str().unwrap_or("?"),
+                m["sha256"].as_str().unwrap_or("?"), m["bytes"]))),
+            format!("* **Schema now:** {}", version_now.unwrap_or_else(|| "unknown".into())),
+            format!("* **This PC's previous database:** {}", safety.as_ref().map_or("no safety backup was taken (nothing was replaced)".to_string(),
+                |id| format!("kept in the safety backup `{id}` (restore it with RESTORE DATABASE to undo this import)"))),
+            "* **The Ubuntu server:** not changed by the export or the import; keep it until this installation is accepted (rollback).".into(),
+            String::new(), "## Part 23 checklist".into(), String::new(), "| # | Item | Result |".into(), "|---|---|---|".into()];
+        let row = |n: usize, item: &str, res: String| format!("| {n} | {item} | {res} |");
+        md.push(row(1, "Back up PostgreSQL", format!("{} {}", if manifest.is_some() { "server export with manifest;" } else { "server dump (no manifest);" },
+            match step_ok(&|s| matches!(s, Step::BackupDatabase { .. })) { Some(Outcome::Ok) => "this PC's database backed up first: PASS",
+                o => if mark(o) == "FAIL" { "this PC's backup: FAIL" } else { "this PC's backup: not reached" } })));
+        md.push(row(2, "Verify backup integrity", format!("{}{}", mark(step_ok(&|s| matches!(s, Step::VerifyDump { .. }))),
+            if manifest.is_some() { " (sha256 on arrival; restored row counts and schema equal the manifest)" } else { " (scratch restore)" })));
+        md.push(row(3, "Restore to local PostgreSQL", mark(step_ok(&|s| matches!(s, Step::RestoreDatabase { .. }))).into()));
+        md.push(row(4, "Apply required Alembic migrations", mark(step_ok(&|s| matches!(s, Step::RunMigrations))).into()));
+        let doms = migration::domains(&tables);
+        for (i, (name, text, ok)) in doms.iter().enumerate() {
+            let res = if tables.is_empty() { "not reached".to_string() } else { format!("{}: {text}", if *ok { "PASS" } else { "FAIL" }) };
+            md.push(row(5 + i, &format!("Verify {}", name.to_lowercase()), res));
+        }
+        md.push(row(14, "Verify database row counts", if tables.is_empty() { "not reached".into() } else {
+            let lost = tables.iter().filter(|t| t.verdict == migration::Verdict::Lost).count();
+            format!("{}: {} tables, no row lost{}", if lost == 0 { "PASS" } else { "FAIL" }, tables.len(),
+                if lost == 0 { String::new() } else { format!(" except in {lost} tables") }) }));
+        md.push(row(15, "Produce a migration report", "this document".into()));
+        if let Some(obs) = result.as_ref().map(|r| r["before_reset"].clone()).filter(|o| o.is_object()) {
+            md.extend([String::new(), "## Changed on purpose after verification (start like a new installation)".into(), String::new(),
+                format!("* Mode {} → DEMO; auto trading {} → off; reconciliation with the broker required before any entry.",
+                        obs["active_mode"].as_str().unwrap_or("?"), obs["auto_trading"].as_str().unwrap_or("?")),
+                format!("* LIVE approvals cleared: {} (active LIVE accounts deactivated: {}).", obs["live_approved"].as_str().unwrap_or("?"),
+                        obs["live_active"].as_str().unwrap_or("?")),
+                format!("* Server identities no longer trusted: {} connector registrations revoked, {} unused link tokens expired, {} sessions revoked.",
+                        obs["connectors"].as_str().unwrap_or("?"), obs["link_tokens"].as_str().unwrap_or("?"), obs["sessions"].as_str().unwrap_or("?"))]);
+        }
+        if let Some(s) = &src {
+            md.extend([String::new(), "## This PC before the import".into(), String::new(),
+                s.local_before.iter().map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ")]);
+        }
+        if !tables.is_empty() {
+            md.extend([String::new(), "## Tables".into(), String::new(), "| Table | Server rows | Rows now | Result |".into(), "|---|---|---|---|".into()]);
+            md.extend(tables.iter().map(|t| format!("| {} | {} | {} | {:?}: {} |", t.table, t.source_rows,
+                t.rows_now.map_or("-".into(), |n| n.to_string()), t.verdict, t.detail)));
+        }
+        md.extend([String::new(), "## Steps".into(), String::new()]);
+        md.extend(rep.steps.iter().enumerate().map(|(i, s)| format!("{}. `{}` {:?}: {}", i + 1,
+            serde_json::to_value(&s.step).ok().and_then(|v| v["step"].as_str().map(String::from)).unwrap_or_default(), s.outcome,
+            s.detail.replace('\n', " "))));
+        md.extend([String::new(), "## After the import".into(), String::new(),
+            "* Sign in with the server's user accounts; link the MT5 connector on this PC; re-enter AI provider keys and broker passwords (encrypted with the server's keys); retrain models (the server's are unsigned here).".into(),
+            "* Before switching, switch auto trading OFF on the server. Keep the server until this installation is accepted.".into()]);
+        let path = self.side_file(backup, "migration-report.md");
+        std::fs::write(&path, md.join("\n") + "\n").map_err(|e| e.to_string())?;
+        Ok(path)
     }
 
     fn restore_database(&self, backup: &str) -> (Outcome, String) {
@@ -703,9 +913,10 @@ impl<'a> Supervisor<'a> {
                 }
             }
             Step::RestoreDatabase { backup } => self.restore_database(backup),
-            Step::VerifyDump { backup } => self.verify_dump(backup),
+            Step::VerifyDump { backup, replace_local } => self.verify_dump(backup, *replace_local),
             Step::VerifyRestored { backup } => self.verify_restored(backup),
             Step::RotateAccessSecrets => (Outcome::Failed, "a rotation runs only through rotate_secrets".into()),
+            Step::WriteMigrationReport { .. } => (Outcome::Failed, "the report is written by import, after its plan".into()),
             Step::ResetForNewInstallation => match self.run_ok(self.cfg.compose.psql("rr_trading", RESET_FOR_NEW_INSTALLATION), T_QUICK) {
                 Ok(_) => (Outcome::Ok, "DEMO, auto trading OFF, LIVE approvals cleared, reconciliation required; the server's connectors, link tokens \
                            and sessions revoked (audited)".into()),
@@ -1245,10 +1456,36 @@ mod tests {
     use crate::actions::IMPORT_PHRASE;
 
     fn counts_script(scratch: &'static str, real: &'static str) -> Script {
+        db_script(scratch, real, NO_LOCAL, &[])
+    }
+
+    const NO_LOCAL: &str = "closed_positions|0\ntrade_orders|0\ntrading_signals|0\nmt5_deals|0\nstrategy_experiments|0\nmodel_registry|0\nusers|1";
+
+    /// A fake PostgreSQL for imports (Phase 23): row counts of the scratch and the real database, this PC's records, and
+    /// the tables whose content differs in the real database after the "migration".
+    fn db_script(scratch: &'static str, real: &'static str, local: &'static str, changed: &'static [&'static str]) -> Script {
         Box::new(move |s: &CommandSpec| {
+            let scratch_db = has(s, SCRATCH_DB);
+            let counts = if scratch_db { scratch } else { real };
             if has(s, "ps") { ok(ALL_HEALTHY) }
-            else if has(s, crate::compose::COUNT_ALL_TABLES) && has(s, SCRATCH_DB) { ok(scratch) }
-            else if has(s, crate::compose::COUNT_ALL_TABLES) { ok(real) }
+            else if has(s, crate::compose::COUNT_ALL_TABLES) { ok(counts) }
+            else if has(s, migration::CATALOG_SQL) {
+                ok(&counts.lines().map(|l| format!("{}|id,v|true", l.split('|').next().unwrap())).collect::<Vec<_>>().join("\n"))
+            }
+            else if has(s, migration::LOCAL_RECORDS_SQL) { ok(local) }
+            else if has(s, migration::POLICY_OBSERVATIONS_SQL) {
+                ok("active_mode|LIVE\nauto_trading|true\nlive_approved|1\nlive_active|1\nconnectors|1\nlink_tokens|0\nsessions|2")
+            }
+            else if s.args.iter().any(|a| a.contains("alembic_version")) { ok("v|0003") }
+            else if let Some(sql) = s.stdin.as_deref().filter(|x| x.contains("SELECT 'f|")) {
+                let out: Vec<String> = sql.lines().filter_map(|l| l.split("SELECT 'f|").nth(1)?.split('|').next().map(String::from))
+                    .map(|t| {
+                        let n = counts.lines().find(|l| l.starts_with(&format!("{t}|"))).and_then(|l| l.split('|').nth(1)).unwrap_or("0");
+                        let h = if !scratch_db && changed.contains(&t.as_str()) { "x" } else { "h" };
+                        format!("f|{t}|{n}|{h}_{t}")
+                    }).collect();
+                ok(&out.join("\n"))
+            }
             else { ok("29.0") }
         })
     }
@@ -1282,7 +1519,7 @@ mod tests {
         let rep = s.import(&id, Some(IMPORT_PHRASE)).unwrap();
         assert!(rep.ok && rep.action == "import_database", "{rep:?}");
         let vr = rep.steps.iter().find(|x| matches!(x.step, Step::VerifyRestored { .. })).unwrap();
-        assert!(vr.detail.contains("no row lost: all 3 tables") && vr.detail.contains("1 new tables"), "{}", vr.detail);
+        assert!(vr.detail.contains("content verified: all 3 tables of the server present") && vr.detail.contains("1 new tables"), "{}", vr.detail);
         let cmds = compose_cmds(&r);
         let scratch_restore = cmds.iter().position(|c| c.contains(&"pg_restore".to_string()) && c.contains(&SCRATCH_DB.to_string())).unwrap();
         let real_restore = cmds.iter().position(|c| c.contains(&"--single-transaction".to_string())).unwrap();
@@ -1319,7 +1556,7 @@ mod tests {
         let rep = s.import(&id, Some(IMPORT_PHRASE)).unwrap();
         assert!(!rep.ok);
         let vr = rep.steps.iter().find(|x| matches!(x.step, Step::VerifyRestored { .. })).unwrap();
-        assert!(vr.outcome == Outcome::Failed && vr.detail.contains("trade_orders: expected 7, found 6"), "{}", vr.detail);
+        assert!(vr.outcome == Outcome::Failed && vr.detail.contains("trade_orders: 1 of the server's rows are missing"), "{}", vr.detail);
         assert!(!vr.detail.contains("permissions"), "growth of reference data is not a loss");
     }
 
@@ -1489,5 +1726,105 @@ mod tests {
         assert!(alters[1].stdin.as_deref().unwrap().contains(e.secrets.db_password()), "the old password restored");
         let first_alter = calls.iter().position(|c| c.stdin.is_some()).unwrap();
         assert!(!calls[first_alter..].iter().any(|c| has(c, "up")), "nothing was started with unsaved secrets");
+    }
+
+    // ---- Phase 23: migration utility ---------------------------------------------------------------------------
+    fn import_with(e: &Env, r: &FakeRunner, phrase: &str) -> (String, PlanReport) {
+        let s = sup(e, r, healthy_probe());
+        let src = e.cfg.data_dir.join("rr.dump");
+        std::fs::write(&src, b"PGDMP-ubuntu").unwrap();
+        let id = s.import_dump(&src).unwrap();
+        let rep = s.import(&id, Some(phrase)).unwrap();
+        (id, rep)
+    }
+
+    const LOCAL_TRADES: &str = "closed_positions|12\ntrade_orders|30\ntrading_signals|0\nmt5_deals|0\nstrategy_experiments|0\nmodel_registry|0\nusers|2";
+
+    #[test]
+    fn local_trading_records_are_never_replaced_without_the_explicit_policy() {
+        let e = env();
+        let r = fake(db_script("users|2\nclosed_positions|240", "users|2\nclosed_positions|240", LOCAL_TRADES, &[]));
+        let (id, rep) = import_with(&e, &r, IMPORT_PHRASE);
+        let st = rep.steps.iter().find(|x| matches!(x.step, Step::VerifyDump { .. })).unwrap();
+        assert!(!rep.ok && st.detail.contains("already holds trading records (closed_positions 12, trade_orders 30)")
+                && st.detail.contains(crate::actions::REPLACE_PHRASE), "{st:?}");
+        let cmds = compose_cmds(&r);
+        assert!(!cmds.iter().any(|c| c[0] == "stop" || c.contains(&"--single-transaction".to_string())), "nothing stopped or replaced");
+        let report = sup(&e, &r, healthy_probe()).migration_report(&id).unwrap();
+        assert!(report.contains("FAILED") && report.contains("| 3 | Restore to local PostgreSQL | not reached |"), "{report}");
+
+        let r2 = fake(db_script("users|2\nclosed_positions|240", "users|2\nclosed_positions|240", LOCAL_TRADES, &[]));
+        let (_, rep) = import_with(&e, &r2, crate::actions::REPLACE_PHRASE);
+        assert!(rep.ok, "{rep:?}");
+        let rp = rep.steps.last().unwrap();
+        assert!(matches!(rp.step, Step::WriteMigrationReport { .. }) && rp.outcome == Outcome::Ok);
+    }
+
+    #[test]
+    fn an_unreadable_local_database_needs_the_explicit_policy() {
+        let e = env();
+        let r = fake(db_script("users|2", "users|2", "garbage", &[]));
+        let (_, rep) = import_with(&e, &r, IMPORT_PHRASE);
+        assert!(!rep.ok && rep.steps.iter().any(|x| x.detail.contains("could not be checked for trading records")));
+    }
+
+    #[test]
+    fn a_changed_row_fails_its_domain_and_the_report_lists_all_fifteen_items() {
+        let e = env();
+        let r = fake(db_script("users|2\nclosed_positions|240\nstrategy_experiments|3", "users|2\nclosed_positions|240\nstrategy_experiments|3",
+                               NO_LOCAL, &["closed_positions"]));
+        let (id, rep) = import_with(&e, &r, IMPORT_PHRASE);
+        assert!(!rep.ok);
+        let vr = rep.steps.iter().find(|x| matches!(x.step, Step::VerifyRestored { .. })).unwrap();
+        assert!(vr.detail.contains("closed_positions: some of the server's rows differ"), "{}", vr.detail);
+        let md = sup(&e, &r, healthy_probe()).migration_report(&id).unwrap();
+        for n in 1..=15 {
+            assert!(md.contains(&format!("| {n} | ")), "item {n} missing:\n{md}");
+        }
+        assert!(md.contains("| 8 | Verify closed positions | FAIL: closed_positions: some of the server's rows differ"), "{md}");
+        assert!(md.contains("| 10 | Verify experiments | PASS: verified: 1 tables, 3 server rows, content unchanged"), "{md}");
+        assert!(md.contains("| 6 | Verify account records | PASS: not in the server's schema"), "{md}");
+    }
+
+    #[test]
+    fn a_complete_import_reports_policy_changes_and_the_safety_backup() {
+        let e = env();
+        let r = fake(db_script("users|2\ntrading_accounts|2", "users|2\ntrading_accounts|2\nai_usage|0", NO_LOCAL, &[]));
+        let (id, rep) = import_with(&e, &r, IMPORT_PHRASE);
+        assert!(rep.ok, "{rep:?}");
+        let md = sup(&e, &r, healthy_probe()).migration_report(&id).unwrap();
+        assert!(md.contains("completed and verified") && md.contains("kept in the safety backup `pre-restore-"), "{md}");
+        assert!(md.contains("Mode LIVE → DEMO; auto trading true → off") && md.contains("LIVE approvals cleared: 1"), "{md}");
+        assert!(md.contains("| 6 | Verify account records | PASS: verified: 1 tables, 2 server rows, content unchanged |"), "{md}");
+        assert!(md.contains("not changed by the export or the import"));
+    }
+
+    #[test]
+    fn a_manifest_must_describe_the_exact_file_and_its_row_counts() {
+        use sha2::Digest;
+        let e = env();
+        let r = fake(db_script("users|2\nclosed_positions|240", "users|2\nclosed_positions|240", NO_LOCAL, &[]));
+        let s = sup(&e, &r, healthy_probe());
+        let src = e.cfg.data_dir.join("rr_migrate_1.dump");
+        std::fs::write(&src, b"PGDMP-server").unwrap();
+        let digest: String = sha2::Sha256::digest(b"PGDMP-server").iter().map(|b| format!("{b:02x}")).collect();
+        let man = |sha: &str, users: u64| serde_json::json!({"format": "rr-migrate-manifest/1", "dump": "rr_migrate_1.dump",
+            "sha256": sha, "bytes": 12, "alembic_version": "0003", "tables": {"users": users, "closed_positions": 240}});
+        let mpath = e.cfg.data_dir.join("rr_migrate_1.manifest.json");
+        std::fs::write(&mpath, man("0000", 2).to_string()).unwrap();
+        assert!(s.import_dump(&src).unwrap_err().contains("does not match its manifest"), "a damaged transfer is refused");
+        assert!(s.list_backups().is_empty());
+        std::fs::write(&mpath, man(&digest, 3).to_string()).unwrap();
+        let id = s.import_dump(&src).unwrap();
+        let rep = s.import(&id, Some(IMPORT_PHRASE)).unwrap();
+        let st = rep.steps.iter().find(|x| matches!(x.step, Step::VerifyDump { .. })).unwrap();
+        assert!(!rep.ok && st.detail.contains("does not match its manifest") && st.detail.contains("users: manifest 3, dump 2"), "{st:?}");
+        std::fs::write(&mpath, man(&digest, 2).to_string()).unwrap();
+        let id = s.import_dump(&src).unwrap();
+        let rep = s.import(&id, Some(IMPORT_PHRASE)).unwrap();
+        assert!(rep.ok, "{rep:?}");
+        assert!(rep.steps.iter().any(|x| x.detail.contains("matches the server's manifest")));
+        let md = s.migration_report(&id).unwrap();
+        assert!(md.contains("sha256 `") && md.contains(&digest) && md.contains("restored row counts and schema equal the manifest"), "{md}");
     }
 }

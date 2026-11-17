@@ -120,8 +120,9 @@
       </div>
       <pre class="plan" id="bk-out" aria-live="polite"></pre>
       <h3>Import from the previous Ubuntu server</h3>
-      <p class="muted">Use a dump made by the server's <code>scripts/backup.sh</code> (PostgreSQL custom format,
-        <code>rr_&lt;stamp&gt;.dump</code>), copied to this computer. It is first restored into a scratch database: if it does not
+      <p class="muted">On the server, run <code>scripts/migrate_export.sh</code>: it writes <code>rr_migrate_&lt;stamp&gt;.dump</code> and its
+        <code>.manifest.json</code> without changing anything on the server. Copy both to this computer (same folder) and add the dump
+        (a dump from <code>scripts/backup.sh</code> also works, without the manifest check). It is first restored into a scratch database: if it does not
         restore cleanly, nothing is replaced. Then a safety backup is taken, the dump is restored and migrated to this version, every
         table's row count is compared with the verified dump, and the engine starts like a new installation (DEMO, auto trading OFF,
         LIVE approvals cleared). Afterwards: sign in with the server's user accounts, link the MT5 connector on this PC, re-enter AI
@@ -130,7 +131,9 @@
         <button id="imp-add" type="button">Add dump</button></div>
       <div class="confirm" id="imp-confirm" hidden>
         <label for="imp-phrase">Import <code id="imp-id"></code>? It replaces this installation's database (after a safety backup).
-          Type <code>IMPORT DATABASE</code> to continue.</label>
+          Type <code>IMPORT DATABASE</code> to continue. If this PC already has trading records, the import is refused unless you
+          choose to replace them explicitly: type <code>IMPORT AND REPLACE LOCAL DATA</code> (a safety backup of this PC's database
+          is still taken first).</label>
         <div class="row"><input id="imp-phrase" autocomplete="off" spellcheck="false">
           <button id="imp-go" type="button" class="danger">Import</button>
           <button id="imp-cancel" type="button">Cancel</button></div>

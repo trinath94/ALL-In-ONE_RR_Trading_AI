@@ -21,6 +21,10 @@ pub const START_WORKER_PHRASE: &str = "START TRADING WORKER";
 pub const RESTORE_PHRASE: &str = "RESTORE DATABASE";
 /// Phrase the operator must type to import the database of the previous Ubuntu server (Phase 18).
 pub const IMPORT_PHRASE: &str = "IMPORT DATABASE";
+/// Phase 23 (Part 23: never overwrite existing local records without an explicit migration policy): when this PC
+/// already holds trading records, an import needs this phrase, the explicit REPLACE policy (a safety backup of the
+/// local database is still taken first).
+pub const REPLACE_PHRASE: &str = "IMPORT AND REPLACE LOCAL DATA";
 /// Phase 21: typed confirmation before the backup key is shown (it decrypts every backup of this installation).
 pub const SHOW_KEY_PHRASE: &str = "SHOW BACKUP KEY";
 /// Phase 21: typed confirmation for rotating the access secrets (everyone is signed out; the engine restarts).
@@ -138,13 +142,15 @@ pub enum Step {
     ResetTradingState,
     /// Phase 18: restore the dump into a scratch database first and record every table's row count. If the dump cannot
     /// be restored, the real database is never touched.
-    VerifyDump { backup: String },
+    VerifyDump { backup: String, replace_local: bool },
     /// Phase 18: after the real restore and the migrations, every table of the scratch restore must have the same row
     /// count in the real database.
     VerifyRestored { backup: String },
     /// Phase 18: an imported database starts like a new installation: DEMO, auto trading OFF, LIVE approvals cleared,
     /// reconciliation required (recorded in the audit trail).
     ResetForNewInstallation,
+    /// Phase 23: the migration report, written after an import whatever its outcome (never part of a plan).
+    WriteMigrationReport { backup: String },
     /// Phase 21: the database password is changed (ALTER ROLE) and the new access secrets are saved. Reported by
     /// `rotate_secrets`, which runs it between the two halves of the rotation; never part of an ordinary plan.
     RotateAccessSecrets,
@@ -154,9 +160,11 @@ pub enum Step {
 /// before anything is replaced, a safety backup, the restore, migrations to the current schema, row counts compared,
 /// then the state of a new installation. The trading worker is not restarted.
 pub fn import_plan(backup: &str, confirmation: Option<&str>) -> Result<Vec<Step>, ActionError> {
-    if confirmation != Some(IMPORT_PHRASE) {
-        return Err(ActionError::ImportConfirmationRequired);
-    }
+    let replace_local = match confirmation {
+        Some(IMPORT_PHRASE) => false,
+        Some(REPLACE_PHRASE) => true,
+        _ => return Err(ActionError::ImportConfirmationRequired),
+    };
     if !backup.starts_with("import-") || !valid_backup_id(backup) {
         return Err(ActionError::Unknown(format!("import {}", backup.chars().take(48).collect::<String>())));
     }
@@ -164,7 +172,7 @@ pub fn import_plan(backup: &str, confirmation: Option<&str>) -> Result<Vec<Step>
     Ok(vec![
         CheckPrerequisites,
         StartServices { services: INFRA.to_vec() },
-        VerifyDump { backup: backup.to_string() },
+        VerifyDump { backup: backup.to_string(), replace_local },
         BackupDatabase { purpose: BackupPurpose::PreRestore },
         StopServices { services: stop_order(&[Service::TradingWorker, Service::Learner, Service::Analysis, Service::Monitor,
             Service::Gateway, Service::Frontend, Service::Api]) },
@@ -259,7 +267,7 @@ pub enum ActionError {
     ConfirmationRequired,
     #[error("restoring the database requires typing exactly: {RESTORE_PHRASE}")]
     RestoreConfirmationRequired,
-    #[error("importing a database requires typing exactly: {IMPORT_PHRASE}")]
+    #[error("importing a database requires typing exactly: {IMPORT_PHRASE} (or {REPLACE_PHRASE} when this PC already has trading records)")]
     ImportConfirmationRequired,
     #[error("rotating the secrets requires typing exactly: {ROTATE_PHRASE}")]
     RotateConfirmationRequired,
@@ -438,6 +446,9 @@ mod tests {
         assert!(matches!(import_plan("manual-1", Some(IMPORT_PHRASE)), Err(ActionError::Unknown(_))), "imports only");
         assert!(matches!(restore_plan("import-1", Some(RESTORE_PHRASE)), Err(ActionError::Unknown(_))), "never unverified");
         let plan = import_plan("import-1", Some(IMPORT_PHRASE)).unwrap();
+        assert!(plan.contains(&Step::VerifyDump { backup: "import-1".into(), replace_local: false }));
+        assert!(import_plan("import-1", Some(REPLACE_PHRASE)).unwrap()
+            .contains(&Step::VerifyDump { backup: "import-1".into(), replace_local: true }), "the explicit policy");
         assert!(!starts(&plan).contains(&Service::TradingWorker));
         let pos = |want: &dyn Fn(&Step) -> bool| plan.iter().position(want).unwrap();
         let verify = pos(&|s| matches!(s, Step::VerifyDump { .. }));

@@ -29,6 +29,7 @@
     "allow-prerequisites",
     "allow-backup-key-export",
     "allow-backup-key-add",
-    "allow-rotate-secrets"
+    "allow-rotate-secrets",
+    "allow-backup-import-report"
   ]
 }
