@@ -20,6 +20,7 @@ results** and fails if any mapped test is missing or did not pass. The checker r
 | MT5 bridge (original connector) suite | **17 passed** |
 | RR MT5 Connector suite | **36 passed** |
 | Desktop core (Rust) | **120 passed** |
+| CI results | `8ccef08`: backend 44014841132 **passed** (engine 323, MT5 bridge 17, RR MT5 Connector 36, matrix: all proven). Desktop 44014841213 **failed in my new CI step**, not in a test: all 109 Windows tests passed, but bash on the Windows runner mangled the `D:\` temp path, so the step could not write the results file. Fixed in `a274554`; desktop 44016820768 **passed**: Rust tests on Linux and Windows, the matrix (all proven), and on Windows: install, **upgrade (program files replaced, settings and backups kept)** and uninstall (settings and backups kept). |
 | Every original test of the baseline engine | preserved and passing. Compared with commit `5c6c26b`: no original test file removed, no test skipped, no assertion changed. Two original *helpers* were extended: the test-database cleanup list includes the newer tables, and the simulated MT5 terminal records the deal reason real MT5 records (plus an opt-in moving price series). |
 | CI | Engine, both connector suites and the matrix: backend workflow. Rust tests on Linux and Windows, plus the matrix: desktop workflow. Windows install, **upgrade** and uninstall: desktop workflow. Dependency scans: security workflow. |
 
