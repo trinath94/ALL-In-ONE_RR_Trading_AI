@@ -62,6 +62,7 @@ CI verifies this keeps every setting, backup and database (Phase 22).
 
 * **Bundle staging:** 246 files, including the manuals, all listed in the bundle manifest. Windows CI checks that every manifest entry is installed with the same hash. Two manuals are named explicitly in the install check.
 * **Links:** every relative link in the new documents, the migration manual and the root README resolves (scripted check).
+* **CI (`ab033c4`):** desktop 44025662769 **passed**: Rust tests on Linux and Windows, the test matrix, and the Windows installer built, installed (manuals present), upgraded and uninstalled. Installer `RR Trading One_0.2.0_x64-setup.exe`, SHA-256 `01e92d36e196111856f6729ff696d2080168665f50da02125532595236853a17`.
 * **No code behaviour changed** in this phase; the suites from Phases 22–23 stand (engine 323, desktop 130, connectors 17 + 36).
 
 ## 6. Files
