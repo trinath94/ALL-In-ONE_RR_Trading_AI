@@ -1042,3 +1042,60 @@ def pattern_alignment(symbol: str, _: User = Depends(current_user), db: Session 
     if sym is None:
         raise HTTPException(404, "symbol not found")
     return {"symbol": symbol, **patterns.alignment(db, sym.id, scan_timeframes(db))}
+
+
+# ---- Parts 27-30 Phase 6 (Part 29): parameter variants and strategy DNA ------------------------------------------------
+@router.post("/strategies/{code}/variants")
+def strategy_variants(code: str, user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
+    """Record systematic parameter variants of an original strategy as experiments (DISCOVERED). The strategy and its
+    production configuration are not changed; variants are evaluated by the learner and promoted only through the
+    experiment lifecycle and administrator approval."""
+    from app.strategies.experimental import variants
+    try:
+        out = variants.generate(db, code)
+    except KeyError:
+        raise HTTPException(404, "unknown strategy") from None
+    audit(db, user.id, "STRATEGY_VARIANTS", code, {"created": len(out["created"]), "existing": len(out["already_existed"])})
+    return out
+
+
+@router.get("/strategies/{code}/dna")
+def strategy_dna(code: str, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """One record of a strategy: definition, versions, fingerprints, configurations, evidence by source, experiments
+    derived from it (variants), and its pattern family."""
+    from app.db.models_intel import StrategyFingerprint
+    from app.patterns.catalogue import family_of
+    from app.strategies.experimental import variants
+    if code not in registry.all_strategies():
+        raise HTTPException(404, "unknown strategy")
+    meta = registry.get(code).meta()
+    row = db.scalar(select(Strategy).where(Strategy.code == code))
+    versions = db.scalars(select(StrategyVersion).where(StrategyVersion.strategy_id == row.id)
+                          .order_by(StrategyVersion.id)).all() if row else []
+    fps = db.scalars(select(StrategyFingerprint).where(StrategyFingerprint.strategy_code == code)
+                     .order_by(StrategyFingerprint.id)).all()
+    cfgs = db.scalars(select(StrategyConfiguration).where(StrategyConfiguration.strategy_id == row.id)).all() if row else []
+    perf = db.execute(select(StrategyPerformance.source, func.sum(StrategyPerformance.trades), func.sum(StrategyPerformance.wins),
+                             func.sum(StrategyPerformance.gross_profit), func.sum(StrategyPerformance.gross_loss))
+                      .where(StrategyPerformance.strategy_id == row.id).group_by(StrategyPerformance.source)).all() if row else []
+    exps = db.scalars(select(StrategyExperiment).where(StrategyExperiment.code.like(f"exp_var_{code}"[:80] + "_%"))
+                      .order_by(StrategyExperiment.id)).all()
+    fam, is_pattern = family_of(code, meta.category)
+    return {"code": code, "name": meta.name, "category": meta.category, "family": fam, "is_pattern": is_pattern,
+            "description": meta.description, "params": meta.params, "timeframes": meta.timeframes,
+            "regimes": meta.regimes, "requires": meta.requires, "risky": meta.risky,
+            "stage": row.stage if row else None, "enabled": row.enabled if row else None,
+            "versions": [{"version": v.version, "code_hash": v.code_hash, "notes": v.notes, "created_by": v.created_by,
+                          "created_at": v.created_at, "current": row is not None and row.current_version_id == v.id}
+                         for v in versions],
+            "fingerprints": [{"code_hash": f.code_hash, "signature": f.signature, "created_at": f.created_at} for f in fps],
+            "configurations": [{"mode": c.account_mode, "symbol_id": c.symbol_id, "enabled": c.enabled, "params": c.params,
+                                "timeframes": c.timeframes} for c in cfgs],
+            "evidence": [{"source": s, "trades": int(n or 0), "wins": int(w or 0),
+                          "profit_factor": round(float(gp) / float(gl), 3) if gl else None} for s, n, w, gp, gl in perf],
+            "variants": [{"id": e.id, "code": e.code, "title": e.title, "stage": e.stage,
+                          "changed": (e.proposal or {}).get("changed"),
+                          "evaluated": "variant_evaluation" in (e.evidence or {}),
+                          "bias_passed": ((e.evidence or {}).get("variant_evaluation") or {}).get("bias", {}).get("passed")}
+                         for e in exps],
+            "variants_tried": variants.n_variants(db, code)}

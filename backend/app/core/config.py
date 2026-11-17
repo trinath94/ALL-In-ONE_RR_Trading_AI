@@ -120,6 +120,7 @@ class Settings(BaseSettings):
     entry_max_spread_sl: float = 0.25         # spread at most this fraction of the stop distance
     reanalysis_throttle_seconds: int = 300    # event-driven re-analysis: at most once per symbol per this period
     opportunity_retention_days: int = 90      # terminal opportunities older than this are pruned
+    live_min_demo_trades: int = 20            # LIVE readiness: closed DEMO trades required before the LIVE switch
     max_quote_age_seconds: int = 120          # stale quotes cannot authorise entries
     regime_intel_enabled: bool = True
     learner_interval_seconds: int = 60

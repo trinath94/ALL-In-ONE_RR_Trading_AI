@@ -320,7 +320,8 @@ def position_risk(db: Session, p: OpenPosition) -> OpenRisk:
         if p.stop_loss:
             dist = (float(p.open_price) - float(p.stop_loss)) * (1 if p.direction == "BUY" else -1)
             risk = max(dist, 0) * per_unit * float(p.volume)  # 0 once stop is at/after break-even
-    return OpenRisk(p.symbol, p.direction, float(p.volume), risk, notional, has_stop=p.stop_loss is not None)
+    return OpenRisk(p.symbol, p.direction, float(p.volume), risk, notional, has_stop=p.stop_loss is not None,
+                    strategy_codes=tuple(p.strategy_codes or ()))
 
 
 def open_risks(db: Session, account: TradingAccount) -> list[OpenRisk]:

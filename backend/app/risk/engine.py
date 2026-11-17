@@ -50,6 +50,12 @@ class RiskParams:
     trailing_atr_mult: float = 2.0
     partial_close_at_r: float = 1.0
     partial_close_fraction: float = 0.5
+    # Parts 27-30 Phase 6 (Part 29.11 / 29.12). All 0/False = off, the original behaviour.
+    max_positions_per_strategy: int = 0        # strategy concentration: open positions sharing a strategy code
+    max_holding_minutes: int = 0               # time-based exit
+    volatility_exit_atr_ratio: float = 0.0     # close when ATR now / ATR at entry >= this
+    structure_exit: bool = False               # close on a change of character against the position
+    invalidation_exit: bool = False            # close when the engine's latest analysis no longer supports it
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "RiskParams":
@@ -72,6 +78,10 @@ class RiskParams:
             errs.append("existing_position_policy must be PROTECT, REDUCE or CLOSE_ALL")
         if self.max_size_multiplier < 1:
             errs.append("max_size_multiplier must be >= 1")
+        if self.max_positions_per_strategy < 0 or self.max_holding_minutes < 0:
+            errs.append("max_positions_per_strategy and max_holding_minutes must be >= 0 (0 = off)")
+        if self.volatility_exit_atr_ratio != 0 and self.volatility_exit_atr_ratio <= 1:
+            errs.append("volatility_exit_atr_ratio must be 0 (off) or > 1")
         return errs
 
 
@@ -119,6 +129,7 @@ class OpenRisk:
     risk_amount: float           # money at risk to SL (0 if no SL -> flagged)
     notional: float
     has_stop: bool = True
+    strategy_codes: tuple = ()               # Parts 27-30: for the strategy concentration limit
 
 
 @dataclass
@@ -317,6 +328,12 @@ def evaluate(req: OrderRequest, spec: SymbolSpec, acct: AccountState, positions:
     dup = [p for p in same if p.direction == req.direction]
     add("duplicate_position", not dup or params.max_trades_per_symbol > 1,
         f"{req.direction} {req.symbol} already open" if dup and params.max_trades_per_symbol <= 1 else "ok")
+    if params.max_positions_per_strategy > 0 and req.strategy_codes:
+        busy = {c: sum(1 for p in positions if c in (p.strategy_codes or ())) for c in req.strategy_codes}
+        full = sorted(c for c, n in busy.items() if n >= params.max_positions_per_strategy)
+        add("strategy_concentration", not full,
+            f"strategies already at {params.max_positions_per_strategy} open position(s): {full}" if full else
+            f"max {max(busy.values())} open per strategy")
     unprotected = [p.symbol for p in positions if not p.has_stop]
     add("existing_positions_protected", not unprotected,
         f"open positions without stop loss: {unprotected}" if unprotected else "ok")
@@ -442,3 +459,30 @@ def manage_position(p: PositionView, params: RiskParams, atr: float | None, spec
             acts = [a for a in acts if a.get("reason") != "break-even"]
             acts.append({"action": "MODIFY", "ticket": p.ticket, "stop_loss": round(trail, spec.digits), "reason": "trailing"})
     return acts
+
+
+def exit_actions(p: PositionView, params: RiskParams, *, opened_at: datetime | None, now: datetime,
+                 atr_now: float | None, atr_entry: float | None, choch_against: bool,
+                 engine_view: str | None) -> list[dict]:
+    """Parts 27-30 Phase 6 (Part 29.11): optional exits, each off unless its parameter is set. Only CLOSE actions,
+    which reduce risk; each carries its reason. ``engine_view`` is the engine's latest decision on the position's
+    timeframe (``None`` when unknown: no invalidation exit is taken on missing data)."""
+    out: list[dict] = []
+
+    def close(reason: str) -> list[dict]:
+        return [{"action": "CLOSE", "ticket": p.ticket, "symbol": p.symbol, "volume": p.volume, "reason": reason}]
+    if params.max_holding_minutes > 0 and opened_at is not None:
+        held = (now - opened_at).total_seconds() / 60
+        if held >= params.max_holding_minutes:
+            return close(f"time exit: held {held:.0f} min >= {params.max_holding_minutes} min")
+    if params.volatility_exit_atr_ratio > 0 and atr_now and atr_entry:
+        ratio = atr_now / atr_entry
+        if ratio >= params.volatility_exit_atr_ratio:
+            return close(f"volatility exit: ATR {ratio:.2f}x the ATR at entry")
+    if params.structure_exit and choch_against:
+        return close("structure exit: change of character against the position")
+    if params.invalidation_exit and engine_view is not None:
+        against = "SELL" if p.direction == "BUY" else "BUY"
+        if engine_view in (against, "NO_TRADE"):
+            return close(f"invalidation exit: the engine's latest analysis is {engine_view}")
+    return out

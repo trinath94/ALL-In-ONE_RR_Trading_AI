@@ -110,6 +110,12 @@ def switch_mode(body: ModeIn, request: Request, user: User = Depends(require("tr
         acct = db.scalar(select(TradingAccount).where(TradingAccount.mode == "LIVE", TradingAccount.is_active.is_(True)))
         if acct is None or not acct.live_approved_by:
             raise HTTPException(409, "No administrator-approved LIVE account")
+        # Parts 27-30 Phase 6 (Part 29.10): every required readiness item must pass
+        from app.services import readiness
+        rep = readiness.report(db)
+        if not rep["ready"]:
+            bad = [f"{i['label']}: {i['detail']}" for i in rep["items"] if i["required"] and not i["passed"]]
+            raise HTTPException(409, "LIVE readiness checklist not passed: " + "; ".join(bad))
     pending = db.scalar(select(func.count(TradeOrder.id)).where(TradeOrder.status.in_(["PENDING", "SENT", "UNKNOWN"])))
     if pending:
         raise HTTPException(409, f"{pending} executions unresolved; reconcile before switching")
@@ -590,3 +596,10 @@ def overview(_: User = Depends(current_user), db: Session = Depends(get_db)):
         "critical_alerts": alerts,
         "recent_critical_events": sorted(recent.values(), key=lambda g: g["latest"], reverse=True),
     }
+
+
+@router.get("/live/readiness")
+def live_readiness(_: User = Depends(require("trade.control")), db: Session = Depends(get_db)):
+    """Parts 27-30 Phase 6: the checklist the LIVE switch requires (read-only; it cannot enable anything)."""
+    from app.services import readiness
+    return readiness.report(db)

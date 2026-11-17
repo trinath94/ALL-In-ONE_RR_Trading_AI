@@ -96,6 +96,13 @@ def test_live_lifecycle_end_to_end(client, live_terminal):
     assert client.post(f"/api/accounts/{lid}/activate", headers=h(client)).status_code == 200
     assert state(client)["mode"] == "DEMO", "approving and activating a LIVE account does not switch the mode"
 
+    # Parts 27-30 Phase 6 (Part 29.10): the LIVE readiness checklist also requires a DEMO track record. Without it the
+    # switch is refused (see tests/test_part29.py); here the DEMO account gets the required closed trades first.
+    r = client.post("/api/control/mode", json={"mode": "LIVE", "confirm_text": "ENABLE LIVE TRADING"}, headers=h(client))
+    assert r.status_code == 409 and "closed DEMO trades" in r.text
+    from tests.test_part29 import seed_demo_trades
+    seed_demo_trades(20)
+
     # the typed switch: auto trading off, new entries blocked until verification and reconciliation
     login(client, "trader")
     assert client.post("/api/control/mode", json={"mode": "LIVE", "confirm_text": "ENABLE LIVE TRADING"}, headers=h(client)).status_code == 403

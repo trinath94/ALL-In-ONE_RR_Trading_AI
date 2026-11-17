@@ -139,6 +139,19 @@ def manage_positions(bridge: BridgeClient) -> None:
             view = risk.PositionView(p.ticket, p.symbol, p.direction, float(p.volume), float(p.open_price),
                                      float(p.current_price or p.open_price), float(p.stop_loss) if p.stop_loss else None,
                                      float(p.take_profit) if p.take_profit else None, initial, partial_done)
+            # Parts 27-30 Phase 6: optional exits (time, volatility, structure, invalidation); off unless configured
+            exits = _exit_actions(db, bridge, p, view, params) if _exits_enabled(params) else []
+            for act in exits:
+                key = f"{account.id}:exit:{p.ticket}"
+                try:
+                    em.manage(db, bridge, action="CLOSE", position_ticket=p.ticket, dedupe_key=key)
+                    agent_activity("execution", "approved", f"{p.symbol} #{p.ticket}: {act['reason']}")
+                    from app.notifications.service import notify
+                    notify(db, "TRADE_CLOSED", f"{p.symbol} #{p.ticket} closed", act["reason"])
+                except em.ExecutionBlocked as exc:
+                    log.info("exit blocked: %s", exc.reason)
+            if exits:
+                continue
             for act in risk.manage_position(view, params, a, spec):
                 key = f"{account.id}:manage:{p.ticket}:{act['action']}:{act.get('stop_loss', act.get('volume'))}"
                 try:
@@ -151,6 +164,49 @@ def manage_positions(bridge: BridgeClient) -> None:
                         notify(db, "BREAK_EVEN", f"{p.symbol} #{p.ticket} moved to break-even")
                 except em.ExecutionBlocked as exc:
                     log.info("manage blocked: %s", exc.reason)
+
+
+def _exits_enabled(params) -> bool:
+    return bool(params.max_holding_minutes or params.volatility_exit_atr_ratio or params.structure_exit
+                or params.invalidation_exit)
+
+
+def _exit_actions(db, bridge: BridgeClient, p, view, params) -> list[dict]:
+    """Inputs for ``risk.exit_actions`` from the position's originating signal (its timeframe, the ATR its analysis
+    measured, the engine's latest analysis since the position opened). Missing data means no exit is taken on it."""
+    from app.analysis.indicators import atr
+    from app.analysis.structure import structure_events
+    from app.db.models import AnalysisResult
+    from app.scanner.service import bars_to_df
+    sig = None
+    if p.execution_id:
+        o = db.scalar(select(em.TradeOrder).where(em.TradeOrder.execution_id == p.execution_id))
+        sig = db.get(TradingSignal, o.signal_id) if o is not None and o.signal_id else None
+    tf = sig.timeframe if sig is not None else "H1"
+    ar = db.get(AnalysisResult, sig.analysis_id) if sig is not None and sig.analysis_id else None
+    atr_entry = (ar.structure or {}).get("atr") if ar is not None else None
+    atr_now, choch = None, False
+    try:
+        df = bars_to_df(bridge.rates(p.symbol, tf, 120))
+        if len(df) > 30:
+            atr_now = float(atr(df).iloc[-1])
+            sgn = 1 if p.direction == "BUY" else -1
+            events, _ = structure_events(df)
+            opened = p.opened_at
+            choch = any(e.kind == "CHOCH" and (1 if e.direction == "BUY" else -1) != sgn and
+                        df.index[e.idx].to_pydatetime() >= opened for e in events) if opened else False
+    except BridgeError:
+        pass
+    view_now = None
+    if sig is not None and p.opened_at is not None:
+        latest = db.scalar(select(AnalysisResult).where(AnalysisResult.symbol_id == sig.symbol_id,
+                                                        AnalysisResult.timeframe == tf,
+                                                        AnalysisResult.created_at > p.opened_at)
+                           .order_by(AnalysisResult.id.desc()).limit(1))
+        view_now = (latest.score or {}).get("decision") if latest is not None else None
+    return risk.exit_actions(view, params, opened_at=p.opened_at, now=datetime.now(UTC), atr_now=atr_now,
+                             atr_entry=float(atr_entry) if atr_entry else None, choch_against=choch,
+                             engine_view=view_now)
 
 
 def heartbeat(bridge: BridgeClient, last_ok: list[bool]) -> bool:

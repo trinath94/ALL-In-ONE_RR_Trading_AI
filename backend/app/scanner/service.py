@@ -319,6 +319,14 @@ def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res,
     with cyc.step("failure_prediction", ref):
         fail = opx.failure_prediction(res, stats, intel, news, reg.tags, mctx.htf_bias)
     cyc.note("failure_prediction", {f"failure_risk_{fail['level']}": 1})
+    from app.intelligence import selection as sel_mod
+    with cyc.step("strategy_ranking", ref):
+        selection = sel_mod.assess(res, stats, registry.all_strategies(), reg.primary, reg.tags)
+    cyc.note("strategy_ranking", {f"selection_{selection['decision']}": 1})
+    try:
+        health = sel_mod.health(db)
+    except Exception as exc:  # noqa: BLE001
+        health = {"error": str(exc)[:200], "models_healthy": True, "providers_healthy": True}
     gate = []
     if entry["outcome"] == "FAIL" and res.decision in ("BUY", "SELL", "WAIT"):
         res.decision = "NO_TRADE"
@@ -333,6 +341,14 @@ def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res,
             res.decision = "WAIT"
             res.warnings.append("failure risk HIGH (enforce mode): downgraded to WAIT")
             gate.append("failure risk HIGH: WAIT")
+        elif selection["decision"] == "REJECT":
+            res.decision = "WAIT"
+            res.warnings.append(f"strategy selection REJECT ({selection['reason']}, enforce mode): downgraded to WAIT")
+            gate.append("selection REJECT: WAIT")
+        elif not health.get("models_healthy", True):
+            res.decision = "WAIT"
+            res.warnings.append("a production model is unhealthy (enforce mode): downgraded to WAIT")
+            gate.append("model health: WAIT")
     cons = intel.get("consensus") or {}
     prob = intel.get("probability") or {}
     lead = sorted(sigs, key=lambda x: -x.strength)[:8]
@@ -375,6 +391,10 @@ def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res,
         opx.stage("entry_validation", "entry_validation", entry["outcome"], entry),
         opx.stage("exit_plan", "exit_optimisation", "available" if plan.get("available") else "unavailable", plan),
         opx.stage("failure_prediction", "failure_prediction", fail["level"], fail),
+        opx.stage("strategy_selection", "strategy_ranking", selection["decision"], selection),
+        opx.stage("health", "master_orchestrator",
+                  "healthy" if health.get("models_healthy", True) and health.get("providers_healthy", True) else "degraded",
+                  health),
         opx.stage("decision", "master_orchestrator", res.decision,
                   {"engine_decision": original, "gate_mode": s.opportunity_gate, "gate": gate,
                    "next": "shortlist and AI review, then the Risk Engine at execution" if res.decision in ("BUY", "SELL")
@@ -388,6 +408,7 @@ def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res,
                  "fusion": (fused or {}).get("decision"), "entry_validation": entry["outcome"],
                  "failure_risk": fail["level"], "fundamental_available": bool(fund.get("available")),
                  "timeframes_aligned": align.get("aligned"),
+                 "selection": {"decision": selection["decision"], "evidence": selection.get("evidence")},
                  "patterns": patterns.relation_to((patt or {}).get("active", []), res.direction)}
     safe = json.loads(json.dumps({"trace": trace, "breakdown": breakdown, "entry": entry}, default=str))
     return safe

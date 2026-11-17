@@ -21,6 +21,13 @@ Incremental additions to 0.2.0; nothing existing is replaced.
   * a pattern catalogue derived from the strategies;
   * a pattern agent (27 agents).
   * Detections are advisory and never change a decision. Migration 0013 only adds one table.
+* **Phase 6 (Part 29):**
+  * **strategy selection** decisions (select, combination, wait, reject, no trade) with their evidence;
+  * model and provider **health** in the decision trace;
+  * systematic **parameter variants** as experiments, with a **bias report** (look-ahead, leakage, survivorship, multiple testing);
+  * a **strategy DNA** view;
+  * optional **time, volatility, structure and invalidation exits** and a **strategy concentration** limit (all off by default);
+  * a **LIVE readiness checklist**, which the LIVE switch now requires, including a DEMO track record. No database migration.
 
 ## Version 0.2.0 (development release, 2026-11-17)
 

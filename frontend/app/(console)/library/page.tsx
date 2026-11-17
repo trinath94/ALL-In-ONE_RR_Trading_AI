@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { can, PageTitle, useMe } from "@/components/Shell";
 import { Badge, Btn, ErrorLine, inputCls, Panel, Stat, Table } from "@/components/ui";
-import { api, fmt, patch } from "@/lib/api";
+import { api, fmt, patch, post } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
 
 const DATA: Record<string, { tone: any; short: string }> = {
@@ -39,7 +39,12 @@ export default function Library() {
       || (view === "changed" && s.baseline !== "unchanged"))
     && (!q || (s.name + " " + s.code).toLowerCase().includes(q.toLowerCase())));
   const cur = sel && (data || []).find((s) => s.code === sel.code) || sel;
-  async function choose(s: any) { setSel(s); setParams(JSON.stringify(s.params, null, 2)); setErr(null); setVersions(await api(`/api/strategies/${s.code}/versions`)); }
+  const [dna, setDna] = useState<any>(null);
+  async function choose(s: any) { setSel(s); setDna(null); setParams(JSON.stringify(s.params, null, 2)); setErr(null); setVersions(await api(`/api/strategies/${s.code}/versions`)); setDna(await api(`/api/strategies/${s.code}/dna`)); }
+  async function makeVariants() {
+    setErr(null);
+    try { const r = await post(`/api/strategies/${cur.code}/variants`); setErr(`${r.created.length} variant(s) recorded as experiments (${r.already_existed.length} already existed); the learner evaluates them.`); setDna(await api(`/api/strategies/${cur.code}/dna`)); await reloadExp(); } catch (e: any) { setErr(e.message); }
+  }
   async function save(body: any) {
     setErr(null);
     try { await patch(`/api/strategies/${cur.code}`, { ...body, mode }); await reload(); await reloadSum(); } catch (e: any) { setErr(e.message); }
@@ -143,6 +148,16 @@ export default function Library() {
             </>}
             <div className="mt-3 text-[10px] uppercase text-dim">Version history</div>
             {versions.map((v, i) => <div key={i} className="text-[11px]">{v.version} · {v.code_hash} · {fmt.time(v.at)} · {v.by}</div>)}
+            {dna && <>
+              <div className="mt-3 text-[10px] uppercase text-dim">Strategy DNA</div>
+              <div className="text-[11px]">Pattern family: {dna.family.replaceAll("_", " ")}{dna.is_pattern ? "" : " (not a chart pattern)"} · {dna.fingerprints.length} fingerprint(s) · {dna.configurations.length} configuration(s)</div>
+              <div className="text-[11px]">Evidence: {dna.evidence.length ? dna.evidence.map((e: any) => `${SOURCES[e.source] || e.source} ${e.trades} trades${e.profit_factor != null ? `, PF ${e.profit_factor}` : ""}`).join(" · ") : "none recorded"}</div>
+              <div className="mt-2 text-[10px] uppercase text-dim">Parameter variants (experiments, isolated from production)</div>
+              {dna.variants.length === 0 ? <div className="text-[11px] text-dim">None yet.</div> : dna.variants.map((v: any) => (
+                <div key={v.id} className="text-[11px]">{v.title} · {v.stage} · {v.evaluated ? (v.bias_passed ? <span className="text-neon">evaluated, bias checks passed</span> : <span className="text-bear">evaluated, bias checks failed</span>) : <span className="text-dim">awaiting evaluation</span>}</div>))}
+              {dna.variants_tried > 1 && <div className="text-[10px] text-dim">{dna.variants_tried} variants tried: the best one needs significance below {(0.05 / dna.variants_tried).toPrecision(2)} (multiple testing).</div>}
+              {manage && <Btn small tone="dim" onClick={makeVariants}>Generate parameter variants</Btn>}
+            </>}
           </Panel>
         )}
       </div>

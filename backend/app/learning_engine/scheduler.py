@@ -337,8 +337,15 @@ def job_experiments() -> dict:
     with session_scope() as db:
         exps = db.scalars(select(StrategyExperiment).where(StrategyExperiment.stage.in_(
             ["DEVELOPING", "EXPERIMENTAL", "DEMO_TESTING"]), StrategyExperiment.source_code.isnot(None))).all()
-        if not exps:
+        # Parts 27-30 Phase 6: parameter variants (no code of their own) awaiting their first evaluation, 2 per run
+        variants = [e for e in db.scalars(select(StrategyExperiment).where(StrategyExperiment.stage == "DISCOVERED",
+                                                                        StrategyExperiment.source_code.is_(None))
+                                          .order_by(StrategyExperiment.id))
+                    if (e.proposal or {}).get("kind") == "parameter_variant"
+                    and "variant_evaluation" not in (e.evidence or {})][:2]
+        if not exps and not variants:
             return {"skipped": "no experiments awaiting evidence"}
+        out["variants"] = 0
         sym = db.scalar(select(Symbol).where(Symbol.scan_enabled.is_(True), Symbol.tradable.is_(True)).order_by(Symbol.priority).limit(1))
         b = _bridge()
         try:
@@ -357,6 +364,15 @@ def job_experiments() -> dict:
                     df = bars_to_df(b.rates(sym.broker_symbol, "H1", 600))
                     lifecycle.forward_step(db, e, sym.broker_symbol, df)
                     out["forward"] += 1
+            if variants and sym is not None:
+                from app.strategies.experimental import variants as var
+                df = bars_to_df(b.rates(sym.broker_symbol, "H1", 3000))
+                spec = {"symbol": sym.broker_symbol, "timeframe": "H1", "point": float(sym.point),
+                        "tick_size": float(sym.tick_size), "tick_value": float(sym.tick_value),
+                        "spread_points": float(df["spread"].median()) if "spread" in df else 10}
+                for e in variants:
+                    var.evaluate(db, e, df, spec)
+                    out["variants"] += 1
         finally:
             b.close()
     return out

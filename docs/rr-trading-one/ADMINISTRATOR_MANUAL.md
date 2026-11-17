@@ -72,6 +72,38 @@ The other checks are advisory by default; to let them downgrade BUY/SELL to WAIT
 | `RR_ENTRY_MAX_SPREAD_SL` | `0.25` | maximum spread as a fraction of the stop distance |
 | `RR_REANALYSIS_THROTTLE_SECONDS` | `300` | event-driven re-analysis at most once per symbol per period |
 | `RR_OPPORTUNITY_RETENTION_DAYS` | `90` | finished opportunities older than this are pruned |
+| `RR_LIVE_MIN_DEMO_TRADES` | `20` | closed DEMO trades the LIVE readiness checklist requires |
+
+In enforce mode, two more checks downgrade BUY/SELL to WAIT:
+* a strategy selection of REJECT (the supporting strategies with enough evidence all have a profit factor below 1);
+* an unhealthy production model (a drift event in the last 24 hours).
+
+**Optional exits and strategy concentration** (Risk Centre, per mode). All are off by default:
+
+| Parameter | Meaning |
+|---|---|
+| `max_positions_per_strategy` | refuse a new order when a strategy already has this many open positions |
+| `max_holding_minutes` | close a position held this long |
+| `volatility_exit_atr_ratio` | close when the current ATR is this multiple of the ATR at entry (must be above 1) |
+| `structure_exit` | close on a change of character against the position, after it opened |
+| `invalidation_exit` | close when the engine's latest analysis on the position's timeframe says the opposite direction or NO_TRADE |
+
+Exits are closes sent through the same journalled, idempotent execution manager. Missing data never causes an exit.
+
+**LIVE readiness.** The typed LIVE switch is refused until every required item of the checklist passes:
+* an active, verified and approved LIVE account;
+* a LIVE risk configuration that is valid and no looser than DEMO's;
+* kill switch and risk lock clear;
+* no unresolved executions;
+* at least `RR_LIVE_MIN_DEMO_TRADES` closed DEMO trades.
+
+The connection, the PC connector's LIVE lock and the AI review provider are shown for information. Trading Console → LIVE Readiness shows the checklist. It can only refuse the switch, never enable LIVE.
+
+**Parameter variants.** Strategy Library → a strategy → *Generate parameter variants* records experiments that change one numeric parameter at a time. The original strategy and its configuration are never changed. The learner evaluates up to two variants per run:
+* in-sample and out-of-sample against the base;
+* plus a bias report: look-ahead/repaint, leakage, survivorship, multiple testing.
+
+Promotion follows the experiment lifecycle and your approval.
 
 AI output is schema-checked and advisory. AI cannot place orders, enable LIVE, change permissions or raise
 confidence. Broker passwords are never sent to a provider.
