@@ -42,6 +42,11 @@ Incremental additions to 0.2.0; nothing existing is replaced.
   * partial fills verified;
   * the 35 required validations proven in CI by the test matrix;
   * decision traces in the Signal Centre and the Command Centre.
+* **Phase 9 (DEMO validation):** the DEMO Validation page and its runbook (`DEMO_VALIDATION.md`); acceptance itself happens on your PC.
+* **Phase 10 (LIVE readiness):**
+  * the PC LIVE lock can be authorised and revoked from the window (typed, account-bound, checked by the connector);
+  * the readiness checklist shows the lock's real state;
+  * **nothing was unlocked:** LIVE stays locked until you decide.
 
 ## Version 0.2.0 (development release, 2026-11-17)
 
@@ -77,7 +82,7 @@ application. **It is for DEMO use and acceptance testing**, not yet for LIVE tra
 
 ### Known limitations
 
-* **LIVE trading cannot be completed from this version.** The PC's MT5 connector keeps its own LIVE lock, and RR Trading One has no control yet to release it. This is deliberate: the specification forbids enabling LIVE during development. Every other LIVE step works and is tested in-process against a simulated REAL account; none was performed on a real LIVE account.
+* **LIVE trading (updated in Parts 27–30 Phase 10).** The PC's MT5 connector keeps its own LIVE lock. RR Trading One can now authorise it from the window, with the typed account number and phrase checked by the connector against the connected LIVE account. Every LIVE step is tested against a simulated REAL account only; **none was performed on a real LIVE account**, and LIVE remains locked on every installation until its administrator decides otherwise.
 * **No automatic updater, and the installer is not code-signed.** Both need your decisions: release hosting, an update-signing key and, ideally, a code-signing certificate. Updating means installing the newer installer (data is kept). Windows SmartScreen may warn.
 * **Not run on a real Windows PC with a real broker during development.**
   * The engine was tested on Linux Docker, the connector against a simulated MT5 terminal.

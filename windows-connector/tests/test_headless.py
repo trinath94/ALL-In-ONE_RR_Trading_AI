@@ -178,3 +178,65 @@ def test_vault_is_isolated_from_the_standalone_connector(kr):
     standalone.set("bridge-secret", "remote-ubuntu-secret")
     mine.set("bridge-secret", "local-secret")
     assert standalone.get("bridge-secret") == "remote-ubuntu-secret" and SERVICE != headless.VAULT_SERVICE
+
+
+# ---- Parts 27-30 Phase 10: the PC LIVE lock, controlled from RR Trading One -----------------------------------------
+def live_request(home, **kw):
+    req = {"action": "authorize", "nonce": "n1", "created": time.time(), **kw}
+    (home / headless.LIVE_REQUEST).write_text(json.dumps(req))
+
+
+def live_result(home):
+    p = home / headless.LIVE_RESULT
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def clear_result(home):
+    (home / headless.LIVE_RESULT).unlink(missing_ok=True)
+
+
+def test_pc_live_lock_needs_the_exact_live_login_and_the_phrase(kr, home, tmp_path):
+    from fake_mt5 import FakeMT5
+    registered(kr)
+    fake = FakeMT5(login=2002, server="Live-Server")
+    fake.trade_mode = 2                                            # a REAL account
+    t, box = run_in_thread(profile_file(tmp_path, expected_login=2002, server="Live-Server"), fake, kr)
+    assert wait(lambda: status(home).get("state") == "CONNECTED"), status(home)
+    assert status(home)["live_authorized"] is False, "locked by default"
+    for bad, msg in [({"login": "2003", "phrase": "ENABLE LIVE TRADING"}, "does not match"),
+                     ({"login": "2002", "phrase": "enable live trading"}, "exactly"),
+                     ({"login": "2002", "phrase": "ENABLE LIVE TRADING", "created": time.time() - 600}, "expired"),
+                     ({"action": "format_disk"}, "unknown action")]:
+        clear_result(home)
+        live_request(home, **bad)
+        assert wait(lambda: live_result(home)), bad
+        assert live_result(home)["ok"] is False and msg in live_result(home)["error"], live_result(home)
+        assert not (home / headless.LIVE_REQUEST).exists(), "used once"
+    assert status(home)["live_authorized"] is False
+    clear_result(home)
+    live_request(home, login="2002", phrase="ENABLE LIVE TRADING", nonce="ok-1")
+    assert wait(lambda: live_result(home).get("ok") is True), live_result(home)
+    assert live_result(home)["nonce"] == "ok-1" and live_result(home)["live_authorized"] is True
+    assert wait(lambda: status(home).get("live_authorized") is True)
+    clear_result(home)
+    live_request(home, action="revoke")
+    assert wait(lambda: live_result(home).get("ok") is True)
+    assert wait(lambda: status(home).get("live_authorized") is False)
+    (home / headless.STOP_FILE).touch()
+    t.join(timeout=15)
+    assert box["rc"] == headless.EXIT_OK
+
+
+def test_pc_live_lock_refuses_a_demo_account_and_ignores_a_leftover_request(kr, home, tmp_path):
+    from fake_mt5 import FakeMT5
+    registered(kr)
+    live_request(home, login="1001", phrase="ENABLE LIVE TRADING", nonce="stale")   # left from a previous run
+    t, box = run_in_thread(profile_file(tmp_path), FakeMT5(login=1001, server="Demo-Server"), kr)
+    assert wait(lambda: status(home).get("state") == "CONNECTED")
+    assert not (home / headless.LIVE_REQUEST).exists() and live_result(home) == {}, "discarded at start, never acted on"
+    live_request(home, login="1001", phrase="ENABLE LIVE TRADING")
+    assert wait(lambda: live_result(home))
+    assert live_result(home)["ok"] is False and "DEMO account" in live_result(home)["error"]
+    (home / headless.STOP_FILE).touch()
+    t.join(timeout=15)
+    assert box["rc"] == headless.EXIT_OK

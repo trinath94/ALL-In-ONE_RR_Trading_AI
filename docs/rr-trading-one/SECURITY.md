@@ -32,7 +32,7 @@ against an administrator of the PC. Either can read the user's DPAPI-protected d
 **Execution safety**
 * Closed list of supervisor actions; fixed Docker Compose argv; no shell.
 * Typed confirmations for anything that trades or replaces data.
-* Initial state: DEMO, trading worker stopped, LIVE locked. LIVE needs verification, approval and typed confirmations, and also the PC's own LIVE lock, which this version cannot release.
+* Initial state: DEMO, trading worker stopped, LIVE locked. LIVE needs verification, approval and typed confirmations, and also the PC's own LIVE lock, released only in the window with the typed account number and phrase, checked by the connector against the connected LIVE account.
 * The Risk Engine on every order; idempotent journal; reconciliation after restarts and mode switches.
 * Wrong account identity, stale quotes and critical anomalies block entries.
 * The emergency stop blocks entries without blindly closing positions.

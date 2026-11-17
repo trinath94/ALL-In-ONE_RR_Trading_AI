@@ -63,7 +63,18 @@
           <button id="mt5-link" type="button">Link connector</button>
           <button id="mt5-start" type="button" class="primary">Start connector</button>
           <button id="mt5-stop" type="button">Stop connector</button>
-          <button id="mt5-use-demo" type="button">Use as engine DEMO account</button></div></div>
+          <button id="mt5-use-demo" type="button">Use as engine DEMO account</button>
+          <button id="mt5-live" type="button">LIVE on this PC…</button></div></div>
+      <div id="mt5-live-box" class="confirm" hidden>
+        <p><strong>LIVE trading on this PC.</strong> This gives this PC's consent to trade the connected <strong>LIVE</strong>
+          account. It does not switch the engine to LIVE: that still needs an administrator-approved LIVE account, the
+          readiness checklist and the typed switch in the console. Leave it locked unless you have decided to trade LIVE.</p>
+        <label for="mt5-live-login">LIVE account number</label> <input id="mt5-live-login" inputmode="numeric" autocomplete="off">
+        <label for="mt5-live-phrase">Type <code>ENABLE LIVE TRADING</code></label> <input id="mt5-live-phrase" autocomplete="off">
+        <div class="btns"><button id="mt5-live-ok" type="button">Authorise LIVE on this PC</button>
+          <button id="mt5-live-revoke" type="button">Revoke (lock again)</button>
+          <button id="mt5-live-cancel" type="button">Cancel</button></div>
+      </div>
       <p class="muted" id="mt5-note">The connector runs natively in your Windows session and attaches only to the terminal and
         account of the selected profile. It never asks for or stores your trading password.</p>
       <dl class="kv" id="mt5-status"></dl>

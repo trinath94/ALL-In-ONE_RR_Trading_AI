@@ -23,7 +23,7 @@ For the person responsible for the installation: the first administrator, and an
   3. **activate** it and **switch** to LIVE (typed `ENABLE LIVE TRADING`).
   * Before the switch, new entries are blocked until verification and reconciliation; a switch is refused while executions are unresolved.
   * **Revoke live** re-locks an approved account immediately.
-* **The PC's own LIVE lock:** the MT5 connector also refuses LIVE orders until LIVE is authorised on the PC for that account. RR Trading One does not offer this authorisation yet (see the Release notes), so LIVE trading cannot be completed from this version.
+* **The PC's own LIVE lock:** the MT5 connector also refuses LIVE orders until LIVE is authorised on the PC for that exact account. Since Parts 27–30 Phase 10, the RR Trading One window offers this (MT5 Manager → LIVE on this PC…, typed account number and phrase, checked by the connector against the connected account; Revoke locks it again). It is the last of the independent consents, never given automatically.
 * **The same identity cannot be both DEMO and LIVE** (refused with a clear message).
 
 ## 3. Risk

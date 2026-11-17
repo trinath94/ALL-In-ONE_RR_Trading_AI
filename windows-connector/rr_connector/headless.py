@@ -17,6 +17,16 @@ Differences from the desktop connector, by design:
   Credential Manager service, so a standalone RR MT5 Connector linked to a remote engine is never overwritten.
 * **Supervision files** in the data folder: ``status.json`` (atomic, every second; no secrets, login masked),
   ``stop.request`` (graceful shutdown), ``instance.lock`` (one instance only).
+* **PC LIVE lock** (Parts 27-30 Phase 10): ``live.request`` asks the running connector to authorise or revoke LIVE
+  trading on this PC; the answer is written to ``live.result``. Authorising goes through the connector's own
+  ``ConnectorManager.authorize_live``, unchanged:
+  * the connected account must be a LIVE account, and the typed login must be exactly the connected login;
+  * the typed phrase must be exactly ``ENABLE LIVE TRADING``;
+  * the authorisation is bound to that login and server, and changing account revokes it.
+
+  A request is used once (deleted before it is processed), refused when older than 60 s, and a leftover from a
+  previous run is discarded at start. Revoking needs no phrase. It only gives the connector's consent; the engine's
+  own LIVE switch, approval and readiness checklist still apply.
 """
 from __future__ import annotations
 
@@ -37,6 +47,8 @@ VAULT_SERVICE = "RR Trading One Connector"
 STATUS_FILE = "status.json"
 STOP_FILE = "stop.request"
 LOCK_FILE = "instance.lock"
+LIVE_REQUEST, LIVE_RESULT = "live.request", "live.result"
+LIVE_REQUEST_MAX_AGE_S = 60
 EXIT_OK, EXIT_USAGE, EXIT_NOT_REGISTERED, EXIT_ALREADY_RUNNING, EXIT_ERROR = 0, 2, 3, 4, 1
 
 
@@ -174,6 +186,8 @@ def run(profile_path: str, adapter=None, finder=None, poll_s: float = 1.0) -> in
         return EXIT_ALREADY_RUNNING
     status_path, stop_path = base / STATUS_FILE, base / STOP_FILE
     stop_path.unlink(missing_ok=True)
+    live_req, live_res = base / LIVE_REQUEST, base / LIVE_RESULT
+    live_req.unlink(missing_ok=True)          # never act on a request left from a previous run
     try:
         profile = Profile.load(profile_path)
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -209,6 +223,8 @@ def run(profile_path: str, adapter=None, finder=None, poll_s: float = 1.0) -> in
             if stop_path.exists():
                 stop_path.unlink(missing_ok=True)
                 break
+            if live_req.exists():
+                handle_live_request(m, live_req, live_res)
             att = m.link.attached
             if att is None and time.monotonic() >= next_try:
                 try:
@@ -234,6 +250,40 @@ def run(profile_path: str, adapter=None, finder=None, poll_s: float = 1.0) -> in
         write_atomic(status_path, status_document({}, profile, "STOPPED", "Connector stopped", store))
         store.close()
     return EXIT_OK
+
+
+def handle_live_request(m, req_path: Path, res_path: Path) -> dict:
+    """Process one ``live.request`` (see the module docstring) and write ``live.result``."""
+    try:
+        raw = req_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    req_path.unlink(missing_ok=True)                     # used once, whatever happens next
+    try:
+        req = json.loads(raw)
+        action, nonce = req.get("action"), str(req.get("nonce", ""))[:64]
+        created = float(req.get("created", 0))
+    except (ValueError, TypeError, AttributeError):
+        out = {"ok": False, "error": "unreadable request"}
+        write_atomic(res_path, out)
+        return out
+    out = {"nonce": nonce, "action": action, "at": time.time()}
+    if abs(time.time() - created) > LIVE_REQUEST_MAX_AGE_S:
+        out.update(ok=False, error="request expired; ask again")
+    elif action == "revoke":
+        m.revoke_live()
+        out.update(ok=True)
+    elif action == "authorize":
+        try:
+            m.authorize_live(str(req.get("login", "")), str(req.get("phrase", "")))
+            out.update(ok=True)
+        except ValueError as exc:
+            out.update(ok=False, error=str(exc))
+    else:
+        out.update(ok=False, error="unknown action")
+    out["live_authorized"] = bool(m.snapshot.get("live_authorized"))
+    write_atomic(res_path, out)
+    return out
 
 
 def _attach_std_streams() -> None:

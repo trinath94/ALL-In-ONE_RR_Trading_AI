@@ -77,10 +77,13 @@ LIVE is locked until an administrator:
 * approves it (typed `APPROVE <login>`);
 * switches to LIVE (typed `ENABLE LIVE TRADING`).
 
-**In this version, LIVE cannot be completed from RR Trading One.** The MT5 connector on the PC has its own LIVE lock,
-bound to the account. The connector that RR Trading One runs shows it as "LIVE on this PC: locked", and the desktop
-window has no control yet to authorise it. The connector therefore refuses LIVE orders whatever the engine allows.
-This follows the development rule that LIVE is never enabled during development; see the Release notes.
+**LIVE on this PC (the connector's own lock).** The MT5 connector on the PC refuses LIVE orders until LIVE is authorised on the PC for that exact account. In the RR Trading One window, **MT5 Manager → LIVE on this PC…**:
+* type the connected LIVE account number and `ENABLE LIVE TRADING`;
+* the connector checks both against the account it is connected to, and refuses a DEMO account or any other number;
+* the authorisation is bound to that login and server, and changing account revokes it;
+* **Revoke** locks it again at any time.
+
+This is the PC's consent only. LIVE trading also needs everything the engine requires (an administrator-approved LIVE account, the readiness checklist with a DEMO track record, the typed switch in the console). Leave it locked unless you have decided to trade LIVE.
 
 ## 5. When something looks wrong
 

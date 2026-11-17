@@ -125,3 +125,33 @@ function initMt5() {
 }
 
 window.addEventListener("DOMContentLoaded", initMt5);
+
+
+// Parts 27-30 Phase 10: the PC LIVE lock. Locked by default; revoking is always possible.
+function liveBox(show) {
+  $("mt5-live-box").hidden = !show;
+  $("mt5-live-login").value = "";
+  $("mt5-live-phrase").value = "";
+}
+
+async function liveLock(action) {
+  try {
+    const r = await invoke("connector_live_lock", {
+      action, login: $("mt5-live-login").value.trim(), phrase: $("mt5-live-phrase").value,
+    });
+    mt5Out(action === "revoke" ? "LIVE on this PC: locked again." : `LIVE on this PC: authorised (${r.live_authorized ? "confirmed by the connector" : "not confirmed"}).`);
+    liveBox(false);
+    await refreshMt5();
+  } catch (e) {
+    mt5Out(String(e));
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const b = $("mt5-live");
+  if (!b) return;
+  b.addEventListener("click", () => liveBox(true));
+  $("mt5-live-cancel").addEventListener("click", () => liveBox(false));
+  $("mt5-live-ok").addEventListener("click", () => liveLock("authorize"));
+  $("mt5-live-revoke").addEventListener("click", () => liveLock("revoke"));
+});

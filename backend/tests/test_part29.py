@@ -307,3 +307,22 @@ def test_readiness_endpoint_needs_trade_control(client):
     make_user("viewer29b", "readonly")
     login(client, "viewer29b")
     assert client.get("/api/live/readiness").status_code == 403
+
+
+def test_readiness_reports_the_pc_live_lock_from_the_connector_heartbeat(db_clean):
+    """Parts 27-30 Phase 10: informational, read from the connector's own status; never required by the engine
+    (the connector enforces its lock itself)."""
+    from app.db.models_agent import MT5Agent
+    with session_scope() as db:
+        item = next(i for i in readiness.report(db)["items"] if i["key"] == "pc_connector_lock")
+        assert item["passed"] is None and "no MT5 connector" in item["detail"] and item["required"] is False
+        a = MT5Agent(name="pc", device_id="dev-1", public_key="pk", api_key_hash="h" * 64, bridge_secret_enc="x",
+                     enabled=True, status={"live_authorized": False})
+        db.add(a)
+    with session_scope() as db:
+        item = next(i for i in readiness.report(db)["items"] if i["key"] == "pc_connector_lock")
+        assert item["passed"] is False and "locked on the PC" in item["detail"]
+        db.scalar(select(MT5Agent)).status = {"live_authorized": True}
+    with session_scope() as db:
+        item = next(i for i in readiness.report(db)["items"] if i["key"] == "pc_connector_lock")
+        assert item["passed"] is True and item["required"] is False

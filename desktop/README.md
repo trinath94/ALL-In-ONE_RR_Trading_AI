@@ -14,7 +14,7 @@ desktop/
 
 | Window | Loads | IPC |
 |---|---|---|
-| `main`: Control Centre | bundled `ui/` | Only the commands declared in `src-tauri/build.rs` and granted in `capabilities/main.json` (25; a test keeps the handler list, the manifest and the capability equal) |
+| `main`: Control Centre | bundled `ui/` | Only the commands declared in `src-tauri/build.rs` and granted in `capabilities/main.json` (26; a test keeps the handler list, the manifest and the capability equal) |
 | `console`: Trading Console | the existing Next.js UI at `http://127.0.0.1:<gateway_port>` | **None.** It is a remote origin, and navigation is pinned to that origin. |
 
 The console opens only after the engine passes its real health check. That check is `GET /api/health`, which also verifies PostgreSQL and Redis.

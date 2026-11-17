@@ -20,6 +20,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const PROFILES_FILE: &str = "mt5_profiles.json";
 pub const STATUS_FILE: &str = "status.json";
 pub const STOP_FILE: &str = "stop.request";
+/// Parts 27-30 Phase 10: the PC LIVE lock (see `ConnectorCtl::live_lock`).
+pub const LIVE_REQUEST: &str = "live.request";
+pub const LIVE_RESULT: &str = "live.result";
+pub const LIVE_PHRASE: &str = "ENABLE LIVE TRADING";
+const LIVE_WAIT: Duration = Duration::from_secs(15);
 pub const RUNTIME_PROFILE: &str = "profile.json";
 const FRESH_SECS: f64 = 10.0;
 const START_WAIT: Duration = Duration::from_secs(25);
@@ -420,6 +425,52 @@ impl ConnectorCtl<'_> {
         Ok(pid)
     }
 
+    /// Parts 27-30 Phase 10: authorise or revoke LIVE trading **on this PC** (the connector's own lock).
+    ///
+    /// The request is checked here first (exact phrase, a login of digits), then by the running connector itself,
+    /// which accepts only if the connected account is a LIVE account whose login is exactly the one typed. The
+    /// request carries a random nonce and a timestamp; the connector uses it once and refuses it after 60 s. This
+    /// grants the PC's consent only: the engine's LIVE switch, its administrator approval and its readiness checklist
+    /// still apply. Revoking needs no phrase.
+    pub fn live_lock(&self, action: &str, login: &str, phrase: &str) -> Result<serde_json::Value, String> {
+        match action {
+            "authorize" => {
+                if phrase != LIVE_PHRASE {
+                    return Err(format!("type {LIVE_PHRASE} exactly to confirm"));
+                }
+                if login.is_empty() || login.len() > 20 || !login.chars().all(|c| c.is_ascii_digit()) {
+                    return Err("type the LIVE account number (digits only)".into());
+                }
+            }
+            "revoke" => {}
+            _ => return Err("unknown action".into()),
+        }
+        if !self.status().running {
+            return Err("the MT5 connector is not running; start it first".into());
+        }
+        let mut b = [0u8; 8];
+        getrandom::fill(&mut b).map_err(|e| e.to_string())?;
+        let nonce: String = b.iter().map(|x| format!("{x:02x}")).collect();
+        let req = serde_json::json!({"action": action, "login": login, "phrase": phrase, "nonce": nonce, "created": now()});
+        let _ = std::fs::remove_file(self.home.join(LIVE_RESULT));
+        let tmp = self.home.join("live.request.tmp");
+        std::fs::write(&tmp, serde_json::to_vec(&req).unwrap_or_default()).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, self.home.join(LIVE_REQUEST)).map_err(|e| e.to_string())?;
+        let t0 = Instant::now();
+        while t0.elapsed() < LIVE_WAIT {
+            std::thread::sleep(Duration::from_millis(200));
+            let res: Option<serde_json::Value> = std::fs::read_to_string(self.home.join(LIVE_RESULT)).ok()
+                .and_then(|t| serde_json::from_str(&t).ok());
+            if let Some(v) = res.filter(|v| v.get("nonce").and_then(|n| n.as_str()) == Some(nonce.as_str())) {
+                return if v.get("ok").and_then(|x| x.as_bool()) == Some(true) { Ok(v) } else {
+                    Err(v.get("error").and_then(|e| e.as_str()).unwrap_or("refused by the connector").to_string())
+                };
+            }
+        }
+        let _ = std::fs::remove_file(self.home.join(LIVE_REQUEST));
+        Err("the connector did not answer within 15 s; nothing was changed".into())
+    }
+
     /// Graceful stop through `stop.request`; force-terminate only a PID proven to be our live connector.
     pub fn stop(&self) -> Result<String, String> {
         let st = self.status();
@@ -626,6 +677,13 @@ if os.environ.get("FAKE_NOT_REGISTERED"):
     st("NOT_REGISTERED", "link first", {"id": p["profile_id"]}); sys.exit(3)
 while not os.path.exists(os.path.join(home, "stop.request")):
     st("CONNECTED", "", {"id": p["profile_id"]}); time.sleep(0.1)
+    req = os.path.join(home, "live.request")
+    if os.path.exists(req):
+        r = json.load(open(req)); os.remove(req)
+        ok = r["action"] == "revoke" or (r["login"] == "2002" and r["phrase"] == "ENABLE LIVE TRADING")
+        out = {"nonce": r["nonce"], "ok": ok, "live_authorized": ok and r["action"] == "authorize"}
+        if not ok: out["error"] = "The account number you typed does not match the connected account."
+        json.dump(out, open(os.path.join(home, "live.result.tmp"), "w")); os.replace(os.path.join(home, "live.result.tmp"), os.path.join(home, "live.result"))
 os.remove(os.path.join(home, "stop.request")); st("STOPPED", "", {"id": p["profile_id"]})
 "#;
 
@@ -701,5 +759,27 @@ os.remove(os.path.join(home, "stop.request")); st("STOPPED", "", {"id": p["profi
         assert_eq!(ctl.register("rrmt5_secret-token-value").unwrap()["agent_id"], 7);
         let err = ctl.register("bogus-token").unwrap_err();
         assert!(err.contains("***") && !err.contains("bogus-token"), "token redacted from errors: {err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pc_live_lock_request_round_trip_and_local_checks() {
+        let t = tempfile::tempdir().unwrap();
+        let home = t.path().join("home");
+        let ctl = fake_ctl(&home, &t.path().join("fake.py"), vec![]);
+        assert!(ctl.live_lock("authorize", "2002", LIVE_PHRASE).unwrap_err().contains("not running"));
+        let pf = t.path().join("p.json");
+        std::fs::write(&pf, serde_json::to_vec(&profile()).unwrap()).unwrap();
+        ctl.start(&profile()).unwrap();
+        for _ in 0..50 { if ctl.status().running { break } std::thread::sleep(Duration::from_millis(100)); }
+        assert!(ctl.live_lock("authorize", "2002", "enable live trading").unwrap_err().contains("exactly"));
+        assert!(ctl.live_lock("authorize", "20 02", LIVE_PHRASE).unwrap_err().contains("digits"));
+        assert!(ctl.live_lock("format", "", "").is_err());
+        assert!(!home.join(LIVE_REQUEST).exists(), "local refusals never reach the connector");
+        assert!(ctl.live_lock("authorize", "2003", LIVE_PHRASE).unwrap_err().contains("does not match"));
+        let ok = ctl.live_lock("authorize", "2002", LIVE_PHRASE).unwrap();
+        assert_eq!(ok["live_authorized"], true);
+        assert_eq!(ctl.live_lock("revoke", "", "").unwrap()["ok"], true);
+        ctl.stop().unwrap();
     }
 }

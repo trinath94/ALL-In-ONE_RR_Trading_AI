@@ -14,7 +14,8 @@ Required:
 
 Informational:
 * MT5 connection health. Startup reconciliation re-verifies the account after every mode switch anyway.
-* The PC connector's own LIVE lock, which RR Trading One cannot release yet.
+* The PC connector's own LIVE lock, as its heartbeat reports it. It is released only on the PC and enforced by the
+  connector itself.
 * Candidate review provider. Without one, nothing is auto-executed in either mode.
 """
 from __future__ import annotations
@@ -74,8 +75,19 @@ def report(db: Session) -> dict:
     add("connection", "MT5 connection", None if health is None else bool(health.get("connected")),
         "no recent heartbeat" if health is None else ("connected" if health.get("connected") else
                                                        f"disconnected: {health.get('error', '')}"), required=False)
-    add("pc_connector_lock", "PC connector LIVE lock", None,
-        "the MT5 connector on the PC keeps its own LIVE lock bound to the account; RR Trading One cannot release it yet",
+    # Parts 27-30 Phase 10: the connector reports its own lock in its heartbeat. It is released only on the PC
+    # (RR Trading One window -> LIVE on this PC, typed account number and phrase) and enforced by the connector itself.
+    try:
+        from app.execution import relay
+        agent = relay.select_agent(db)
+        ast = (agent.status or {}) if agent else {}
+    except Exception:  # noqa: BLE001
+        agent, ast = None, {}
+    pc = bool(ast.get("live_authorized"))
+    add("pc_connector_lock", "PC connector LIVE lock", None if agent is None else pc,
+        "no MT5 connector registered" if agent is None else
+        ("authorised on the PC for the connected LIVE account" if pc else
+         "locked on the PC (release it only in the RR Trading One window: LIVE on this PC, typed account number and phrase)"),
         required=False)
     from app.ai.gateway import configured
     add("ai_review", "Candidate review provider", configured("candidate_review"),

@@ -338,6 +338,23 @@ fn mt5_overview(state: State<'_, AppState>) -> Result<Mt5Overview, String> {
     })
 }
 
+/// Parts 27-30 Phase 10: authorise ("authorize") or revoke LIVE trading on this PC, in the running connector. The
+/// typed account number and phrase are checked here and again by the connector against the connected account.
+/// This is the PC's consent only; the engine's LIVE switch, approval and readiness checklist still apply.
+#[tauri::command]
+async fn connector_live_lock(state: State<'_, AppState>, action: String, login: Option<String>,
+                             phrase: Option<String>) -> Result<serde_json::Value, String> {
+    if let Some(why) = supervisor_unavailable(&state) {
+        return Err(why);
+    }
+    let setup = connector_setup(&state)?.ok_or("the RR MT5 Connector build was not found")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        setup.ctl(&SystemRunner).live_lock(&action, login.as_deref().unwrap_or(""), phrase.as_deref().unwrap_or(""))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Installed MetaTrader 5 terminals (to choose from; never chosen automatically).
 #[tauri::command]
 async fn mt5_detect(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
@@ -492,7 +509,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console,
             mt5_overview, mt5_detect, mt5_save_profile, mt5_select_profile, mt5_delete_profile, mt5_link,
             engine_status, engine_bootstrap_admin, engine_use_demo_account, backup_list, backup_restore, backup_import_file, backup_import, prerequisites,
-            backup_key_export, backup_key_add, rotate_secrets, backup_import_report, maintenance_status])
+            backup_key_export, backup_key_add, rotate_secrets, backup_import_report, maintenance_status,
+            connector_live_lock])
         .setup(move |app| {
             build_tray(app.handle())?;
             start_maintenance(app.handle().clone());

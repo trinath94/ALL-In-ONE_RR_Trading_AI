@@ -31,6 +31,7 @@
     "allow-backup-key-add",
     "allow-rotate-secrets",
     "allow-backup-import-report",
-    "allow-maintenance-status"
+    "allow-maintenance-status",
+    "allow-connector-live-lock"
   ]
 }
