@@ -40,13 +40,13 @@ jobs:
         with:
           workspaces: desktop
       - name: Core tests (actions allowlist, paths, settings, health probes)
-        run: cargo test -p rr-one-core --locked 2>&1 | tee ${{ runner.temp }}/cargo.txt; exit ${PIPESTATUS[0]}
+        run: cargo test -p rr-one-core --locked 2>&1 | tee cargo-test-output.txt   # relative: bash on Windows mangles D:\ paths
         shell: bash
       - name: Part 22 test matrix (desktop tests)
         if: matrix.os == 'ubuntu-latest'
         working-directory: .
         shell: bash
-        run: python3 scripts/test_matrix.py --only rs --cargo ${{ runner.temp }}/cargo.txt
+        run: python3 scripts/test_matrix.py --only rs --cargo desktop/cargo-test-output.txt
 
   windows-build:
     needs: core-tests
