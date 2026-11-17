@@ -62,6 +62,7 @@ mod tauri_acl_tests {
         assert!(handlers.len() >= 23, "{handlers:?}");
         assert_eq!(manifest, handlers, "build.rs manifest must declare every command");
         assert_eq!(granted, handlers, "capabilities/main.json must grant every command to the main window");
-        assert!(cap.contains("\"windows\": [\n    \"main\"\n  ]") || cap.contains("\"windows\": [\"main\"]"), "main window only");
+        let v: serde_json::Value = serde_json::from_str(&cap).unwrap();
+        assert_eq!(v["windows"], serde_json::json!(["main"]), "main window only (the engine console gets no IPC)");
     }
 }
