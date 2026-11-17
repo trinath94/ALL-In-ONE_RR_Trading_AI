@@ -37,6 +37,11 @@ Incremental additions to 0.2.0; nothing existing is replaced.
   * a **Simulation Laboratory** (scenario stress tests, counterfactual alternatives);
   * daily **automatic backups** and weekly **restore tests** in the desktop application.
   * Migration 0014 only adds one table.
+* **Phase 8 (integration):**
+  * one end-to-end test of the whole flow in DEMO, from the scan to an executed, traced trade;
+  * partial fills verified;
+  * the 35 required validations proven in CI by the test matrix;
+  * decision traces in the Signal Centre and the Command Centre.
 
 ## Version 0.2.0 (development release, 2026-11-17)
 
