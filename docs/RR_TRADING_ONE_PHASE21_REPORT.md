@@ -40,7 +40,7 @@ that were missing or partial and fixed a real defect found during the audit:
 | Desktop core tests (Rust) | **120 passed** (106 + 14 new); clippy clean with warnings as errors |
 | Backend suite, including the 215-strategy preservation test | **316 passed** (314 + 2 new) in one full run |
 | Frontend `next build` | Passed (PostCSS 8.5.32) |
-| CI (`e09168a`) | backend 43969624710, frontend 43969624767, security 43969624756 passed. Desktop 43969624797 **failed on Windows** in the new ACL test: it compared the capability file's text, which Windows checks out with CRLF line endings. The test now parses the JSON (verified with both line endings); the next commit carries the fix. |
+| CI (`e09168a`) | backend 43969624710, frontend 43969624767, security 43969624756 passed. Desktop 43969624797 **failed on Windows** in the new ACL test: it compared the capability file's text, which Windows checks out with CRLF line endings. The test now parses the JSON (verified with both line endings); fixed in `784f336`, whose desktop run 44012842457 **passed** on Linux and Windows. |
 | Dependency scans | Engine, both connectors, frontend and desktop: **no known vulnerability** after the fix |
 | Desktop window in a browser (mocked supervisor) | Security section, wizard and earlier checks passed |
 

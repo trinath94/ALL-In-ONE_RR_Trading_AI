@@ -11,6 +11,7 @@ on:
       - "mt5-connector/**"
       - "windows-connector/**"
       - "infrastructure/**"
+      - "scripts/test_matrix.py"
       - ".github/workflows/backend.yml"
 
 permissions:
@@ -45,10 +46,10 @@ jobs:
       - name: Strategy preservation (215 baseline strategies)
         run: python -m pytest -q tests/test_preservation.py
       - name: Backend suite
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=${{ runner.temp }}/backend.xml
       - name: MT5 connector suite
         working-directory: mt5-connector
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=${{ runner.temp }}/mt5.xml
       - name: Local stack compose file (secrets required, trading worker never in a default up)
         working-directory: .
         run: |
@@ -71,4 +72,9 @@ jobs:
       - name: Windows connector suite (offscreen)
         working-directory: windows-connector
         env: {QT_QPA_PLATFORM: offscreen}
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=${{ runner.temp }}/wincon.xml
+      - name: Part 22 test matrix (every area and safety condition proven by passing tests)
+        working-directory: .
+        run: |
+          python scripts/test_matrix.py --only py --only ci --junit ${{ runner.temp }}/backend.xml \
+            --junit ${{ runner.temp }}/mt5.xml --junit ${{ runner.temp }}/wincon.xml --ci .github/workflows/desktop.yml

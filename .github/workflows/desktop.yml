@@ -10,6 +10,7 @@ on:
     branches: ["**"]
     paths:                      # everything the installer carries
       - "desktop/**"
+      - "scripts/test_matrix.py"
       - "backend/**"
       - "frontend/**"
       - "infrastructure/**"
@@ -39,7 +40,13 @@ jobs:
         with:
           workspaces: desktop
       - name: Core tests (actions allowlist, paths, settings, health probes)
-        run: cargo test -p rr-one-core --locked
+        run: cargo test -p rr-one-core --locked 2>&1 | tee ${{ runner.temp }}/cargo.txt; exit ${PIPESTATUS[0]}
+        shell: bash
+      - name: Part 22 test matrix (desktop tests)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: .
+        shell: bash
+        run: python3 scripts/test_matrix.py --only rs --cargo ${{ runner.temp }}/cargo.txt
 
   windows-build:
     needs: core-tests
@@ -136,13 +143,38 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "mt5-detect through the installed connector failed" }
           Remove-Item (Join-Path $inst "supervise.exe")
 
+          # Phase 22 (Part 22: application upgrades): installing over an existing installation replaces the program
+          # files and keeps the user's settings and data. User data is created first; one program file is altered to
+          # stand for an older version; then the installer runs again.
+          $settingsDir = Join-Path $env:APPDATA "RR Trading One"; New-Item -ItemType Directory -Force $settingsDir | Out-Null
+          $settings = Join-Path $settingsDir "settings.json"
+          '{"schema_version":1,"operating_mode":"local","gateway_port":47811,"remote_engine_url":null,"start_minimized":true,"close_to_tray":true}' | Set-Content -Encoding ascii $settings
+          $bkDir = Join-Path $env:ProgramData "RR Trading One\backups"; New-Item -ItemType Directory -Force $bkDir | Out-Null
+          $bk = Join-Path $bkDir "manual-1700000000.rrbk"; [IO.File]::WriteAllBytes($bk, [byte[]](1..64))
+          $keep = @{ $settings = (Get-FileHash $settings).Hash; $bk = (Get-FileHash $bk).Hash }
+          $old = Join-Path $inst "backend\app\main.py"; Add-Content $old "`n# older version"
+          $p = Start-Process $setup -ArgumentList "/S" -PassThru; $p.WaitForExit()
+          if ($p.ExitCode -ne 0) { throw "upgrade install failed ($($p.ExitCode))" }
+          if (-not (Test-Path (Join-Path $inst "rr-trading-one.exe"))) { throw "upgrade removed the app" }
+          $bad = 0
+          Get-Content (Join-Path $inst "BUNDLE_MANIFEST.txt") | Where-Object { $_ -and -not $_.StartsWith("#") } | ForEach-Object {
+            $h, $rel = $_ -split "  ", 2
+            $f = Join-Path $inst ($rel -replace "/", "\")
+            if (-not (Test-Path -LiteralPath $f) -or (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLower() -ne $h) { $bad++; "mismatch after upgrade: $rel" }
+          }
+          if ($bad) { throw "$bad program files were not replaced by the upgrade" }
+          foreach ($k in $keep.Keys) { if (-not (Test-Path $k) -or (Get-FileHash $k).Hash -ne $keep[$k]) { throw "upgrade changed user data: $k" } }
+          "upgrade: program files replaced, settings and backups kept"
+
           $u = Start-Process (Join-Path $inst "uninstall.exe") -ArgumentList "/S" -PassThru; $u.WaitForExit()
           # NSIS runs the uninstaller from a temporary copy that keeps deleting after WaitForExit returns: wait (up to
           # 60 s) until both the app and the connector are gone, then require that they are.
           for ($i = 0; $i -lt 60 -and ((Test-Path (Join-Path $inst "rr-trading-one.exe")) -or (Test-Path (Join-Path $inst "mt5-connector"))); $i++) { Start-Sleep 1 }
           if (Test-Path (Join-Path $inst "rr-trading-one.exe")) { throw "uninstall left the app behind" }
           if (Test-Path (Join-Path $inst "mt5-connector")) { throw "uninstall left the connector behind" }
-          "uninstalled"
+          # Uninstalling removes the program, never the user's settings or data (database volumes, backups).
+          foreach ($k in $keep.Keys) { if (-not (Test-Path $k) -or (Get-FileHash $k).Hash -ne $keep[$k]) { throw "uninstall removed user data: $k" } }
+          "uninstalled; settings and backups kept"
       - uses: actions/upload-artifact@v4
         with:
           name: rr-trading-one-windows-unsigned
