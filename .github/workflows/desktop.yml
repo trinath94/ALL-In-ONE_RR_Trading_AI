@@ -11,6 +11,8 @@ on:
     paths:                      # everything the installer carries
       - "desktop/**"
       - "scripts/test_matrix.py"
+      - "docs/rr-trading-one/**"
+      - "docs/MIGRATION_FROM_UBUNTU.md"
       - "backend/**"
       - "frontend/**"
       - "infrastructure/**"
@@ -104,7 +106,8 @@ jobs:
             "infrastructure\nginx.local.conf", "infrastructure\backend.Dockerfile", "infrastructure\windows\uninstall-stop.ps1",
             "docker\frontend.Dockerfile", "backend\requirements.lock", "backend\app\main.py",
             "backend\tests\baseline\strategy_inventory.json", "frontend\package-lock.json",
-            "frontend\app\(console)\library\page.tsx", "mt5-connector\RR_MT5_Connector.exe"
+            "frontend\app\(console)\library\page.tsx", "mt5-connector\RR_MT5_Connector.exe",
+            "docs\rr-trading-one\USER_MANUAL.md", "docs\MIGRATION_FROM_UBUNTU.md"
           foreach ($f in $need) { if (-not (Test-Path -LiteralPath (Join-Path $inst $f))) { throw "missing in install folder: $f" } }
           foreach ($f in "frontend\node_modules", "frontend\.next") { if (Test-Path (Join-Path $inst $f)) { throw "must not ship $f" } }
           # Every manifest entry is installed with the same hash.

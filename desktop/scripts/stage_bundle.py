@@ -26,12 +26,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "desktop" / "target" / "bundle-src"
-ENGINE_PATHS = ["backend", "frontend", "infrastructure", "docker/frontend.Dockerfile"]
+ENGINE_PATHS = ["backend", "frontend", "infrastructure", "docker/frontend.Dockerfile",
+                # Phase 24-26: the manuals ship with the application
+                "docs/rr-trading-one", "docs/MIGRATION_FROM_UBUNTU.md"]
 REQUIRED = [
     "infrastructure/compose.yml", "infrastructure/nginx.local.conf", "infrastructure/backend.Dockerfile",
     "infrastructure/windows/uninstall-stop.ps1", "docker/frontend.Dockerfile", "backend/requirements.lock",
     "backend/alembic.ini", "backend/app/main.py", "backend/tests/baseline/strategy_inventory.json",
     "frontend/package.json", "frontend/package-lock.json", ".dockerignore",
+    "docs/rr-trading-one/README.md", "docs/rr-trading-one/INSTALLATION_MANUAL.md", "docs/MIGRATION_FROM_UBUNTU.md",
 ]
 # Never shipped, even if tracked by mistake.
 FORBIDDEN_PARTS = {"node_modules", ".next", "__pycache__", ".venv", ".env"}

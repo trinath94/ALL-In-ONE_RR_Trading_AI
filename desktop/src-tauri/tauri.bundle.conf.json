@@ -8,7 +8,8 @@
       "../target/bundle-src/docker/": "docker/",
       "../target/bundle-src/mt5-connector/": "mt5-connector/",
       "../target/bundle-src/.dockerignore": ".dockerignore",
-      "../target/bundle-src/BUNDLE_MANIFEST.txt": "BUNDLE_MANIFEST.txt"
+      "../target/bundle-src/BUNDLE_MANIFEST.txt": "BUNDLE_MANIFEST.txt",
+      "../target/bundle-src/docs/": "docs/"
     },
     "windows": {
       "nsis": {

@@ -1,3 +1,19 @@
+# RR TRADING ONE
+
+**RR Trading One** is this engine as one Windows desktop application: it installs, starts and supervises the whole
+RR Trading AI Engine locally (PostgreSQL, Redis, FastAPI, the Next.js console, the learner and the trading worker in
+Docker Desktop; the MT5 connector natively in your Windows session). It starts in DEMO, with the trading worker
+stopped and LIVE locked.
+
+* **Start here:** [`docs/rr-trading-one/README.md`](docs/rr-trading-one/README.md): the manuals (installation, user, administrator,
+  architecture, security, migration, recovery), the release notes and the Part 25 deliverables.
+* **Desktop application:** `desktop/` · **local stack:** `infrastructure/` · **MT5 connector:** `windows-connector/`
+* **Phase reports:** `docs/RR_TRADING_ONE_PHASE*_REPORT.md` · **test matrix:** `docs/TEST_MATRIX.md`
+
+The original engine's documentation follows, unchanged (it describes the Ubuntu deployment).
+
+---
+
 # RR TRADING ENGINE — AI COMMAND CENTER
 
 AI-assisted, risk-first automated trading platform: an Ubuntu application server (FastAPI, PostgreSQL,
