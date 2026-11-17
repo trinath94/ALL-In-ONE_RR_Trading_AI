@@ -15,6 +15,9 @@ export default function CommandCenter() {
   const { data: sum, error } = useApi<any>("/api/dashboard/summary", 15000, live.tick);
   const { data: syms } = useApi<any[]>("/api/symbols");
   const { data: scan } = useApi<any[]>("/api/scanner", 30000, live.tick);
+  // Parts 27-30: the opportunity lifecycle at a glance (last 24 h) and the latest qualified / executed ones
+  const { data: oppSum } = useApi<any>("/api/opportunities/summary", 30000, live.tick);
+  const { data: oppLatest } = useApi<any[]>("/api/opportunities?limit=8&state=QUALIFIED", 30000, live.tick);
   const [symbol, setSymbol] = useState("");
   const [tf, setTf] = useState("H1");
   useEffect(() => { if (!symbol && syms?.length) setSymbol((syms.find((s) => s.scan_enabled) || syms[0]).symbol); }, [syms, symbol]);
@@ -65,7 +68,19 @@ export default function CommandCenter() {
                 { k: "risk_reward", h: "R:R" }, { k: "regime", h: "Regime" }]} />
           </Panel>
         </div>
-        <div className="space-y-3"><ControlCenter /><AiPanel /></div>
+        <div className="space-y-3"><ControlCenter />
+          <Panel title="Opportunity lifecycle (24 h)">
+            {!oppSum ? <div className="text-[11px] text-dim">loading…</div> : <>
+              <div className="grid grid-cols-2 gap-1 text-[11px]">
+                {Object.entries(oppSum.states).map(([k, v]: any) => <a key={k} href={`/opportunities`} className="flex justify-between rounded border border-line px-2 py-0.5"><span className="text-dim">{k.replaceAll("_", " ").toLowerCase()}</span><span>{v}</span></a>)}
+              </div>
+              <div className="mt-2 text-[10px] uppercase text-dim">Qualified (AI-confirmed, awaiting the Risk Engine)</div>
+              {(oppLatest || []).length === 0 ? <div className="text-[11px] text-dim">none</div> :
+                oppLatest!.map((o) => <a key={o.id} href={`/opportunities?id=${o.id}`} className="block text-[11px]">#{o.id} {o.symbol} {o.timeframe} {o.direction} · {fmt.time(o.created_at)}</a>)}
+              <div className="mt-1 text-[10px] text-dim">gate mode: {oppSum.gate_mode}</div>
+            </>}
+          </Panel>
+          <AiPanel /></div>
       </div>
     </div>
   );

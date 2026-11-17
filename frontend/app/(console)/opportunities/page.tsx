@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageTitle } from "@/components/Shell";
 import { Badge, ErrorLine, Panel, Stat, Table } from "@/components/ui";
 import { api, fmt } from "@/lib/api";
@@ -28,6 +28,10 @@ export default function Opportunities() {
   const { data: src } = useApi<any>("/api/data-sources", 30000);
   const [sel, setSel] = useState<any>(null);
   async function open(o: any) { setSel({ ...o, loading: true }); setSel(await api(`/api/opportunities/${o.id}`)); }
+  useEffect(() => {          // ?id=<n> opens that opportunity (links from the Signal Centre and the Command Centre)
+    const id = new URLSearchParams(window.location.search).get("id");
+    if (id) open({ id: Number(id) });
+  }, []);
   const st = summary?.states || {};
   return (
     <div>

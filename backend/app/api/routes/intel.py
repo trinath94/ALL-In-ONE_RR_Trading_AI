@@ -924,7 +924,7 @@ def system_data(_: User = Depends(current_user), db: Session = Depends(get_db)):
 # ---- Parts 27-30 Phase 4: opportunities (lifecycle + decision trace) and the data-source registry -------------------
 @router.get("/opportunities")
 def opportunities(state: str | None = None, symbol: str | None = None, timeframe: str | None = None, limit: int = 100,
-                  _: User = Depends(current_user), db: Session = Depends(get_db)):
+                  signal_id: int | None = None, _: User = Depends(current_user), db: Session = Depends(get_db)):
     from app.db.models_opportunity import Opportunity
     from app.intelligence.opportunity import STATES
     if state is not None and state not in STATES:
@@ -936,6 +936,8 @@ def opportunities(state: str | None = None, symbol: str | None = None, timeframe
         q = q.where(Symbol.broker_symbol == symbol)
     if timeframe:
         q = q.where(Opportunity.timeframe == timeframe.upper())
+    if signal_id is not None:
+        q = q.where(Opportunity.signal_id == signal_id)
     rows = db.execute(q.order_by(Opportunity.id.desc()).limit(max(1, min(limit, 500)))).all()
     return [{"id": o.id, "symbol": name, "timeframe": o.timeframe, "bar_time": o.bar_time, "direction": o.direction,
              "state": o.state, "state_reason": o.state_reason, "trigger": o.trigger, "signal_id": o.signal_id,

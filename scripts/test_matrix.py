@@ -145,6 +145,91 @@ SAFETY: list[tuple[str, list[str]]] = [
 ]
 
 
+# Parts 27-30, Section 6: the 35 required validations (Phase 8).
+PARTS27_30: list[tuple[str, list[str]]] = [
+    ("1. Strategy inventory preservation", ["py:test_preservation.py::test_all_original_strategy_ids_present",
+                                            "py:test_part28.py::test_catalogue_derives_from_the_215_strategies_without_changing_them"]),
+    ("2. Strategy identifier preservation", ["py:test_preservation.py::test_all_original_strategy_ids_present",
+                                             "py:test_strategies.py::test_registry_has_full_library_with_unique_codes"]),
+    ("3. Strategy source and configuration preservation", ["py:test_preservation.py::test_original_strategy_logic_and_config_unchanged",
+                                                           "py:test_part29.py::test_generate_records_experiments_without_touching_the_strategy"]),
+    ("4. Pattern registry preservation", ["py:test_part28.py::test_catalogue_derives_from_the_215_strategies_without_changing_them",
+                                          "py:test_part27.py::test_extra_regime_tags_are_added_and_the_primary_label_is_unchanged"]),
+    ("5. AI provider integration", ["py:test_part27.py::test_openai_preset_and_reasoning_model_parameter_fallback",
+                                    "py:test_part27.py::test_consensus_confirms_only_when_both_providers_confirm",
+                                    "py:test_parts27_30_integration.py::test_parts27_30_flow_end_to_end_in_demo"]),
+    ("6. Provider fallback", ["py:test_ai_gateway.py::test_retry_then_fallback_with_ledger",
+                              "py:test_part27.py::test_consensus_without_both_answers_leaves_the_candidate_unreviewed"]),
+    ("7. Research data validation", ["py:test_part30.py::test_data_quality_checks",
+                                     "py:test_part27.py::test_opportunity_and_source_registry_api"]),
+    ("8. Market regime detection", ["py:test_analysis.py::test_regime_trend_and_range",
+                                    "py:test_part27.py::test_extra_regime_tags_are_added_and_the_primary_label_is_unchanged"]),
+    ("9. Pattern detection", ["py:test_part28.py::test_bullish_gartley_completes_confirms_and_reaches_its_target",
+                              "py:test_part28.py::test_detection_is_causal_forming_until_d_is_confirmed",
+                              "py:test_part28.py::test_elliott_counts_only_rule_satisfying_impulses",
+                              "py:test_part28.py::test_records_are_deduplicated_move_forward_and_record_relations"]),
+    ("10. Strategy selection", ["py:test_part29.py::test_selection_decisions",
+                                "py:test_part29.py::test_scan_trace_has_selection_and_health"]),
+    ("11. Strategy discovery isolation", ["py:test_discovery_sandbox.py::test_experimental_code_never_reaches_production_registry",
+                                          "py:test_part29.py::test_generate_records_experiments_without_touching_the_strategy"]),
+    ("12. Backtesting", ["py:test_signals_backtest.py::test_real_strategy_backtest_metrics_and_tools",
+                         "py:test_signals_backtest.py::test_fill_next_open_with_spread_and_hits_tp"]),
+    ("13. Walk-forward testing", ["py:test_model_governance.py::test_walk_forward_is_chronological_with_embargo_and_required"]),
+    ("14. Monte Carlo testing", ["py:test_signals_backtest.py::test_real_strategy_backtest_metrics_and_tools"]),
+    ("15. Model leakage checks", ["py:test_intelligence.py::test_embargo_prevents_overlap",
+                                  "py:test_part29.py::test_bias_report_flags_repainting_and_leakage",
+                                  "py:test_part29.py::test_variant_evaluation_and_bias_report"]),
+    ("16. Trade learning", ["py:test_learning.py::test_sync_imports_deals_once_aggregates_and_separates_modes",
+                            "py:test_trade_intelligence.py::test_attribution_is_recorded_never_guessed"]),
+    ("17. DEMO/LIVE separation", ["py:test_trade_intelligence.py::test_demo_and_live_never_mix_and_sources_stay_apart",
+                                  "py:test_part29.py::test_readiness_requires_a_demo_track_record_and_gates_the_switch"]),
+    ("18. MT5 connector", ["py:test_connector.py::test_market_order_executes_once",
+                           "py:test_execution_e2e.py::test_symbols_discovered_dynamically"]),
+    ("19. Broker reconciliation", ["py:test_execution_e2e.py::test_lost_response_is_reconciled_not_resent",
+                                   "py:test_part30.py::test_startup_compares_pending_orders_and_blocks_on_unknown_engine_orders",
+                                   "py:test_execution_e2e.py::test_restart_adopts_broker_positions_and_protects_unprotected"]),
+    ("20. Order idempotency", ["py:test_connector.py::test_market_order_executes_once",
+                               "py:test_execution_e2e.py::test_duplicate_signal_never_executes_twice"]),
+    ("21. Partial fill handling", ["py:test_parts27_30_integration.py::test_partial_fill_is_recorded_and_the_filled_volume_is_what_gets_managed",
+                                   "py:test_connector.py::test_modify_partial_and_close",
+                                   "py:test_learning.py::test_aggregate_partial_exits_vwap_and_costs"]),
+    ("22. Position management", ["py:test_execution_e2e.py::test_position_management_partial_and_break_even",
+                                 "py:test_part29.py::test_time_exit_closes_through_the_journalled_manager_only_when_enabled"]),
+    ("23. Risk Governor rejection", ["py:test_execution_e2e.py::test_risk_rejection_releases_reservation",
+                                     "py:test_part30.py::test_floating_loss_limit_blocks_new_entries",
+                                     "py:test_part29.py::test_concentration_blocks_a_second_order_from_the_same_strategy_end_to_end",
+                                     "py:test_parts27_30_integration.py::test_an_inconsistent_feed_is_refused_by_the_risk_engine_even_after_ai_consensus"]),
+    ("24. Emergency stop", ["py:test_part22.py::test_emergency_stop_blocks_entries_but_does_not_blindly_close_positions",
+                            "py:test_part30.py::test_kill_switch_cancels_only_the_engines_pending_orders"]),
+    ("25. Market data quality", ["py:test_part30.py::test_data_quality_checks", "py:test_part30.py::test_scan_records_data_quality",
+                                 "py:test_intelligence.py::test_stale_quote_cannot_authorise_entry"]),
+    ("26. Execution intelligence", ["py:test_intelligence.py::test_execution_analytics_counts_only_confirmed_fills",
+                                    "py:test_trade_intelligence.py::test_quality_costs_durations_and_coverage"]),
+    ("27. Counterfactual learning", ["py:test_part30.py::test_counterfactuals_are_labelled_hindsight",
+                                     "py:test_part30.py::test_simulation_api_from_an_opportunity_and_a_closed_position"]),
+    ("28. Model drift", ["py:test_model_governance.py::test_critical_drift_recommends_retraining_once",
+                         "py:test_part29.py::test_health_reports_drifting_production_models"]),
+    ("29. Strategy degradation", ["py:test_part30.py::test_validation_expiry_drift_and_strategy_suspension"]),
+    ("30. Database migration", ["py:test_part22.py::test_migrations_form_one_linear_chain",
+                                "py:test_part22.py::test_downgrade_to_base_and_upgrade_to_head_and_schema_matches_models",
+                                "rs:supervisor::tests::migration_refused_without_backup"]),
+    ("31. API integration", ["py:test_part22.py::test_every_route_of_the_original_engine_still_exists",
+                             "py:test_part27.py::test_opportunity_and_source_registry_api", "py:test_part28.py::test_pattern_api",
+                             "py:test_part29.py::test_variants_and_dna_api"]),
+    ("32. Frontend build", ["ci:frontend.yml::npm run build"]),
+    ("33. Worker recovery", ["py:test_roles.py::test_restarted_container_reclaims_its_own_stale_lock",
+                             "py:test_part30.py::test_a_learner_restart_recovers_jobs_left_running",
+                             "py:test_resources.py::test_a_timed_out_job_is_terminated_not_left_running"]),
+    ("34. Application restart recovery", ["py:test_execution_e2e.py::test_restart_adopts_broker_positions_and_protects_unprotected",
+                                          "py:test_connector.py::test_journal_survives_restart",
+                                          "py:test_mt5_agent.py::test_terminal_crash_is_detected_and_recovered"]),
+    ("35. Backup integrity and restoration", ["rs:backupcrypt::tests::tampering_truncation_and_wrong_keys_are_refused",
+                                              "rs:supervisor::tests::backups_are_encrypted_and_no_plain_dump_is_left_anywhere",
+                                              "rs:supervisor::tests::scheduled_maintenance_backs_up_daily_and_restore_tests_weekly",
+                                              "rs:supervisor::tests::a_restore_test_fails_when_the_backup_lacks_a_live_table"]),
+]
+
+
 def junit_results(files: list[Path]) -> dict[str, str]:
     """'<file>::<test>' -> passed | failed | skipped (parametrised cases: all must pass)."""
     out: dict[str, str] = {}
@@ -192,7 +277,8 @@ def main() -> int:
 
     bad, lines = [], ["# Part 22 test matrix", "",
                       "Generated by `scripts/test_matrix.py` from real test results. Every item must be proven by passing tests.", ""]
-    for title, rows in (("Test areas", AREAS), ("Safety conditions", SAFETY)):
+    for title, rows in (("Test areas", AREAS), ("Safety conditions", SAFETY),
+                        ("Parts 27-30: required validations (Section 6)", PARTS27_30)):
         lines += [f"## {title}", "", "| Item | Tests | Result |", "|---|---|---|"]
         for item, refs in rows:
             states = [(r, state(r)) for r in refs]
@@ -202,11 +288,13 @@ def main() -> int:
             tests = "<br>".join(f"`{r.split(':', 1)[1]}` ({s})" for r, s in states)
             lines.append(f"| {item} | {tests} | {'PASS' if ok else 'FAIL'} |")
         lines.append("")
-    total = sum(len(r) for _, r in AREAS + SAFETY)
-    lines.append(f"{len(AREAS)} areas, {len(SAFETY)} safety conditions, {total} test references; failures: {len(bad)}.")
+    total = sum(len(r) for _, r in AREAS + SAFETY + PARTS27_30)
+    lines.append(f"{len(AREAS)} areas, {len(SAFETY)} safety conditions, {len(PARTS27_30)} Parts 27-30 validations, "
+                 f"{total} test references; failures: {len(bad)}.")
     if a.markdown:
         a.markdown.write_text("\n".join(lines) + "\n")
-    print("\n".join(bad) if bad else f"all {len(AREAS)} areas and {len(SAFETY)} safety conditions proven by passing tests")
+    print("\n".join(bad) if bad else f"all {len(AREAS)} areas, {len(SAFETY)} safety conditions and {len(PARTS27_30)} "
+                                     "Parts 27-30 validations proven by passing tests")
     return 1 if bad else 0
 
 

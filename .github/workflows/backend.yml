@@ -77,4 +77,5 @@ jobs:
         working-directory: .
         run: |
           python scripts/test_matrix.py --only py --only ci --junit ${{ runner.temp }}/backend.xml \
-            --junit ${{ runner.temp }}/mt5.xml --junit ${{ runner.temp }}/wincon.xml --ci .github/workflows/desktop.yml
+            --junit ${{ runner.temp }}/mt5.xml --junit ${{ runner.temp }}/wincon.xml --ci .github/workflows/desktop.yml \
+            --ci .github/workflows/frontend.yml

@@ -19,8 +19,10 @@ export default function Signals() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [opp, setOpp] = useState<any>(undefined);   // Parts 27-30: the opportunity (lifecycle + decision trace) of this signal
   async function open(r: any) {
-    setSel(await api(`/api/signals/${r.id}`)); setTf(r.timeframe); setMsg(null); setErr(null); setFusion(undefined);
+    setSel(await api(`/api/signals/${r.id}`)); setTf(r.timeframe); setMsg(null); setErr(null); setFusion(undefined); setOpp(undefined);
+    try { const l = await api<any[]>(`/api/opportunities?signal_id=${r.id}&limit=1`); setOpp(l[0] ? await api(`/api/opportunities/${l[0].id}`) : null); } catch { setOpp(null); }
     try { const x = await api<any>(`/api/intelligence/signals/${r.id}`); setFusion(x.fusion); setAnalysisId(x.analysis_id); } catch { setFusion(null); setAnalysisId(null); }
   }
   async function execute() {
@@ -57,6 +59,16 @@ export default function Signals() {
             <div className="mt-2 text-[11px] text-dim">Confidence: {sel.calibrated_confidence === null ? `not reported — only ${sel.confidence_sample} out-of-sample outcomes (min 30)` : fmt.pct(sel.calibrated_confidence, 1) + ` (n=${sel.confidence_sample})`}</div>
             <div className="mt-3 rounded border border-line p-2"><div className="mb-1 text-[10px] uppercase tracking-wider text-dim">Signal fusion (all evidence)</div>
               {fusion === undefined ? <div className="text-[11px] text-dim">loading…</div> : <FusionDetail f={fusion} analysisId={analysisId} />}</div>
+            <div className="mt-3 rounded border border-line p-2"><div className="mb-1 text-[10px] uppercase tracking-wider text-dim">Decision trace</div>
+              {opp === undefined ? <div className="text-[11px] text-dim">loading…</div> : opp === null
+                ? <div className="text-[11px] text-dim">No opportunity record (signals before Parts 27-30 have none).</div>
+                : <>
+                  <div className="text-[11px]"><Badge tone={opp.state === "EXECUTED" ? "neon" : opp.state === "REJECTED" ? "bear" : opp.state === "QUALIFIED" ? "violet" : "warn"}>{opp.state.replaceAll("_", " ")}</Badge> <span className="text-dim">{opp.state_reason}</span></div>
+                  <div className="mt-1 flex flex-wrap gap-1">{opp.trace.map((t: any, i: number) => (
+                    <span key={i} title={JSON.stringify(t.evidence).slice(0, 400)} className="rounded border border-line px-1 text-[10px]">
+                      <span className="text-dim">{t.stage.replaceAll("_", " ")}:</span> {typeof t.result === "object" ? JSON.stringify(t.result) : String(t.result)}</span>))}</div>
+                  <a className="mt-1 inline-block text-[10px] text-cyan" href={`/opportunities?id=${opp.id}`}>Open in Opportunity Lifecycle</a>
+                </>}</div>
             <div className="mt-2 flex flex-wrap gap-1">{sel.strategies.map((s: any, i: number) => <Badge key={i} tone="violet">{s.strategy}</Badge>)}</div>
             {sel.ai_review && (
               <div className="mt-3 rounded border border-violet/40 p-2 text-[11px]">

@@ -44,6 +44,7 @@ class FakeMT5:
         self.send_calls = 0
         self.fail_after_send = False      # simulate crash *after* broker accepted the order
         self.reject_retcode: int | None = None
+        self.partial_fill: float | None = None   # e.g. 0.5: an opening market order fills half, retcode DONE_PARTIAL
         self.balance = 10_000.0
         self.symbols = {
             "EURUSD.r": dict(digits=5, point=1e-5, trade_tick_size=1e-5, trade_tick_value=1.0, trade_contract_size=100000,
@@ -132,13 +133,16 @@ class FakeMT5:
             return Result(self.reject_retcode, 0, 0, 0.0, 0.0, 0.0, 0.0, "Rejected", None)
         self.next_ticket += 1
         t = self.next_ticket
+        filled = req.get("volume", 0.0)
+        if req["action"] == TRADE_ACTION_DEAL and "position" not in req and self.partial_fill:
+            filled = round(req["volume"] * self.partial_fill, 2)
         if req["action"] == TRADE_ACTION_DEAL and "position" not in req:
             self.positions[t] = dict(ticket=t, symbol=req["symbol"], type=0 if req["type"] == ORDER_TYPE_BUY else 1,
-                                     volume=req["volume"], price_open=req["price"], price_current=req["price"],
+                                     volume=filled, price_open=req["price"], price_current=req["price"],
                                      sl=req.get("sl", 0.0), tp=req.get("tp", 0.0), profit=0.0, swap=0.0,
                                      magic=req["magic"], comment=req["comment"], time=int(time.time()))
             self.deals.append(dict(ticket=t + 100000, order=t, position_id=t, symbol=req["symbol"], type=req["type"],
-                                   volume=req["volume"], price=req["price"], profit=0.0, commission=0.0, swap=0.0,
+                                   volume=filled, price=req["price"], profit=0.0, commission=0.0, swap=0.0,
                                    magic=req["magic"], comment=req["comment"], time=int(time.time()), entry=0,
                                    reason=3))     # DEAL_REASON_EXPERT: what MT5 records for API (program) orders
         elif req["action"] == TRADE_ACTION_DEAL:
@@ -162,6 +166,8 @@ class FakeMT5:
             self.pending.pop(req["order"], None)
         if self.fail_after_send:
             raise ConnectionError("terminal connection lost after send")
+        if filled != req.get("volume", 0.0):
+            return Result(10010, t + 100000, t, filled, req.get("price", 0.0), 0.0, 0.0, "Partial", None)
         return Result(10009, t + 100000, t, req.get("volume", 0.0), req.get("price", 0.0), 0.0, 0.0, "Done", None)
 
 
