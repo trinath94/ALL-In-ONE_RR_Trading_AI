@@ -34,6 +34,7 @@ lost", reset to DEMO. Phase 23 completed it into the migration utility Part 23 d
 | End-to-end: server export under write load → damaged transfer → policy refusal → REPLACE import → report → undo | **12 / 12** (section 4) |
 | Desktop core tests (Rust) | **130 passed** (120 + 10 new); clippy clean |
 | Engine | unchanged in this phase |
+| CI (`1d92c79`) | desktop 44023891951 **passed**: Rust tests on Linux and Windows, the test matrix, and the Windows install, upgrade and uninstall |
 
 ## 2. How content is verified
 
