@@ -111,12 +111,17 @@ REGISTRY: list[AgentSpec] = [
     A("ai_consensus", "AI Consensus Agent", "1.0", LLM, "app.ai.gateway (route mode 'consensus': two providers answer "
       "independently)", "ConsensusReview", "analysis service (shortlisted candidates)",
       "Confirms only when both providers confirm the engine's direction; otherwise the more cautious answer"),
+    # Parts 27-30 Phase 5 (Part 28)
+    A("pattern_recognition", "Chart Pattern Recognition Agent", "1.0", DETERMINISTIC,
+      "app.patterns (harmonic and conservative Elliott detectors beside the 215 strategies; detection records)",
+      "PatternDetections", "analysis service",
+      "Detections, lifecycle, strategy relations and outcome statistics; advisory, never changes a decision"),
 ]
 BY_ID = {a.id: a for a in REGISTRY}
-# 21 original agents (Part 9) + 5 added in Parts 27-30 Phase 4. The count is pinned so an agent cannot be added or
-# duplicated by accident.
+# 21 original agents (Part 9) + 5 added in Parts 27-30 Phase 4 + 1 in Phase 5. The count is pinned so an agent cannot
+# be added or duplicated by accident.
 ORIGINAL_AGENTS = 21
-assert len(REGISTRY) == ORIGINAL_AGENTS + 5 and len(BY_ID) == len(REGISTRY)
+assert len(REGISTRY) == ORIGINAL_AGENTS + 6 and len(BY_ID) == len(REGISTRY)
 
 # Consensus specialists -> control-room agents
 SPECIALIST_AGENT = {"SMC": "smc_ict", "ICT": "smc_ict", "LIQUIDITY": "smc_ict", "PRICE_ACTION": "price_action",

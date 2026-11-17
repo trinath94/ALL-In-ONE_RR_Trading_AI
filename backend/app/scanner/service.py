@@ -229,6 +229,18 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     cyc.note("news_events", {f"news_{news}": 1})
     metas = registry.all_strategies()
     spread = (float(tick.get("ask", 0)) - float(tick.get("bid", 0))) if tick else 0.0
+    patt = None
+    try:                                  # Parts 27-30 Phase 5 (Part 28): advisory pattern detections
+        from app.patterns import service as patterns
+        with cyc.step("pattern_recognition", ref):
+            with db.begin_nested():
+                patt = patterns.run(db, sym, tf, df, regime=reg.primary, sessions=ss.current_sessions(pd.Timestamp(now)),
+                                    spread_points=round(spread / float(sym.point), 2) if float(sym.point) else None,
+                                    sigs=sigs, data_caps=sorted(caps))
+        cyc.note("pattern_recognition", {"detections": patt["detections"], "new": patt["new"],
+                                         "active": len(patt["active"])})
+    except Exception as exc:  # noqa: BLE001 - pattern recognition must never break the scan
+        log.warning("pattern recognition skipped for %s: %s", ref, exc)
     mctx = MarketContext(sym.broker_symbol, tf, float(tick.get("bid") or df.close.iloc[-1]), df.index[-1].to_pydatetime(),
                          ctx.atr_last(), spread, reg.primary, reg.tags, ctx.htf_bias(), ss.current_sessions(pd.Timestamp(now)),
                          news, {k: metas[k].regimes for k in enabled}, stats)
@@ -256,7 +268,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     if sigs:
         try:
             opp = _opportunity(db, sym, tf, df, reg, sigs, outcomes, news, mctx, res, intel, fused, spread, caps, htf,
-                               peers, adaptive_recs, stats, cyc, ref, now)
+                               peers, adaptive_recs, stats, cyc, ref, now, patt)
         except Exception as exc:  # noqa: BLE001 - the trace must not break the scan; the engine's decision stands
             log.warning("opportunity record skipped for %s: %s", ref, exc)
     ar = AnalysisResult(symbol_id=sym.id, timeframe=tf, bar_time=df.index[-1].to_pydatetime(), regime=reg.primary,
@@ -281,7 +293,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
 
 
 def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res, intel, fused, spread, caps, htf, peers,
-                 adaptive_recs, stats, cyc, ref, now) -> dict:
+                 adaptive_recs, stats, cyc, ref, now, patt=None) -> dict:
     """Parts 27-30 Phase 4: the new specialist views and the decision trace for this analysis. Entry geometry errors
     make the setup NO_TRADE; with RR_OPPORTUNITY_GATE=enforce, entry WAIT or HIGH failure risk downgrade BUY/SELL to
     WAIT. Nothing here can upgrade a decision."""
@@ -324,6 +336,11 @@ def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res,
     cons = intel.get("consensus") or {}
     prob = intel.get("probability") or {}
     lead = sorted(sigs, key=lambda x: -x.strength)[:8]
+    from app.patterns import service as patterns
+    try:
+        align = patterns.alignment(db, sym.id, scan_timeframes(db))
+    except Exception as exc:  # noqa: BLE001
+        align = {"error": str(exc)[:200]}
     trace = [
         opx.stage("data", "symbol_scanner", "ok", {"closed_bars": len(df), "last_closed_bar": df.index[-1].isoformat(),
                                                    "data_caps": sorted(caps), "higher_timeframes": sorted(htf),
@@ -334,6 +351,12 @@ def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res,
                   {"outcomes": outcomes, "top": [{"strategy": x.strategy, "direction": x.direction, "strength": x.strength}
                                                  for x in lead]}),
         opx.stage("multi_timeframe", "multi_timeframe", mctx.htf_bias, {}),
+        opx.stage("timeframe_alignment", "multi_timeframe", align.get("aligned"), align),
+        opx.stage("patterns", "pattern_recognition",
+                  f"{len(patt['active'])} open" if patt else "unavailable",
+                  {"open": (patt or {}).get("active", []),
+                   "relation_to_engine": patterns.relation_to((patt or {}).get("active", []), res.direction),
+                   "note": "advisory: detections never change the decision"}),
         opx.stage("news", "news_events", news, {}),
         opx.stage("fundamental", "fundamental_analysis", "available" if fund.get("available") else "unavailable", fund),
         opx.stage("signal_engine", "signal_quality", f"{original} {res.grade}",
@@ -363,7 +386,9 @@ def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res,
                  "consensus": {"decision": cons.get("decision"), "agreement": cons.get("agreement")},
                  "probability": prob.get("tp_before_sl_probability") if prob.get("available") else None,
                  "fusion": (fused or {}).get("decision"), "entry_validation": entry["outcome"],
-                 "failure_risk": fail["level"], "fundamental_available": bool(fund.get("available"))}
+                 "failure_risk": fail["level"], "fundamental_available": bool(fund.get("available")),
+                 "timeframes_aligned": align.get("aligned"),
+                 "patterns": patterns.relation_to((patt or {}).get("active", []), res.direction)}
     safe = json.loads(json.dumps({"trace": trace, "breakdown": breakdown, "entry": entry}, default=str))
     return safe
 
@@ -622,7 +647,11 @@ def prune_opportunities(days: int) -> int:
         with session_scope() as db:
             res = db.execute(delete(Opportunity).where(Opportunity.state.in_(TERMINAL),
                                                        Opportunity.updated_at < datetime.now(UTC) - timedelta(days=days)))
-            return res.rowcount or 0
+            from app.db.models_opportunity import PatternDetection
+            from app.patterns.lifecycle import CLOSED
+            res2 = db.execute(delete(PatternDetection).where(PatternDetection.state.in_(CLOSED),
+                                                             PatternDetection.updated_at < datetime.now(UTC) - timedelta(days=days)))
+            return (res.rowcount or 0) + (res2.rowcount or 0)
     except Exception:  # noqa: BLE001
         return 0
 

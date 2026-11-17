@@ -976,3 +976,69 @@ def opportunity_detail(opp_id: int, _: User = Depends(current_user), db: Session
 def data_sources(_: User = Depends(current_user), db: Session = Depends(get_db)):
     from app.services import sources
     return sources.listing(db)
+
+
+# ---- Parts 27-30 Phase 5 (Part 28): pattern intelligence --------------------------------------------------------------
+@router.get("/patterns/catalogue")
+def pattern_catalogue(_: User = Depends(current_user)):
+    from app.patterns.catalogue import catalogue
+    return catalogue()
+
+
+@router.get("/patterns/detections")
+def pattern_detections(state: str | None = None, pattern: str | None = None, symbol: str | None = None,
+                       timeframe: str | None = None, live_only: bool = False, limit: int = 100,
+                       _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import PatternDetection
+    from app.patterns.lifecycle import STATES
+    if state is not None and state not in STATES:
+        raise HTTPException(422, f"state must be one of {', '.join(STATES)}")
+    q = select(PatternDetection, Symbol.broker_symbol).join(Symbol, Symbol.id == PatternDetection.symbol_id)
+    if state:
+        q = q.where(PatternDetection.state == state)
+    if pattern:
+        q = q.where(PatternDetection.pattern == pattern)
+    if symbol:
+        q = q.where(Symbol.broker_symbol == symbol)
+    if timeframe:
+        q = q.where(PatternDetection.timeframe == timeframe.upper())
+    if live_only:
+        q = q.where(PatternDetection.found_live.is_(True))
+    rows = db.execute(q.order_by(PatternDetection.id.desc()).limit(max(1, min(limit, 500)))).all()
+    return [{"id": d.id, "symbol": name, "timeframe": d.timeframe, "family": d.family, "pattern": d.pattern,
+             "direction": d.direction, "state": d.state, "quality": d.quality, "levels": d.levels,
+             "measure": d.measure, "relations": d.relations, "known_at": d.known_at, "found_live": d.found_live,
+             "updated_at": d.updated_at} for d, name in rows]
+
+
+@router.get("/patterns/detections/{det_id}")
+def pattern_detection(det_id: int, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import PatternDetection
+    d = db.get(PatternDetection, det_id)
+    if d is None:
+        raise HTTPException(404, "detection not found")
+    sym = db.get(Symbol, d.symbol_id)
+    return {"id": d.id, "symbol": sym.broker_symbol if sym else None, "timeframe": d.timeframe, "family": d.family,
+            "pattern": d.pattern, "direction": d.direction, "state": d.state, "quality": d.quality, "points": d.points,
+            "ratios": d.ratios, "levels": d.levels, "history": d.history, "measure": d.measure,
+            "relations": d.relations, "context": d.context, "rules": d.rules, "detector_version": d.detector_version,
+            "known_at": d.known_at, "found_live": d.found_live, "created_at": d.created_at, "updated_at": d.updated_at}
+
+
+@router.get("/patterns/stats")
+def pattern_stats(days: int = 90, live_only: bool = False, _: User = Depends(current_user),
+                  db: Session = Depends(get_db)):
+    from app.patterns import service as patterns
+    return {"days": days, "live_only": live_only, "min_sample": patterns.MIN_SAMPLE,
+            "basis": "measured on price bars after each formation became known (entry = that bar's close); not trades",
+            "rows": patterns.stats(db, max(1, min(days, 365)), live_only)}
+
+
+@router.get("/patterns/alignment")
+def pattern_alignment(symbol: str, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.patterns import service as patterns
+    from app.scanner.service import scan_timeframes
+    sym = db.scalar(select(Symbol).where(Symbol.broker_symbol == symbol))
+    if sym is None:
+        raise HTTPException(404, "symbol not found")
+    return {"symbol": symbol, **patterns.alignment(db, sym.id, scan_timeframes(db))}

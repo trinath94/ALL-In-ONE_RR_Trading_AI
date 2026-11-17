@@ -37,7 +37,8 @@ ORIGINAL_21 = ["master_orchestrator", "broker_discovery", "symbol_scanner", "ori
                "strategy_ranking", "strategy_correlation", "signal_quality", "news_events", "portfolio_risk",
                "ai_learning", "adaptive_optimisation", "strategy_discovery", "trade_execution", "trade_management",
                "post_trade_learning"]
-PARTS27_30_PHASE4 = ["fundamental_analysis", "entry_validation", "exit_optimisation", "failure_prediction", "ai_consensus"]
+PARTS27_30_PHASE4 = ["fundamental_analysis", "entry_validation", "exit_optimisation", "failure_prediction", "ai_consensus",
+                     "pattern_recognition"]          # the last one: Phase 5 (Part 28)
 
 
 def test_registry_is_closed_and_only_two_agents_touch_execution():

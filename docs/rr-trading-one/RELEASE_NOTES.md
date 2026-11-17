@@ -12,6 +12,15 @@ Incremental additions to 0.2.0; nothing existing is replaced.
   * **data-source registry** with observed health;
   * **event-driven re-analysis** on news releases, anomalies, and price reaching a waiting entry.
   * Database migration 0012 only adds tables and one column.
+* **Phase 5 (Part 28):**
+  * **Pattern Intelligence:** harmonic (Gartley, Bat, Butterfly, Crab, AB=CD) and conservative Elliott impulse detectors beside the 215 strategies (not added to them);
+  * detection records with a lifecycle (forming, completed, confirmed, target reached, invalidated, expired), no duplicates;
+  * the strategies that support or contradict each formation;
+  * outcome statistics measured on price bars, with sample sizes;
+  * alignment across all scanned timeframes;
+  * a pattern catalogue derived from the strategies;
+  * a pattern agent (27 agents).
+  * Detections are advisory and never change a decision. Migration 0013 only adds one table.
 
 ## Version 0.2.0 (development release, 2026-11-17)
 

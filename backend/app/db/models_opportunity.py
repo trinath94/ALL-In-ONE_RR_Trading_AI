@@ -63,3 +63,34 @@ class DataSource(Base):
     latency_ms: Mapped[float | None] = mapped_column(Float)
     notes: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PatternDetection(Base):
+    """Parts 27-30 Phase 5 (migration 0013): one formation found by a pattern detector (``app.patterns``), with its
+    lifecycle. ``key`` identifies the formation (symbol, timeframe, pattern, defining pivots) so repeated analyses
+    update one record instead of adding duplicates."""
+    __tablename__ = "pattern_detections"
+    __table_args__ = (Index("ix_pattern_detections_symbol_tf_id", "symbol_id", "timeframe", "id"),
+                      Index("ix_pattern_detections_pattern_state", "pattern", "state"))
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    key: Mapped[str] = mapped_column(String(160), unique=True)
+    symbol_id: Mapped[int] = mapped_column(ForeignKey("symbols.id", ondelete="CASCADE"))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    family: Mapped[str] = mapped_column(String(24))
+    pattern: Mapped[str] = mapped_column(String(32))
+    direction: Mapped[str] = mapped_column(String(8))
+    state: Mapped[str] = mapped_column(String(24))
+    quality: Mapped[float] = mapped_column(Float)
+    points: Mapped[list] = mapped_column(JSONB, default=list)
+    ratios: Mapped[dict] = mapped_column(JSONB, default=dict)
+    levels: Mapped[dict] = mapped_column(JSONB, default=dict)
+    history: Mapped[list] = mapped_column(JSONB, default=list)
+    measure: Mapped[dict] = mapped_column(JSONB, default=dict)          # pattern learning: entry, R, MFE/MAE, outcome
+    relations: Mapped[dict] = mapped_column(JSONB, default=dict)        # supporting / contradicting strategies
+    context: Mapped[dict] = mapped_column(JSONB, default=dict)          # regime, session, spread, data quality
+    rules: Mapped[str] = mapped_column(Text, default="")
+    detector_version: Mapped[str] = mapped_column(String(32))
+    known_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # bar at which the formation became known
+    found_live: Mapped[bool] = mapped_column(Boolean, default=True)     # known on the latest bars, not from history
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
