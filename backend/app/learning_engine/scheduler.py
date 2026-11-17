@@ -406,12 +406,30 @@ JOBS = [
 JOB_MAP = {j.name: j for j in JOBS}
 
 
+def recover_interrupted() -> int:
+    """Parts 27-30 Phase 7 (defect found by the backlog monitor): a learner killed outright (container stop, machine
+    restart) leaves its job RUNNING, and RUNNING counts as final, so the row stayed RUNNING for ever and its period
+    was never retried. Only one learner runs (``LOCK``; it expires 300 s after its holder dies), so when a learner
+    starts, any RUNNING row belongs to a process that no longer exists: it becomes INTERRUPTED (retryable)."""
+    with session_scope() as db:
+        rows = db.scalars(select(LearningJob).where(LearningJob.status == "RUNNING")).all()
+        for row in rows:
+            row.status, row.finished_at = "INTERRUPTED", datetime.now(UTC)
+            row.error = "the learner stopped while this job was running (found RUNNING at the next start)"
+        return len(rows)
+
+
 def main() -> None:
     configure_logging()
+    from app.services.monitoring import install_error_counter
+    install_error_counter("learner")
     r = get_redis()
     if not r.set(LOCK, "1", nx=True, ex=300):
         log.error("another learner holds the lock; exiting")
         return
+    n = recover_interrupted()
+    if n:
+        log.warning("%d learning job(s) left RUNNING by a stopped learner marked INTERRUPTED", n)
     stop = {"flag": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.update(flag=True))
     with session_scope() as db:

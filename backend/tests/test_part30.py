@@ -317,3 +317,20 @@ def _simulation_api(app, oid, cid):
         assert c.get("/api/governance").status_code == 200
         dq = c.get("/api/data-quality").json()
         assert dq and all("score" in d for d in dq)
+
+
+def test_a_learner_restart_recovers_jobs_left_running(db_clean):
+    """Defect found on the installed stack by the new backlog monitor: a learner killed outright left its job RUNNING
+    for ever (RUNNING counts as final). The next learner start marks such rows INTERRUPTED (retryable)."""
+    from app.learning_engine import scheduler as ls
+    with session_scope() as db:
+        db.add(LearningJob(job_type="portfolio", idempotency_key="portfolio:1", status="RUNNING",
+                           started_at=datetime.now(UTC) - timedelta(hours=12)))
+        db.add(LearningJob(job_type="drift", idempotency_key="drift:1", status="DONE"))
+    assert ls.recover_interrupted() == 1
+    with session_scope() as db:
+        rows = {r.idempotency_key: r for r in db.scalars(select(LearningJob))}
+        assert rows["portfolio:1"].status == "INTERRUPTED" and "next start" in rows["portfolio:1"].error
+        assert rows["drift:1"].status == "DONE"
+        assert monitoring.backlog(db)["learner_stuck"] == []
+    assert ls.recover_interrupted() == 0
