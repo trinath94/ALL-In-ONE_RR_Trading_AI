@@ -96,7 +96,14 @@ New tests cover:
 
 ## 7. CI after the fixes
 
-To be confirmed on `de3074f` (desktop build including clippy and the Windows installer). Reported in the reply that follows this report.
+| Commit | Workflow | Run | Result |
+|---|---|---|---|
+| `318f80e` | desktop | 44058843220 | ❌ clippy `incompatible_msrv` (`Option::is_none_or`) |
+| `9c04a30` | backend | 44062934866 | ✅ (includes the learner recovery test) |
+| `9c04a30` | desktop | 44062934761 | ❌ same clippy error (before the fix) |
+| `de3074f` | desktop | 44063024470 | ✅ Rust tests on Linux and Windows, clippy, Windows installer build, install, upgrade, uninstall |
+
+All workflows are green on the latest code.
 
 ## 8. Files
 
