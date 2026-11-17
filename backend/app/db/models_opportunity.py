@@ -94,3 +94,20 @@ class PatternDetection(Base):
     found_live: Mapped[bool] = mapped_column(Boolean, default=True)     # known on the latest bars, not from history
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class SimulationRun(Base):
+    """Parts 27-30 Phase 7 (migration 0014): a scenario simulation or counterfactual analysis. Research only: no
+    trading decision reads these."""
+    __tablename__ = "simulation_runs"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24))                  # scenario | counterfactual
+    subject_type: Mapped[str] = mapped_column(String(24))          # opportunity | closed_position | manual
+    subject_id: Mapped[int | None] = mapped_column(BigInteger)
+    symbol: Mapped[str] = mapped_column(String(64))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    setup: Mapped[dict] = mapped_column(JSONB, default=dict)
+    result: Mapped[dict] = mapped_column(JSONB, default=dict)
+    bars: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

@@ -74,11 +74,18 @@ def health(db: Session) -> dict:
     prod = db.scalars(select(ModelRegistry).where(ModelRegistry.status == "PRODUCTION")).all()
     drift = {d.subject for d in db.scalars(select(DriftEvent).where(DriftEvent.created_at >= since))}
     models = []
+    from app.core.config import get_settings
+    max_age = timedelta(days=get_settings().model_validation_max_age_days)
     for m in prod:
         names = {getattr(m, "model_key", None), f"{getattr(m, 'model_key', '')}:v{getattr(m, 'version', '')}"}
         bad = bool(names & drift)
+        validated = getattr(m, "validated_at", None) or getattr(m, "trained_at", None)
+        expired = validated is not None and datetime.now(UTC) - validated > max_age
+        detail = "drift event in the last 24 h" if bad else "no drift event in 24 h"
+        if expired:
+            detail += f"; validation expired (validated {validated.date()}, older than {max_age.days} days)"
         models.append({"model": getattr(m, "model_key", None), "version": getattr(m, "version", None),
-                       "healthy": not bad, "detail": "drift event in the last 24 h" if bad else "no drift event in 24 h"})
+                       "healthy": not bad and not expired, "validation_expired": expired, "detail": detail})
     providers = []
     try:
         from app.db.models_ai import AIProvider

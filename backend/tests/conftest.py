@@ -59,7 +59,7 @@ TRANSIENT = ["login_history", "user_sessions", "audit_logs", "notifications", "s
              # RR Trading One (scanner settings, agent run log, AI gateway)
              "scanner_settings", "agent_runs", "ai_usage", "ai_task_routes", "ai_providers",
              # Parts 27-30 Phase 4 (opportunities, source registry)
-             "opportunity_transitions", "opportunities", "data_sources", "pattern_detections"]
+             "opportunity_transitions", "opportunities", "data_sources", "pattern_detections", "simulation_runs"]
 
 
 @pytest.fixture

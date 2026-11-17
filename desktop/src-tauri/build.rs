@@ -12,7 +12,7 @@ fn main() {
             "mt5_overview", "mt5_detect", "mt5_save_profile", "mt5_select_profile", "mt5_delete_profile", "mt5_link",
             "engine_status", "engine_bootstrap_admin", "engine_use_demo_account",
             "backup_list", "backup_restore", "backup_import_file", "backup_import", "prerequisites",
-            "backup_key_export", "backup_key_add", "rotate_secrets", "backup_import_report",
+            "backup_key_export", "backup_key_add", "rotate_secrets", "backup_import_report", "maintenance_status",
         ]),
     ))
     .expect("failed to run tauri-build");

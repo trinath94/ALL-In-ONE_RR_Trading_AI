@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,8 +10,10 @@ from fastapi.responses import JSONResponse
 from app.api.routes import ai, auth, intel, learning, local, mt5_agent, system, trading
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.services import monitoring
 
 configure_logging()
+monitoring.install_error_counter("api")
 log = logging.getLogger("api")
 settings = get_settings()
 
@@ -23,7 +26,10 @@ app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.co
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    t0 = time.perf_counter()
     resp = await call_next(request)
+    # Parts 27-30 Phase 7: per-minute request count, latency and 5xx rate (best effort)
+    monitoring.record_request((time.perf_counter() - t0) * 1000, resp.status_code)
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")

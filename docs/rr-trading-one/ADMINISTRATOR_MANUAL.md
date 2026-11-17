@@ -90,6 +90,28 @@ In enforce mode, two more checks downgrade BUY/SELL to WAIT:
 
 Exits are closes sent through the same journalled, idempotent execution manager. Missing data never causes an exit.
 
+**Capital protection** (Risk Centre, per mode). All are off by default:
+
+| Parameter | Meaning |
+|---|---|
+| `max_floating_loss_pct` | no new entry while open positions are this far under water (% of balance) |
+| `max_strategy_risk_pct` | the open risk of one strategy, including the new order, as % of equity |
+| `volatility_sizing` | at high volatility (ATR percentile above 0.5) the risk budget is reduced, to as little as a quarter; it is never increased |
+
+**Emergency and reconciliation.**
+* The kill switch now also cancels the engine's own pending orders at the broker. These are journalled CANCEL_PENDING commands; orders placed by anyone else are never touched.
+* Startup reconciliation compares the broker's pending orders with the journal. Engine-tagged orders the journal does not know (for example after restoring an older database) block new entries until you resolve them.
+
+**Model governance.**
+* A production model validated longer ago than `RR_MODEL_VALIDATION_MAX_AGE_DAYS` (default 90) is shown as degraded. In enforce mode it downgrades BUY/SELL to WAIT.
+* Every trained model records a `dataset_version`: a hash of its exact training data.
+* Strategies with 30 or more paper/live trades and a profit factor below 0.8 are listed for suspension in System Monitor. Disabling one is your decision.
+
+**Scheduled maintenance** (the desktop application, local mode).
+* While the database is running, a backup is taken automatically once a day; the newest 14 automatic backups are kept.
+* Once a week the newest backup is restored into a scratch database and checked against the live one: every table present, same schema version. The live database is never touched.
+* The result is shown under Backup and Recovery.
+
 **LIVE readiness.** The typed LIVE switch is refused until every required item of the checklist passes:
 * an active, verified and approved LIVE account;
 * a LIVE risk configuration that is valid and no looser than DEMO's;

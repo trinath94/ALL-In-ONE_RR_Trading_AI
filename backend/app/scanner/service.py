@@ -206,6 +206,12 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
             if len(h):
                 htf[htf_tf] = h
     tick = bridge.tick(sym.broker_symbol)
+    try:                                  # Parts 27-30 Phase 7 (Part 30.3): quality of what the broker returned
+        from app.intelligence import data_quality
+        dq = data_quality.assess(raw, TF_MINUTES[tf], now=now, tick=tick, source=f"mt5:{sym.broker_symbol}:{tf}",
+                                 max_quote_age_s=s.max_quote_age_seconds)
+    except Exception as exc:  # noqa: BLE001 - recording must not break the scan
+        dq = {"error": str(exc)[:200]}
     caps = {CAP_TICK_VOLUME}
     if "real_volume" in df and df["real_volume"].sum() > 0:
         caps.add(CAP_REAL_VOLUME)
@@ -268,7 +274,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     if sigs:
         try:
             opp = _opportunity(db, sym, tf, df, reg, sigs, outcomes, news, mctx, res, intel, fused, spread, caps, htf,
-                               peers, adaptive_recs, stats, cyc, ref, now, patt)
+                               peers, adaptive_recs, stats, cyc, ref, now, patt, dq)
         except Exception as exc:  # noqa: BLE001 - the trace must not break the scan; the engine's decision stands
             log.warning("opportunity record skipped for %s: %s", ref, exc)
     ar = AnalysisResult(symbol_id=sym.id, timeframe=tf, bar_time=df.index[-1].to_pydatetime(), regime=reg.primary,
@@ -278,7 +284,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
                                    # Phase 8: what this symbol's feed actually provided and what every strategy did
                                    "data_caps": sorted(caps), "peers": sorted(peers), "peer_problems": peer_problems,
                                    "peer_correlation": peer_correlation(df, peers) if peers else {},
-                                   "evaluation": outcomes,
+                                   "evaluation": outcomes, "data_quality": dq,
                                    "unavailable": sorted({d["strategy"] for d in diag if d["status"] == "unavailable"})},
                         strategy_outputs=[s.dict() for s in sigs] + [d for d in diag if d["status"] == "error"],
                         score={**res.dict(), "intelligence": intel, "fusion": fused})
@@ -293,7 +299,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
 
 
 def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res, intel, fused, spread, caps, htf, peers,
-                 adaptive_recs, stats, cyc, ref, now, patt=None) -> dict:
+                 adaptive_recs, stats, cyc, ref, now, patt=None, dq=None) -> dict:
     """Parts 27-30 Phase 4: the new specialist views and the decision trace for this analysis. Entry geometry errors
     make the setup NO_TRADE; with RR_OPPORTUNITY_GATE=enforce, entry WAIT or HIGH failure risk downgrade BUY/SELL to
     WAIT. Nothing here can upgrade a decision."""
@@ -360,7 +366,7 @@ def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res,
     trace = [
         opx.stage("data", "symbol_scanner", "ok", {"closed_bars": len(df), "last_closed_bar": df.index[-1].isoformat(),
                                                    "data_caps": sorted(caps), "higher_timeframes": sorted(htf),
-                                                   "peers": sorted(peers)}),
+                                                   "peers": sorted(peers), "quality": dq}),
         opx.stage("market_regime", "market_regime", reg.primary, {"tags": list(reg.tags), "adx": reg.adx,
                                                                   "atr_percentile": reg.atr_pct}),
         opx.stage("strategies", "original_strategy_analysis", f"{len(sigs)} setups",

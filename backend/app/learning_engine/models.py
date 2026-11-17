@@ -256,7 +256,8 @@ def train(db: Session, ds: pd.DataFrame, model_key: str = "prob_tp_before_sl", t
     tr, va, te = splits["train"], splits["validation"], splits["test"]
     version = (db.scalar(select(func.max(ModelRegistry.version)).where(ModelRegistry.model_key == model_key)) or 0) + 1
     reg = ModelRegistry(model_key=model_key, version=version, algorithm="pending", target=target, features=FEATURES,
-                        dataset_ref={**(dataset_ref or {}), "rows": int(len(data)), "train": int(len(tr)),
+                        dataset_ref={**(dataset_ref or {}), "dataset_version": _dataset_version(data),
+                                     "rows": int(len(data)), "train": int(len(tr)),
                                      "validation": int(len(va)), "test": int(len(te)), "embargo_bars": horizon,
                                      "train_end": str(tr.time.max()) if len(tr) else None,
                                      "test_start": str(te.time.min()) if len(te) else None},
@@ -393,3 +394,8 @@ def production(db: Session, model_key: str) -> ModelRegistry | None:
 def latest_validated(db: Session, model_key: str) -> ModelRegistry | None:
     return db.scalar(select(ModelRegistry).where(ModelRegistry.model_key == model_key, ModelRegistry.status.in_(
         ["VALIDATED", "APPROVED"])).order_by(ModelRegistry.version.desc()).limit(1))
+
+
+def _dataset_version(data: pd.DataFrame) -> str:
+    from app.learning_engine.versioning import dataset_version
+    return dataset_version(data)

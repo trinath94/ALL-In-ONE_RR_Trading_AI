@@ -30,6 +30,7 @@
     "allow-backup-key-export",
     "allow-backup-key-add",
     "allow-rotate-secrets",
-    "allow-backup-import-report"
+    "allow-backup-import-report",
+    "allow-maintenance-status"
   ]
 }

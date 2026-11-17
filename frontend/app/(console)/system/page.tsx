@@ -6,6 +6,55 @@ import { useApi, useLive } from "@/lib/hooks";
 
 const TONE: Record<string, any> = { OK: "neon", WARN: "warn", CRITICAL: "bear", UNKNOWN: "dim", NO_REPORT: "dim" };
 
+/** Parts 27-30 Phase 7: data quality, API / logs / database / job backlog, model and strategy governance. */
+function Reliability() {
+  const { data: mon } = useApi<any>("/api/system/monitoring", 15000);
+  const { data: dq } = useApi<any[]>("/api/data-quality", 30000);
+  const { data: gov } = useApi<any>("/api/governance", 60000);
+  const api = mon?.api;
+  const bl = mon?.backlog;
+  return (
+    <>
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+        <Stat label="API requests (15 min)" value={api?.requests ?? "—"} sub={api?.mean_latency_ms != null ? `mean ${api.mean_latency_ms} ms` : "no requests"} />
+        <Stat label="Server errors (15 min)" value={api?.server_errors ?? "—"} tone={api?.server_errors ? "down" : "plain"} sub={api?.error_rate != null ? `${(api.error_rate * 100).toFixed(2)}%` : ""} />
+        <Stat label="DB connections" value={mon ? `${mon.db_connections.total} / ${mon.db_connections.max}` : "—"} sub={mon ? Object.entries(mon.db_connections.by_state).map(([k, v]) => `${k} ${v}`).join(" · ") : ""} />
+        <Stat label="Error logs (15 min)" value={mon ? Object.values(mon.log_errors_15m).reduce((a: number, b: any) => a + b, 0) : "—"}
+          tone={mon && Object.values(mon.log_errors_15m).some((v: any) => v > 0) ? "warn" : "plain"}
+          sub={mon ? Object.entries(mon.log_errors_15m).map(([k, v]) => `${k} ${v}`).join(" · ") || "none" : ""} />
+      </div>
+      <div className="mt-3 grid gap-3 xl:grid-cols-2">
+        <Panel title="Job backlog">
+          {!bl ? <div className="text-[11px] text-dim">loading…</div> : <>
+            <div className="text-[11px]">Overdue learner jobs: {bl.learner_overdue.length ? bl.learner_overdue.map((o: any) => `${o.job} (${o.last_finished ? "last " + fmt.time(o.last_finished) : "never run"})`).join(", ") : <span className="text-neon">none</span>}</div>
+            <div className="text-[11px]">Stuck jobs: {bl.learner_stuck.length ? <span className="text-bear">{bl.learner_stuck.map((o: any) => o.job).join(", ")}</span> : <span className="text-neon">none</span>}</div>
+            <div className="text-[11px]">Last scan cycle: {bl.scanner_last_cycle ? `${bl.scanner_last_cycle.analysed} analysed, ${bl.scanner_last_cycle.deferred} deferred, ${bl.scanner_last_cycle.timed_out} timed out` : "—"}</div>
+          </>}
+        </Panel>
+        <Panel title="Model governance and strategy suspension">
+          <Table rows={gov?.models} empty="No production model." rowKey={(m) => `${m.model}${m.version}`}
+            cols={[{ k: "model", h: "Model", r: (m) => `${m.model} v${m.version}` },
+              { k: "healthy", h: "Health", r: (m) => <Badge tone={m.healthy ? "neon" : "bear"}>{m.healthy ? "healthy" : "degraded"}</Badge> },
+              { k: "dataset_version", h: "Dataset", sort: false, r: (m) => <span className="font-mono text-[10px]">{m.dataset_version ? m.dataset_version.slice(0, 19) + "…" : "not recorded"}</span> },
+              { k: "detail", h: "Detail", sort: false, r: (m) => <span className="text-dim">{m.detail}</span> }]} />
+          <div className="mt-2 text-[10px] uppercase text-dim">Strategies recommended for suspension (your decision)</div>
+          {gov?.strategy_suspensions?.length ? gov.strategy_suspensions.map((x: any) => <div key={x.strategy} className="text-[11px]">{x.strategy}: {x.reason}</div>)
+            : <div className="text-[11px] text-dim">None: no strategy has 30+ paper/live trades with a profit factor below 0.8.</div>}
+        </Panel>
+      </div>
+      <Panel title="Market data quality (latest analysis per symbol and timeframe)" className="mt-3">
+        <Table rows={dq} empty="No analyses yet." rowKey={(d) => `${d.symbol}|${d.timeframe}`}
+          cols={[{ k: "symbol", h: "Symbol" }, { k: "timeframe", h: "TF" },
+            { k: "score", h: "Score", r: (d) => d.score == null ? "—" : <Badge tone={d.score >= 90 ? "neon" : d.score >= 70 ? "warn" : "bear"}>{d.score}</Badge> },
+            { k: "problems", h: "Problems", sort: false, r: (d) => Object.keys(d.problems || {}).length ? Object.entries(d.problems).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(" · ") : <span className="text-dim">none</span> },
+            { k: "quote_age_s", h: "Quote age", r: (d) => d.quote_age_s == null ? "—" : `${d.quote_age_s} s` },
+            { k: "source", h: "Source", sort: false, r: (d) => <span className="text-dim">{d.source || d.note}</span> },
+            { k: "analysed_at", h: "Analysed", r: (d) => fmt.time(d.analysed_at) }]} />
+      </Panel>
+    </>
+  );
+}
+
 export default function SystemPage() {
   const me = useMe();
   const live = useLive(["system_event"]);
@@ -50,6 +99,7 @@ export default function SystemPage() {
             </div>))}
         </div>
       </Panel>
+      <Reliability />
       <div className="mt-3 grid gap-3 xl:grid-cols-2">
         <Panel title="System events"><Table rows={ev} empty="No events" cols={[{ k: "at", h: "Time", r: (e) => fmt.time(e.at) }, { k: "component", h: "Component" },
           { k: "level", h: "Level", r: (e) => <Badge tone={e.level === "critical" || e.level === "error" ? "bear" : e.level === "warning" ? "warn" : "cyan"}>{e.level}</Badge> },

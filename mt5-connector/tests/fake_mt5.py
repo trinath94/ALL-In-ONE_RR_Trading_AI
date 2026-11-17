@@ -154,6 +154,12 @@ class FakeMT5:
                 del self.positions[req["position"]]
         elif req["action"] == TRADE_ACTION_SLTP:
             self.positions[req["position"]].update(sl=req["sl"], tp=req["tp"])
+        elif req["action"] == TRADE_ACTION_PENDING:      # pending order placed (kept until removed)
+            self.pending[t] = dict(ticket=t, symbol=req["symbol"], type=req["type"], volume_current=req["volume"],
+                                   price_open=req["price"], sl=req.get("sl", 0.0), tp=req.get("tp", 0.0),
+                                   magic=req["magic"], comment=req["comment"], time_setup=int(time.time()))
+        elif req["action"] == TRADE_ACTION_REMOVE:
+            self.pending.pop(req["order"], None)
         if self.fail_after_send:
             raise ConnectionError("terminal connection lost after send")
         return Result(10009, t + 100000, t, req.get("volume", 0.0), req.get("price", 0.0), 0.0, 0.0, "Done", None)

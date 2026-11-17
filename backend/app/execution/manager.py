@@ -177,7 +177,8 @@ def open_position(db: Session, bridge: BridgeClient, *, symbol: str, direction: 
     req = risk.OrderRequest(symbol, direction, entry, stop_loss, take_profit, spread_pts,
                             expected_slippage_points=params.max_slippage_points / 2, size_multiplier=size_multiplier,
                             expires_at=expires_at, source=source, strategy_codes=strategy_codes or [],
-                            requested_volume=requested_volume, margin_required_per_lot=margin)
+                            requested_volume=requested_volume, margin_required_per_lot=margin,
+                            volatility_percentile=_volatility_percentile(db, signal))
     decision = risk.evaluate(req, spec, tr.account_state(db, account, snap), tr.open_risks(db, account), params, control,
                              corr=portfolio_intel.cached_corr())
     ev = RiskEvaluation(signal_id=signal.id if signal else None, account_id=account.id, approved=decision.approved,
@@ -366,7 +367,15 @@ def kill_switch(db: Session, bridge: BridgeClient | None, user_id: int | None, r
     system_event(db, "execution", "critical", f"Kill switch: {reason}")
     db.commit()
     publish("control", {"kill_switch": True, "reason": reason})
-    return apply_position_policy(db, bridge, reason, policy, user_id) if bridge else []
+    if not bridge:
+        return []
+    acts = apply_position_policy(db, bridge, reason, policy, user_id)
+    # Parts 27-30 Phase 7 (Part 30.4): the engine's own pending orders are cancelled (journalled, idempotent)
+    account = tr.active_account(db)
+    if account is not None:
+        from app.execution.reconcile import cancel_engine_pending
+        acts += cancel_engine_pending(db, bridge, account, reason, user_id)
+    return acts
 
 
 def _news_status(db: Session, name: str, sym: Symbol | None) -> str:
@@ -384,3 +393,13 @@ def _log_adjustment(db: Session, account_id: int, ticket: int, field: str, prev:
     from app.db.models_intel import PositionAdjustment
     db.add(PositionAdjustment(account_id=account_id, ticket=ticket, field=field, previous_value=prev, new_value=new,
                               reason=reason[:1000], accepted=accepted))
+
+
+def _volatility_percentile(db: Session, signal: TradingSignal | None) -> float | None:
+    """ATR percentile the signal's analysis measured (for volatility sizing); None when unknown."""
+    if signal is None or not signal.analysis_id:
+        return None
+    from app.db.models import AnalysisResult
+    ar = db.get(AnalysisResult, signal.analysis_id)
+    v = ((ar.structure or {}).get("regime") or {}).get("atr_pct") if ar is not None else None
+    return float(v) if isinstance(v, (int, float)) else None

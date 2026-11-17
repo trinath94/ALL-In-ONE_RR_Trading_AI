@@ -56,6 +56,10 @@ class RiskParams:
     volatility_exit_atr_ratio: float = 0.0     # close when ATR now / ATR at entry >= this
     structure_exit: bool = False               # close on a change of character against the position
     invalidation_exit: bool = False            # close when the engine's latest analysis no longer supports it
+    # Parts 27-30 Phase 7 (Part 30.4). 0 / False = off.
+    max_floating_loss_pct: float = 0.0         # no new entry while open positions are this far under water (% balance)
+    max_strategy_risk_pct: float = 0.0         # open risk of one strategy, including the new order (% equity)
+    volatility_sizing: bool = False            # scale the risk budget down when volatility is high (ATR percentile)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "RiskParams":
@@ -82,6 +86,8 @@ class RiskParams:
             errs.append("max_positions_per_strategy and max_holding_minutes must be >= 0 (0 = off)")
         if self.volatility_exit_atr_ratio != 0 and self.volatility_exit_atr_ratio <= 1:
             errs.append("volatility_exit_atr_ratio must be 0 (off) or > 1")
+        if self.max_floating_loss_pct < 0 or self.max_strategy_risk_pct < 0:
+            errs.append("max_floating_loss_pct and max_strategy_risk_pct must be >= 0 (0 = off)")
         return errs
 
 
@@ -148,6 +154,7 @@ class OrderRequest:
     requested_volume: float | None = None   # manual orders may request a volume (still capped)
     margin_required_per_lot: float | None = None  # from MT5 order_calc_margin when available
     conversion_rate: float | None = None    # profit ccy -> account ccy if tick_value unavailable
+    volatility_percentile: float | None = None  # ATR percentile 0..1 from the signal's analysis (volatility sizing)
 
 
 @dataclass
@@ -319,6 +326,12 @@ def evaluate(req: OrderRequest, spec: SymbolSpec, acct: AccountState, positions:
         add("daily_profit_target", gain < params.daily_profit_target_pct,
             f"daily target {params.daily_profit_target_pct}% reached ({gain:.2f}%)" if gain >= params.daily_profit_target_pct else f"{gain:.2f}%")
 
+    if params.max_floating_loss_pct > 0 and acct.balance > 0:
+        floating = max(0.0, (acct.balance - eq) / acct.balance * 100)
+        add("floating_loss", floating < params.max_floating_loss_pct,
+            f"open positions {floating:.2f}% under water >= {params.max_floating_loss_pct}%"
+            if floating >= params.max_floating_loss_pct else f"{floating:.2f}% floating loss")
+
     # --- Portfolio limits -------------------------------------------------------------------
     add("max_open_positions", len(positions) < params.max_open_positions,
         f"{len(positions)} open >= max {params.max_open_positions}" if len(positions) >= params.max_open_positions else f"{len(positions)} open")
@@ -345,6 +358,10 @@ def evaluate(req: OrderRequest, spec: SymbolSpec, acct: AccountState, positions:
         if req.size_multiplier > params.max_size_multiplier:
             add("size_multiplier", True, f"requested x{req.size_multiplier} capped to x{mult}")
         budget = eq * params.risk_per_trade_pct / 100 * mult
+        if params.volatility_sizing and req.volatility_percentile is not None and req.volatility_percentile > 0.5:
+            vf = max(0.25, 1 - (req.volatility_percentile - 0.5) * 1.5)       # only ever reduces
+            budget *= vf
+            add("volatility_sizing", True, f"ATR percentile {req.volatility_percentile:.2f}: risk budget x{vf:.2f}")
         # conservative stop distance: include spread and expected slippage
         stop_dist = abs(req.entry - req.stop_loss) + (req.spread_points + req.expected_slippage_points) * spec.point
         lpl = loss_per_lot(spec, stop_dist, req.conversion_rate)
@@ -372,6 +389,12 @@ def evaluate(req: OrderRequest, spec: SymbolSpec, acct: AccountState, positions:
         tot = (open_risk + risk_amount) / eq * 100
         add("total_exposure", tot <= params.max_total_exposure_pct,
             f"total open risk {tot:.2f}% > {params.max_total_exposure_pct}%" if tot > params.max_total_exposure_pct else f"{tot:.2f}%")
+        if params.max_strategy_risk_pct > 0 and req.strategy_codes:
+            worst = max((sum(p.risk_amount for p in positions if c in (p.strategy_codes or ())) + risk_amount) / eq * 100
+                        for c in req.strategy_codes)
+            add("strategy_allocation", worst <= params.max_strategy_risk_pct,
+                f"strategy open risk {worst:.2f}% > {params.max_strategy_risk_pct}%" if worst > params.max_strategy_risk_pct
+                else f"{worst:.2f}% per strategy")
         cr = (correlated_risk(req, spec, positions, corr or {}, params.correlation_threshold) + risk_amount) / eq * 100
         add("correlated_exposure", cr <= params.max_correlated_exposure_pct,
             f"correlated risk {cr:.2f}% > {params.max_correlated_exposure_pct}%" if cr > params.max_correlated_exposure_pct else f"{cr:.2f}%")

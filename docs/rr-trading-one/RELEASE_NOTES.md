@@ -28,6 +28,15 @@ Incremental additions to 0.2.0; nothing existing is replaced.
   * a **strategy DNA** view;
   * optional **time, volatility, structure and invalidation exits** and a **strategy concentration** limit (all off by default);
   * a **LIVE readiness checklist**, which the LIVE switch now requires, including a DEMO track record. No database migration.
+* **Phase 7 (Part 30):**
+  * **reconciliation:** startup compares pending orders with the journal; the kill switch cancels the engine's own pending orders;
+  * **capital protection:** floating-loss limit, per-strategy risk allocation and volatility-adjusted sizing (off by default);
+  * **data quality:** duplicate/out-of-order candles, invalid prices, gaps, quote age, with a quality score; trained models record **dataset versions**;
+  * **model governance:** model validation expiry; strategy suspension recommendations;
+  * **monitoring:** API latency and error rate, error logs per service, database connections, job backlog alerts;
+  * a **Simulation Laboratory** (scenario stress tests, counterfactual alternatives);
+  * daily **automatic backups** and weekly **restore tests** in the desktop application.
+  * Migration 0014 only adds one table.
 
 ## Version 0.2.0 (development release, 2026-11-17)
 

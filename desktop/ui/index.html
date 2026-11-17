@@ -106,11 +106,14 @@
         <div class="btns"><button id="bk-refresh" type="button">Refresh</button>
           <button id="bk-now" type="button" class="primary">Back up now</button></div></div>
       <p class="muted">Backups are PostgreSQL dumps in this computer's backups folder (see Locations), <strong>encrypted</strong>
-        with this installation's backup key: taken on request, before every database migration, and before every restore. Restoring replaces the whole database in one transaction, after a
+        with this installation's backup key: taken on request, before every database migration, before every restore, and
+        automatically once a day while the database is running (the newest 14 are kept). Once a week the newest backup is
+        restored into a scratch database and checked against the live one. Restoring replaces the whole database in one transaction, after a
         safety backup of the current one; afterwards auto trading is OFF and the engine reconciles with the broker before any
         entry. The trading worker is not restarted.</p>
       <table class="tbl"><thead><tr><th>Backup</th><th>Kind</th><th>Taken</th><th>Size</th><th>Encrypted</th><th></th></tr></thead>
         <tbody id="backups"><tr><td colspan="6" class="muted">Not loaded yet</td></tr></tbody></table>
+      <p id="bk-maint" class="muted">Maintenance status not loaded yet</p>
       <div class="confirm" id="bk-confirm" hidden>
         <label for="bk-phrase">Restore <code id="bk-id"></code>? Everything recorded after it is replaced by its contents.
           Type <code>RESTORE DATABASE</code> to continue.</label>

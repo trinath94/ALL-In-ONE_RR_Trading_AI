@@ -153,6 +153,14 @@ def monitor_cycle(bridge: BridgeClient, last_ok: list[bool], clock: dict) -> boo
                 tr.sync_positions(db, bridge, acct)
             em.reconcile_unknown(db, bridge)
             expire_signals(db)
+        if time.time() - clock.get("backlog", 0) > 300:       # Parts 27-30 Phase 7: job backlog alerts
+            clock["backlog"] = time.time()
+            try:
+                from app.services.monitoring import check_backlog
+                with session_scope() as db:
+                    check_backlog(db)
+            except Exception:  # noqa: BLE001 - monitoring must not break the monitor
+                log.warning("backlog check failed", exc_info=True)
         with session_scope() as db:
             n_open = db.scalar(select(func.count(OpenPosition.id))) or 0
         if n_open:
@@ -283,6 +291,8 @@ def _execution_state(signal_id: int) -> tuple:
 # ---- process ----------------------------------------------------------------------------------------------------
 def run(role: str) -> int:
     configure_logging()
+    from app.services.monitoring import install_error_counter
+    install_error_counter(role)
     s = get_settings()
     r = get_redis()
     try:

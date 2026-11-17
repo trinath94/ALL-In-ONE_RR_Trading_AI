@@ -54,7 +54,8 @@ def fit(db: Session) -> ModelRegistry:
     X, y = dataset(db)
     version = (db.scalar(select(func.max(ModelRegistry.version)).where(ModelRegistry.model_key == "consensus_weights")) or 0) + 1
     reg = ModelRegistry(model_key="consensus_weights", version=version, algorithm="l2_logistic_regression",
-                        target="trade_win", features=VOTERS, dataset_ref={"rows": int(len(y))}, status="TRAINED")
+                        target="trade_win", features=VOTERS, dataset_ref={"rows": int(len(y)),
+                                                                     "dataset_version": _version(X, y)}, status="TRAINED")
     if len(y) < MIN_ROWS or len(set(y)) < 2:
         reg.status, reg.notes = "REJECTED", f"LOW DATA: {len(y)} outcome-linked consensus records (min {MIN_ROWS})."
         db.add(reg)
@@ -81,3 +82,10 @@ def fit(db: Session) -> ModelRegistry:
     db.add(reg)
     db.flush()
     return reg
+
+
+def _version(X, y) -> str:
+    import numpy as np
+
+    from app.learning_engine.versioning import dataset_version
+    return dataset_version(np.asarray(X, dtype=float), np.asarray(y))

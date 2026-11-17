@@ -12,6 +12,7 @@ const GROUPS: [string, string[]][] = [
   ["Execution quality", ["max_spread_points", "max_slippage_points", "require_take_profit", "news_unknown_blocks"]],
   ["Trade management", ["break_even_at_r", "partial_close_at_r", "partial_close_fraction", "trailing_start_r", "trailing_atr_mult"]],
   // Parts 27-30 Phase 6: optional exits, all 0 / off by default
+  ["Capital protection (0 / off = not used)", ["max_floating_loss_pct", "max_strategy_risk_pct", "volatility_sizing"]],
   ["Optional exits (0 / off = not used)", ["max_holding_minutes", "volatility_exit_atr_ratio", "structure_exit", "invalidation_exit"]],
   ["Emergency", ["existing_position_policy", "reduce_fraction"]],
 ];

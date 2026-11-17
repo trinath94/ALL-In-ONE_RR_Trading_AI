@@ -172,6 +172,32 @@ async fn backup_list(state: State<'_, AppState>) -> Result<Vec<rr_one_core::supe
     with_supervisor(&state, |sup, _| Ok(sup.list_backups())).await
 }
 
+/// Parts 27-30 Phase 7: what scheduled maintenance (daily backup, weekly restore test) last did.
+#[tauri::command]
+async fn maintenance_status(state: State<'_, AppState>) -> Result<rr_one_core::supervisor::MaintenanceState, String> {
+    with_supervisor(&state, |sup, _| Ok(sup.maintenance_state())).await
+}
+
+/// Parts 27-30 Phase 7 (Part 30.9): every 15 minutes (first after 5), run the scheduled maintenance that is due. It
+/// waits its turn behind any running service action, and does nothing outside local mode or while PostgreSQL is
+/// not running.
+fn start_maintenance(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(300));
+        loop {
+            let st = handle.state::<AppState>();
+            if supervisor_unavailable(&st).is_none() {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                match tauri::async_runtime::block_on(with_supervisor(&st, move |sup, _| Ok(sup.scheduled_maintenance(now)))) {
+                    Ok(done) => done.iter().for_each(|d| eprintln!("maintenance: {d}")),
+                    Err(e) => eprintln!("maintenance skipped: {e}"),
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(900));
+        }
+    });
+}
+
 /// Phase 17: restore the database from a backup id, with the typed phrase (checked again inside the supervisor).
 #[tauri::command]
 async fn backup_restore(state: State<'_, AppState>, backup: String, confirmation: Option<String>) -> Result<PlanReport, String> {
@@ -466,9 +492,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![get_overview, check_health, plan_action, run_action, service_status, open_console,
             mt5_overview, mt5_detect, mt5_save_profile, mt5_select_profile, mt5_delete_profile, mt5_link,
             engine_status, engine_bootstrap_admin, engine_use_demo_account, backup_list, backup_restore, backup_import_file, backup_import, prerequisites,
-            backup_key_export, backup_key_add, rotate_secrets, backup_import_report])
+            backup_key_export, backup_key_add, rotate_secrets, backup_import_report, maintenance_status])
         .setup(move |app| {
             build_tray(app.handle())?;
+            start_maintenance(app.handle().clone());
             if !start_minimized {
                 show_main(app.handle());
             }

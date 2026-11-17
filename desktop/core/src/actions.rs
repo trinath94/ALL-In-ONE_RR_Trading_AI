@@ -205,7 +205,7 @@ impl BackupPurpose {
 /// Backup ids are `<kind>-<unix seconds>` for the kinds this supervisor writes. Anything else (paths, dots,
 /// separators, other prefixes) is refused before a file name is ever built from it.
 pub fn valid_backup_id(id: &str) -> bool {
-    ["manual-", "pre-migrate-", "pre-restore-", "import-"].iter().any(|p| {
+    ["manual-", "pre-migrate-", "pre-restore-", "import-", "auto-"].iter().any(|p| {
         id.strip_prefix(p).is_some_and(|ts| !ts.is_empty() && ts.len() <= 12 && ts.chars().all(|c| c.is_ascii_digit()))
     })
 }

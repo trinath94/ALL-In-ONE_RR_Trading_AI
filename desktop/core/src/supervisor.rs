@@ -34,6 +34,22 @@ const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const WARN_FREE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 pub const KEEP_PRE_MIGRATION_BACKUPS: usize = 10;
 pub const KEEP_MANUAL_BACKUPS: usize = 30;
+/// Parts 27-30 Phase 7 (Part 30.9): scheduled maintenance.
+pub const KEEP_AUTO_BACKUPS: usize = 14;
+pub const AUTO_BACKUP_EVERY_SECS: u64 = 24 * 3600;
+pub const RESTORE_TEST_EVERY_SECS: u64 = 7 * 24 * 3600;
+const MAINTENANCE_FILE: &str = "maintenance.json";
+
+/// What scheduled maintenance last did (kept beside the backups; shown in the window).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct MaintenanceState {
+    pub last_auto_backup: Option<u64>,
+    pub last_auto_backup_result: Option<String>,
+    pub last_restore_test: Option<u64>,
+    pub last_restore_test_backup: Option<String>,
+    pub last_restore_test_ok: Option<bool>,
+    pub last_restore_test_result: Option<String>,
+}
 /// Phase 18: largest dump accepted for an import.
 const MAX_IMPORT_BYTES: u64 = 50_000_000_000;
 
@@ -435,6 +451,88 @@ impl<'a> Supervisor<'a> {
             .collect();
         out.sort_by_key(|b| std::cmp::Reverse(b.created));
         out
+    }
+
+    pub fn maintenance_state(&self) -> MaintenanceState {
+        std::fs::read(self.cfg.backups_dir.join(MAINTENANCE_FILE)).ok()
+            .and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+
+    fn save_maintenance(&self, st: &MaintenanceState) {
+        let _ = std::fs::create_dir_all(&self.cfg.backups_dir);
+        let _ = std::fs::write(self.cfg.backups_dir.join(MAINTENANCE_FILE), serde_json::to_vec_pretty(st).unwrap_or_default());
+    }
+
+    /// Restore a backup into a scratch database and check it against the live database: it restores cleanly, it has
+    /// every table the live database has, and the same schema version. The live database is never touched; the scratch
+    /// database and the copied file are removed afterwards.
+    pub fn restore_test(&self, backup: &str) -> Result<String, String> {
+        if !valid_backup_id(backup) {
+            return Err("invalid backup id".into());
+        }
+        let (file, temp) = self.plain_dump(backup)?;
+        let copied = self.run_ok(self.cfg.compose.copy_into_postgres(&file), T_DUMP);
+        if temp {
+            let _ = std::fs::remove_file(&file);
+        }
+        copied.map_err(|e| format!("copy into the database container failed: {e}"))?;
+        let drop_scratch = format!("DROP DATABASE IF EXISTS {SCRATCH_DB}");
+        let res = (|| {
+            self.run_ok(self.cfg.compose.psql("postgres", &drop_scratch), T_QUICK)?;
+            self.run_ok(self.cfg.compose.psql("postgres", &format!("CREATE DATABASE {SCRATCH_DB}")), T_QUICK)?;
+            self.run_ok(self.cfg.compose.pg_restore_scratch(), T_DUMP).map_err(|e| format!("the backup does not restore: {e}"))?;
+            let restored = self.table_counts(SCRATCH_DB)?;
+            let live = self.table_counts("rr_trading")?;
+            let missing: Vec<&String> = live.keys().filter(|t| !restored.contains_key(*t)).collect();
+            let ver = |db: &str| self.pairs(db, "SELECT 'v|' || version_num FROM alembic_version").ok().and_then(|p| p.get("v").cloned());
+            let (rv, lv) = (ver(SCRATCH_DB), ver("rr_trading"));
+            if restored.is_empty() {
+                return Err("the restored backup has no tables".into());
+            }
+            if !missing.is_empty() {
+                return Err(format!("tables missing from the backup: {missing:?}"));
+            }
+            if rv != lv {
+                return Err(format!("schema version differs: backup {rv:?}, live {lv:?}"));
+            }
+            Ok(format!("{backup} restored into a scratch database: {} tables, {} rows, schema {}; the live database was not touched",
+                       restored.len(), restored.values().sum::<u64>(), rv.unwrap_or_default()))
+        })();
+        let _ = self.run_ok(self.cfg.compose.psql("postgres", &drop_scratch), T_QUICK);
+        let _ = self.run_ok(self.cfg.compose.remove_restore_file(), T_QUICK);
+        res
+    }
+
+    /// Run the scheduled tasks that are due: a daily automatic backup and a weekly restore test of the newest backup.
+    /// Only while PostgreSQL is already running: maintenance never starts or stops a service. Returns what it did.
+    pub fn scheduled_maintenance(&self, now: u64) -> Vec<String> {
+        let running = self.status().map(|s| s.iter().any(|x| x.service == "postgres" && x.state == "running")).unwrap_or(false);
+        if !running {
+            return vec![];
+        }
+        let mut st = self.maintenance_state();
+        let mut done = Vec::new();
+        let last_backup = st.last_auto_backup.or_else(|| self.backup_files().iter().find(|b| b.kind == "auto").map(|b| b.created));
+        if last_backup.is_none_or(|t| now.saturating_sub(t) >= AUTO_BACKUP_EVERY_SECS) {
+            let r = self.backup("auto", KEEP_AUTO_BACKUPS);
+            st.last_auto_backup = Some(now);
+            st.last_auto_backup_result = Some(match &r { Ok(m) => m.clone(), Err(e) => format!("FAILED: {e}") });
+            done.push(format!("automatic backup: {}", st.last_auto_backup_result.clone().unwrap_or_default()));
+        }
+        if st.last_restore_test.is_none_or(|t| now.saturating_sub(t) >= RESTORE_TEST_EVERY_SECS) {
+            if let Some(newest) = self.backup_files().into_iter().next() {
+                let r = self.restore_test(&newest.id);
+                st.last_restore_test = Some(now);
+                st.last_restore_test_backup = Some(newest.id.clone());
+                st.last_restore_test_ok = Some(r.is_ok());
+                st.last_restore_test_result = Some(match r { Ok(m) => m, Err(e) => format!("FAILED: {e}") });
+                done.push(format!("restore test: {}", st.last_restore_test_result.clone().unwrap_or_default()));
+            }
+        }
+        if !done.is_empty() {
+            self.save_maintenance(&st);
+        }
+        done
     }
 
     /// Phase 17: the backups in the backups folder, newest first.
@@ -1505,6 +1603,59 @@ mod tests {
         assert!(s.import_dump(&txt).unwrap_err().contains("not a PostgreSQL custom-format dump"));
         assert!(s.import_dump(&e.cfg.data_dir).is_err(), "a directory is refused");
         assert!(r.calls.lock().unwrap().is_empty(), "bringing a file in runs no command");
+    }
+
+    // ---- Parts 27-30 Phase 7 (Part 30.9): scheduled backups and restore tests --------------------------------------
+    #[test]
+    fn scheduled_maintenance_backs_up_daily_and_restore_tests_weekly() {
+        let e = env();
+        let r = fake(counts_script("users|2\ntrade_orders|7\nalembic_version|1", "users|2\ntrade_orders|7\nalembic_version|1"));
+        let s = sup(&e, &r, healthy_probe());
+        let t0 = 2_000_000_000u64;
+        let done = s.scheduled_maintenance(t0);
+        assert_eq!(done.len(), 2, "{done:?}");
+        let st = s.maintenance_state();
+        assert_eq!(st.last_auto_backup, Some(t0));
+        assert_eq!(st.last_restore_test_ok, Some(true), "{st:?}");
+        assert!(st.last_restore_test_result.as_deref().unwrap().contains("the live database was not touched"));
+        let list = s.list_backups();
+        assert!(list.iter().any(|b| b.kind == "auto" && valid_backup_id(&b.id)));
+        let cmds = compose_cmds(&r);
+        assert!(cmds.iter().any(|c| c.contains(&"pg_restore".to_string()) && c.contains(&SCRATCH_DB.to_string())));
+        assert!(!cmds.iter().any(|c| c.contains(&"--single-transaction".to_string())), "the live database is never restored");
+        assert!(s.scheduled_maintenance(t0 + 3600).is_empty(), "nothing due an hour later");
+        let day = s.scheduled_maintenance(t0 + AUTO_BACKUP_EVERY_SECS);
+        assert!(day.len() == 1 && day[0].starts_with("automatic backup"), "{day:?}");
+        let week = s.scheduled_maintenance(t0 + RESTORE_TEST_EVERY_SECS);
+        assert!(week.iter().any(|d| d.starts_with("restore test")), "{week:?}");
+        for i in 0..(KEEP_AUTO_BACKUPS as u64 + 4) {
+            std::fs::write(e.cfg.backups_dir.join(format!("auto-{}.dump", 1000 + i)), b"PGDMP").unwrap();
+        }
+        s.scheduled_maintenance(t0 + 2 * RESTORE_TEST_EVERY_SECS);
+        assert_eq!(s.list_backups().iter().filter(|b| b.kind == "auto").count(), KEEP_AUTO_BACKUPS);
+    }
+
+    #[test]
+    fn scheduled_maintenance_never_starts_the_database() {
+        let e = env();
+        let stopped = r#"{"Service":"postgres","State":"exited","Health":"","ExitCode":0}"#;
+        let r = fake(default_script(stopped));
+        let s = sup(&e, &r, healthy_probe());
+        assert!(s.scheduled_maintenance(2_000_000_000).is_empty());
+        assert!(compose_cmds(&r).iter().all(|c| c[0] == "ps"), "only the status was read");
+        assert_eq!(s.maintenance_state(), MaintenanceState::default());
+    }
+
+    #[test]
+    fn a_restore_test_fails_when_the_backup_lacks_a_live_table() {
+        let e = env();
+        let r = fake(counts_script("users|2\nalembic_version|1", "users|2\ntrade_orders|7\nalembic_version|1"));
+        let s = sup(&e, &r, healthy_probe());
+        s.scheduled_maintenance(2_000_000_000);
+        let st = s.maintenance_state();
+        assert_eq!(st.last_restore_test_ok, Some(false));
+        assert!(st.last_restore_test_result.unwrap().contains("trade_orders"));
+        assert!(s.restore_test("../etc/passwd").is_err(), "only backup ids");
     }
 
     #[test]

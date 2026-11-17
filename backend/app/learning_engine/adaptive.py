@@ -422,6 +422,7 @@ def fit_profile(db: Session, mode: str = "DEMO") -> ModelRegistry:
     reg = ModelRegistry(model_key=MODEL_KEY, version=version, algorithm="shrunk_mean_r_multipliers",
                         target="r_multiple", features=["strategy", "regime"],
                         dataset_ref={"mode": mode, "trades": len(trades), "source": "closed_positions (realised)",
+                                     "dataset_version": _dataset_version(trades),
                                      "from": trades[0]["closed_at"].isoformat() if trades else None,
                                      "to": trades[-1]["closed_at"].isoformat() if trades else None},
                         status="TRAINED")
@@ -524,3 +525,8 @@ def shadow_evaluation(db: Session, reg: ModelRegistry) -> dict:
                 "PROFILE_AVOIDED_LOSSES" if lo is not None and lo > 0 else
                 "PROFILE_SKIPPED_WINNERS" if hi is not None and hi < 0 else "INCONCLUSIVE"),
             "note": "Trades only the profile would have taken have no outcome and are not estimated."}
+
+
+def _dataset_version(trades) -> str:
+    from app.learning_engine.versioning import dataset_version
+    return dataset_version(trades)

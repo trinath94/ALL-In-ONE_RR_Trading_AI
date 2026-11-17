@@ -3,7 +3,23 @@
 // (invoke, $, el, describeStep, OUTCOME, runAction). Restoring needs the typed phrase, checked again in the supervisor.
 
 const KIND_LABEL = { manual: "on request", "pre-migrate": "before a migration", "pre-restore": "before a restore",
-  import: "from the Ubuntu server" };
+  import: "from the Ubuntu server", auto: "automatic (daily)" };
+
+// Parts 27-30 Phase 7: what scheduled maintenance (daily backup, weekly restore test) last did.
+async function refreshMaintenance() {
+  const box = $("bk-maint");
+  if (!box) return;
+  try {
+    const m = await invoke("maintenance_status");
+    const when = (t) => (t ? new Date(t * 1000).toLocaleString() : "not yet");
+    box.textContent = `Automatic backup: ${when(m.last_auto_backup)}${m.last_auto_backup_result ? " — " + m.last_auto_backup_result : ""}. ` +
+      `Restore test: ${when(m.last_restore_test)}` +
+      (m.last_restore_test_ok == null ? "" : (m.last_restore_test_ok ? " — passed: " : " — FAILED: ") + (m.last_restore_test_result || ""));
+    box.className = m.last_restore_test_ok === false ? "warn-text" : "muted";
+  } catch (e) {
+    box.textContent = String(e);
+  }
+}
 let importId = null;
 let restoreId = null;
 
@@ -16,6 +32,7 @@ function size(bytes) {
 }
 
 async function refreshBackups() {
+  refreshMaintenance();
   const body = $("backups");
   let list;
   try {

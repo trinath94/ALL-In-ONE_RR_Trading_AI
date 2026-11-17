@@ -51,6 +51,17 @@ def startup_checks(bridge: BridgeClient) -> tuple[bool, list[str]]:
             report.append(f"positions synced from MT5: {r}")
             pend = bridge.orders()
             report.append(f"pending orders at broker: {len(pend)}")
+            # Parts 27-30 Phase 7 (Part 30.1): compare them with the execution journal, not just count them
+            from app.execution.reconcile import compare_pending
+            cmp = compare_pending(db, pend, account)
+            report.append(f"pending orders compared: {len(cmp['matched'])} matched, "
+                          f"{len(cmp['unknown_engine'])} unknown engine order(s), {len(cmp['foreign'])} foreign, "
+                          f"{len(cmp['missing_at_broker'])} no longer at the broker")
+            if not cmp["ok"]:
+                system_event(db, "worker", "critical", "Unknown engine pending orders at the broker",
+                             {"orders": cmp["unknown_engine"]})
+                return False, report + ["FAIL: the broker holds engine-tagged pending orders the journal does not know; "
+                                        "entries blocked until an operator resolves them"]
         except tr.IdentityError as exc:
             em.kill_switch(db, None, None, f"Identity check failed: {exc}")
             return False, report + [f"FAIL: {exc}"]

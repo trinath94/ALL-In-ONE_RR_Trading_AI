@@ -121,6 +121,7 @@ class Settings(BaseSettings):
     reanalysis_throttle_seconds: int = 300    # event-driven re-analysis: at most once per symbol per this period
     opportunity_retention_days: int = 90      # terminal opportunities older than this are pruned
     live_min_demo_trades: int = 20            # LIVE readiness: closed DEMO trades required before the LIVE switch
+    model_validation_max_age_days: int = 90   # a production model validated longer ago than this is unhealthy
     max_quote_age_seconds: int = 120          # stale quotes cannot authorise entries
     regime_intel_enabled: bool = True
     learner_interval_seconds: int = 60

@@ -1099,3 +1099,106 @@ def strategy_dna(code: str, _: User = Depends(current_user), db: Session = Depen
                           "bias_passed": ((e.evidence or {}).get("variant_evaluation") or {}).get("bias", {}).get("passed")}
                          for e in exps],
             "variants_tried": variants.n_variants(db, code)}
+
+
+# ---- Parts 27-30 Phase 7 (Part 30): governance, data quality ---------------------------------------------------------
+@router.get("/governance")
+def governance(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.learning_engine import governance as gov
+    return {"models": gov.models(db), "strategy_suspensions": gov.strategy_suspensions(db)}
+
+
+@router.get("/data-quality")
+def data_quality(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The latest data-quality assessment per symbol and timeframe (recorded with each analysis)."""
+    latest = select(AnalysisResult.symbol_id, AnalysisResult.timeframe, func.max(AnalysisResult.id).label("id")) \
+        .group_by(AnalysisResult.symbol_id, AnalysisResult.timeframe).subquery()
+    rows = db.execute(select(AnalysisResult, Symbol.broker_symbol).join(latest, AnalysisResult.id == latest.c.id)
+                      .join(Symbol, Symbol.id == AnalysisResult.symbol_id)).all()
+    return [{"symbol": name, "timeframe": a.timeframe, "bar_time": a.bar_time, "analysed_at": a.created_at,
+             **((a.structure or {}).get("data_quality") or {"score": None, "problems": {}, "note": "not recorded (older analysis)"})}
+            for a, name in sorted(rows, key=lambda r: (r[1], r[0].timeframe))]
+
+
+@router.get("/system/monitoring")
+def system_monitoring(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """API latency and error rate, error logs per service, database connections and job backlog (Part 30.8)."""
+    from app.services import monitoring
+    return monitoring.snapshot(db)
+
+
+# ---- Parts 27-30 Phase 7 (Parts 30.5 / 30.6): Simulation Laboratory ----------------------------------------------------
+class SimIn(BaseModel):
+    kind: str = Field(pattern="^(scenario|counterfactual)$")
+    opportunity_id: int | None = None
+    closed_position_id: int | None = None
+    bars: int = Field(default=500, ge=20, le=5000)
+
+
+def _sim_subject(db: Session, body: SimIn) -> tuple[str, int, str, str, datetime, dict, float]:
+    """(subject type, id, symbol, timeframe, entry time, setup, point) from an opportunity or a closed position."""
+    from app.db.models import TradeOrder, TradingSignal
+    from app.db.models_opportunity import Opportunity
+    if body.opportunity_id is not None:
+        o = db.get(Opportunity, body.opportunity_id)
+        sig = db.get(TradingSignal, o.signal_id) if o is not None and o.signal_id else None
+        if o is None or sig is None or sig.entry is None or sig.stop_loss is None or (sig.tp1 or sig.tp2) is None:
+            raise HTTPException(422, "the opportunity has no signal with entry, stop and target")
+        sym = db.get(Symbol, o.symbol_id)
+        ar = db.get(AnalysisResult, o.analysis_id) if o.analysis_id else None
+        sp = ((ar.structure or {}).get("spread_points") or 0) * float(sym.point) if ar else 0.0
+        entry_at = o.bar_time + timedelta(minutes=TF_MINUTES.get(o.timeframe, 60))
+        return ("opportunity", o.id, sym.broker_symbol, o.timeframe, entry_at,
+                {"direction": sig.decision if sig.decision in ("BUY", "SELL") else (o.direction or "BUY"),
+                 "entry": float(sig.entry), "stop": float(sig.stop_loss), "target": float(sig.tp2 or sig.tp1),
+                 "spread": sp}, float(sym.point))
+    if body.closed_position_id is not None:
+        p = db.get(ClosedPosition, body.closed_position_id)
+        if p is None or p.stop_loss is None:
+            raise HTTPException(422, "the closed position has no recorded stop loss")
+        order = db.scalar(select(TradeOrder).where(TradeOrder.execution_id == p.execution_id)) if p.execution_id else None
+        sig = db.get(TradingSignal, order.signal_id) if order is not None and order.signal_id else None
+        tp = float(order.take_profit) if order is not None and order.take_profit else None
+        if tp is None:
+            raise HTTPException(422, "the closed position's order has no recorded take profit")
+        sym = db.scalar(select(Symbol).where(Symbol.broker_symbol == p.symbol))
+        return ("closed_position", p.id, p.symbol, sig.timeframe if sig else "H1", p.opened_at,
+                {"direction": p.direction, "entry": float(p.open_price), "stop": float(p.stop_loss), "target": tp,
+                 "spread": 0.0}, float(sym.point) if sym else 0.00001)
+    raise HTTPException(422, "give opportunity_id or closed_position_id")
+
+
+@router.post("/simulations")
+def run_simulation(body: SimIn, user: User = Depends(require("backtest.run")), db: Session = Depends(get_db),
+                   bridge: BridgeClient = Depends(bridge_dep)):
+    """Run a scenario stress test or counterfactual analysis on the bars after the entry. Research only."""
+    from app.backtesting import scenarios as sc
+    from app.db.models_opportunity import SimulationRun
+    stype, sid, symbol, tf, entry_at, setup, point = _sim_subject(db, body)
+    try:
+        df = bars_to_df(bridge.rates(symbol, tf, body.bars))
+    except BridgeError as exc:
+        raise HTTPException(503, f"bars unavailable: {exc}") from None
+    after = df[df.index >= pd.Timestamp(entry_at)] if len(df) else df
+    if len(after) == 0:
+        raise HTTPException(422, "no bars after the entry yet (or the entry is older than the bars requested)")
+    s = sc.Setup(**setup)
+    result = sc.scenarios(after, s) if body.kind == "scenario" else sc.counterfactuals(after, s)
+    run = SimulationRun(kind=body.kind, subject_type=stype, subject_id=sid, symbol=symbol, timeframe=tf,
+                        setup={**setup, "entry_at": entry_at.isoformat()},
+                        result={"rows": result} if isinstance(result, list) else result, bars=len(after),
+                        created_by=user.id, created_at=datetime.now(timezone.utc))
+    db.add(run)
+    db.flush()
+    audit(db, user.id, "SIMULATION_RUN", f"{stype}:{sid}", {"kind": body.kind, "simulation_id": run.id})
+    return {"id": run.id, "kind": run.kind, "subject": {"type": stype, "id": sid}, "symbol": symbol, "timeframe": tf,
+            "setup": run.setup, "bars": run.bars, "result": run.result}
+
+
+@router.get("/simulations")
+def simulations(limit: int = 50, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import SimulationRun
+    rows = db.scalars(select(SimulationRun).order_by(SimulationRun.id.desc()).limit(max(1, min(limit, 200)))).all()
+    return [{"id": r.id, "kind": r.kind, "subject": {"type": r.subject_type, "id": r.subject_id}, "symbol": r.symbol,
+             "timeframe": r.timeframe, "setup": r.setup, "bars": r.bars, "result": r.result, "created_at": r.created_at}
+            for r in rows]
