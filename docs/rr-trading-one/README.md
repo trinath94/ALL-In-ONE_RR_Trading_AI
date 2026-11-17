@@ -14,6 +14,7 @@ Ubuntu deployment and are kept unchanged. This folder documents the Windows appl
 | [Migration manual](../MIGRATION_FROM_UBUNTU.md) | Moving from the Ubuntu server |
 | [Recovery manual](RECOVERY_MANUAL.md) | Backups, restores, failures and what to do |
 | [Release notes](RELEASE_NOTES.md) | What this version contains, known limitations |
+| [DEMO validation runbook](DEMO_VALIDATION.md) | Acceptance on your PC with your DEMO account, read from the DEMO Validation page |
 | [Test matrix](../TEST_MATRIX.md) | Every Part 22 area and safety condition, and the tests that prove it |
 | Phase reports | `../RR_TRADING_ONE_PHASE1_REPORT.md` … `PHASE23_REPORT.md`: what each phase did, verified and could not verify |
 

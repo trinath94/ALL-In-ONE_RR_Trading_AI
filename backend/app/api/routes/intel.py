@@ -1204,3 +1204,11 @@ def simulations(limit: int = 50, _: User = Depends(current_user), db: Session = 
     return [{"id": r.id, "kind": r.kind, "subject": {"type": r.subject_type, "id": r.subject_id}, "symbol": r.symbol,
              "timeframe": r.timeframe, "setup": r.setup, "bars": r.bars, "result": r.result, "created_at": r.created_at}
             for r in rows]
+
+
+# ---- Parts 27-30 Phase 9: DEMO validation report ------------------------------------------------------------------------
+@router.get("/validation/demo")
+def demo_validation(hours: int = 72, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Acceptance evidence from what this installation recorded (read-only)."""
+    from app.services import demo_validation as dv
+    return dv.report(db, max(1, min(hours, 24 * 30)))
