@@ -513,13 +513,14 @@ impl<'a> Supervisor<'a> {
         let mut st = self.maintenance_state();
         let mut done = Vec::new();
         let last_backup = st.last_auto_backup.or_else(|| self.backup_files().iter().find(|b| b.kind == "auto").map(|b| b.created));
-        if last_backup.is_none_or(|t| now.saturating_sub(t) >= AUTO_BACKUP_EVERY_SECS) {
+        let due = |last: Option<u64>, every: u64| match last { None => true, Some(t) => now.saturating_sub(t) >= every };
+        if due(last_backup, AUTO_BACKUP_EVERY_SECS) {
             let r = self.backup("auto", KEEP_AUTO_BACKUPS);
             st.last_auto_backup = Some(now);
             st.last_auto_backup_result = Some(match &r { Ok(m) => m.clone(), Err(e) => format!("FAILED: {e}") });
             done.push(format!("automatic backup: {}", st.last_auto_backup_result.clone().unwrap_or_default()));
         }
-        if st.last_restore_test.is_none_or(|t| now.saturating_sub(t) >= RESTORE_TEST_EVERY_SECS) {
+        if due(st.last_restore_test, RESTORE_TEST_EVERY_SECS) {
             if let Some(newest) = self.backup_files().into_iter().next() {
                 let r = self.restore_test(&newest.id);
                 st.last_restore_test = Some(now);
