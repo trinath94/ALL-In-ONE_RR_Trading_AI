@@ -2,6 +2,12 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Engine with or without AI (2026-11-23).** A switch in the Live Trading Control Center runs the engine *With AI*
+(default, unchanged: only AI-confirmed candidates are auto-executed) or *Without AI* (no AI review or cost; the
+engine's own BUY/SELL signals are auto-executed). The Risk Engine and all risk limits apply in both. LIVE engine-only
+needs `trade.live` and the typed phrase `RUN WITHOUT AI`. Migration 0015 adds `trading_state.ai_mode` (default `AI`;
+existing data unchanged).
+
 Incremental additions to 0.2.0; nothing existing is replaced.
 
 * **Phase 4 (Part 27):**

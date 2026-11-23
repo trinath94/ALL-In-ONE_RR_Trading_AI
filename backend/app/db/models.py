@@ -554,6 +554,9 @@ class TradingState(TimestampMixin, Base):
     # Phase 15: last OFF->ON switch; signals created before it are never auto-executed
     auto_trading_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     pause_new_entries: Mapped[bool] = mapped_column(Boolean, default=False)
+    # AI mode: "AI" (default; only AI-confirmed candidates are auto-executed) or "ENGINE_ONLY" (no AI review; the
+    # engine's own BUY/SELL signals are auto-executed). The Risk Engine has final authority in both.
+    ai_mode: Mapped[str] = mapped_column(String(16), default="AI", server_default="AI")
     kill_switch: Mapped[bool] = mapped_column(Boolean, default=False)
     kill_reason: Mapped[str] = mapped_column(Text, default="")
     startup_checks_passed: Mapped[bool] = mapped_column(Boolean, default=False)

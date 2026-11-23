@@ -91,17 +91,14 @@ def auto_execute_factory(bridge: BridgeClient):
         with session_scope() as db:
             state = tr.get_state(db)
             sig = db.get(TradingSignal, signal_id)
-            if not state.auto_trading or sig is None or sig.decision not in ("BUY", "SELL") or sig.status != "NEW":
+            if sig is None or sig.status != "NEW":
                 return
-            if state.auto_trading_since is not None and sig.created_at < state.auto_trading_since:
-                return  # Phase 15: produced while auto trading was off; never executed retroactively
-            review = (sig.ai_review or {}).get("decision")
-            if review not in ("BUY", "SELL"):
-                return  # only Claude-confirmed candidates are auto-executed
-            if review != sig.decision:
-                # Phase 15: the review must confirm this direction. The gateway's boundaries already refuse a reversal;
-                # the execution path does not rely on that alone.
-                log.warning("signal %s: AI review %s does not confirm %s; not executed", signal_id, review, sig.decision)
+            # Phase 15 rules plus the operator's AI mode: in AI mode only candidates the AI review confirmed in the same
+            # direction; in engine-only mode the engine's own BUY/SELL produced without AI. Never retroactively.
+            why = tr.auto_execution_block(state, sig)
+            if why is not None:
+                if state.auto_trading and sig.decision in ("BUY", "SELL"):
+                    log.info("signal %s not auto-executed: %s", signal_id, why)
                 return
             sym = db.get(Symbol, sig.symbol_id)
             account = tr.active_account(db)

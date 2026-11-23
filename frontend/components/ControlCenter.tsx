@@ -1,12 +1,12 @@
 "use client";
-import { OctagonX, Pause, Play, Power, ShieldOff, XCircle } from "lucide-react";
+import { Bot, Cpu, OctagonX, Pause, Play, Power, ShieldOff, XCircle } from "lucide-react";
 import { useState } from "react";
 import { fmt, post } from "@/lib/api";
 import { useApi, useLive } from "@/lib/hooks";
 import { can, useMe } from "./Shell";
 import { Badge, Btn, Confirm, ErrorLine, Panel } from "./ui";
 
-type Dialog = null | "live" | "kill" | "closeall" | "autolive" | "demo";
+type Dialog = null | "live" | "kill" | "closeall" | "autolive" | "demo" | "noai";
 
 export default function ControlCenter() {
   const me = useMe();
@@ -30,11 +30,35 @@ export default function ControlCenter() {
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   }
   const acct = sum?.account;
+  const engineOnly = st?.ai_mode === "ENGINE_ONLY";
+  // Run the engine with AI (only AI-confirmed candidates are auto-executed) or without AI (the engine's own BUY/SELL
+  // signals are auto-executed). The Risk Engine decides in both. LIVE engine-only needs a typed confirmation.
+  function setAiMode(mode: "AI" | "ENGINE_ONLY") {
+    if (mode === "ENGINE_ONLY" && st?.mode === "LIVE") { setDlg("noai"); return; }
+    run(() => post("/api/control/ai-mode", { mode }));
+  }
   return (
     <Panel title="Live Trading Control Center" icon={<Power size={12} />} accent={st?.mode === "LIVE" ? "bear" : "cyan"}>
       <div className="grid grid-cols-2 gap-2 text-[11px]">
         <div><div className="text-dim">AUTO TRADING</div>
           <div className={st?.auto_trading ? "font-bold text-neon" : "font-bold text-dim"}>{st?.auto_trading ? "ON" : "OFF"}</div></div>
+        <div className="col-span-2 flex items-center justify-between gap-2 rounded border border-line px-2 py-1.5">
+          <div><div className="text-dim">ENGINE</div>
+            <div className={engineOnly ? "font-bold text-warn" : "font-bold text-cyan"}>
+              {st ? (engineOnly ? "Running without AI" : "Running with AI") : "…"}</div>
+            <div className="text-[10px] text-dim">{!st ? "" : engineOnly
+              ? "Engine BUY/SELL signals are auto-executed; the Risk Engine decides. No AI cost."
+              : st.ai_configured ? "Only AI-confirmed candidates are auto-executed; the Risk Engine decides."
+              : "No AI provider configured: nothing is auto-executed. Add one in AI Studio, or run without AI."}</div></div>
+          <div className="flex shrink-0 overflow-hidden rounded border border-line" role="group" aria-label="Run engine with or without AI">
+            <button type="button" disabled={!control || busy || !st} aria-pressed={!engineOnly}
+              className={`flex items-center gap-1 px-2 py-1 ${!engineOnly ? "bg-cyan/20 font-bold text-cyan" : "text-dim hover:text-white"}`}
+              onClick={() => engineOnly && setAiMode("AI")}><Bot size={12} />With AI</button>
+            <button type="button" disabled={!control || busy || !st} aria-pressed={engineOnly}
+              className={`flex items-center gap-1 border-l border-line px-2 py-1 ${engineOnly ? "bg-warn/20 font-bold text-warn" : "text-dim hover:text-white"}`}
+              onClick={() => !engineOnly && setAiMode("ENGINE_ONLY")}><Cpu size={12} />Without AI</button>
+          </div>
+        </div>
         <div><div className="text-dim">ACCOUNT MODE</div>
           <div className={st?.mode === "LIVE" ? "font-bold text-bear" : "font-bold text-cyan"}>{st?.mode ?? "…"}</div></div>
         <div><div className="text-dim">Trading account</div><div>{st?.account ? `${st.account.login} ${st.account.verified ? "✓" : "(unverified)"}` : "none"}</div></div>
@@ -69,8 +93,12 @@ export default function ControlCenter() {
       <Confirm open={dlg === "demo"} title="Switch to DEMO" tone="warn" busy={busy} body="Live auto trading stops. Open live positions remain at the broker and keep their protective stops."
         onCancel={() => setDlg(null)} onConfirm={() => run(() => post("/api/control/mode", { mode: "DEMO" }))} />
       <Confirm open={dlg === "autolive"} title="Enable LIVE auto trading" busy={busy} phrase="AUTO LIVE"
-        body="The engine will place real orders for Claude-confirmed, risk-approved signals." onCancel={() => setDlg(null)}
+        body={engineOnly ? "The engine will place real orders for its own risk-approved signals, without AI review."
+          : "The engine will place real orders for AI-confirmed, risk-approved signals."} onCancel={() => setDlg(null)}
         onConfirm={() => run(() => post("/api/control/auto-trading", { enabled: true, confirm: true }))} />
+      <Confirm open={dlg === "noai"} title="Run LIVE without AI" phrase="RUN WITHOUT AI" busy={busy}
+        body="Real orders will be placed for the engine's own BUY/SELL signals without AI review. Every risk limit, the kill switch and the Risk Engine still apply. Only signals produced after the switch are affected."
+        onCancel={() => setDlg(null)} onConfirm={(t) => run(() => post("/api/control/ai-mode", { mode: "ENGINE_ONLY", confirm_text: t }))} />
       <Confirm open={dlg === "closeall"} title="Close all positions" phrase="CLOSE ALL" busy={busy}
         body="Every open position on the active account will be closed at market." onCancel={() => setDlg(null)}
         onConfirm={(t) => run(() => post("/api/control/close-all", { confirm_text: t }))} />

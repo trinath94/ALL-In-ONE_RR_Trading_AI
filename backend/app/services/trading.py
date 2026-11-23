@@ -32,6 +32,44 @@ def get_state(db: Session) -> TradingState:
     return st
 
 
+AI_MODES = ("AI", "ENGINE_ONLY")
+
+
+def engine_only_review() -> dict:
+    """What the scanner records instead of an AI review while the operator runs the engine without AI."""
+    return {"decision": "SKIPPED", "mode": "ENGINE_ONLY",
+            "note": "AI review switched off by the operator (Run without AI); the Risk Engine decides at execution"}
+
+
+def auto_execution_block(st: TradingState, sig) -> str | None:
+    """Why a NEW signal would not be auto-executed now, or None if it is eligible (the Risk Engine still decides).
+    One rule for the trading worker and the console's explanation.
+
+    * AI mode (default): only candidates the AI review confirmed in the same direction.
+    * Engine-only mode: the engine's own BUY/SELL, but only signals that were produced in engine-only mode, so a
+      candidate the AI rejected or left unreviewed is never executed by switching the mode afterwards.
+    """
+    if sig.decision not in ("BUY", "SELL"):
+        return "WAIT / NO_TRADE are never executed"
+    if not st.auto_trading:
+        return "auto trading is OFF"
+    if st.auto_trading_since is not None and sig.created_at < st.auto_trading_since:
+        return "produced before auto trading was switched on"
+    review = sig.ai_review or {}
+    d = review.get("decision")
+    if (st.ai_mode or "AI") == "ENGINE_ONLY":
+        if d == "SKIPPED" and review.get("mode") == "ENGINE_ONLY":
+            return None
+        return "produced while the AI mode was on; engine-only mode executes only signals produced without AI"
+    if d == "SKIPPED":
+        return "produced without AI review; the AI mode executes only AI-confirmed candidates"
+    if d not in ("BUY", "SELL"):
+        return "not confirmed by the AI review"
+    if d != sig.decision:
+        return f"AI review {d} does not confirm {sig.decision}"
+    return None
+
+
 def active_account(db: Session) -> TradingAccount | None:
     st = get_state(db)
     return db.scalar(select(TradingAccount).where(TradingAccount.mode == st.active_mode, TradingAccount.is_active.is_(True)))

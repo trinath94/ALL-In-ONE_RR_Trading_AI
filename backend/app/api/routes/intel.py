@@ -891,12 +891,7 @@ def worker_status(_: User = Depends(current_user), db: Session = Depends(get_db)
                              .where(TradingSignal.status == "NEW", TradingSignal.expires_at > now)
                              .order_by(TradingSignal.id.desc()).limit(50)):
         review = (s.ai_review or {}).get("decision")
-        why = ("WAIT / NO_TRADE are never executed" if s.decision not in ("BUY", "SELL") else
-               "auto trading is OFF" if not st.auto_trading else
-               "produced before auto trading was switched on" if st.auto_trading_since and s.created_at < st.auto_trading_since else
-               "not confirmed by the AI review" if review not in ("BUY", "SELL") else
-               f"AI review {review} does not confirm {s.decision}" if review != s.decision else
-               "eligible: the Risk Engine decides when the worker picks it up")
+        why = (tr.auto_execution_block(st, s) or "eligible: the Risk Engine decides when the worker picks it up")
         cands.append({"id": s.id, "symbol": sym, "timeframe": s.timeframe, "decision": s.decision, "grade": s.grade,
                       "review": review, "created_at": s.created_at, "expires_at": s.expires_at, "status": why})
     runs = db.scalars(select(AgentRun).where(AgentRun.agent_id == "trade_execution").order_by(AgentRun.id.desc()).limit(20))

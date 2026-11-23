@@ -61,8 +61,22 @@ Automatic trading on a DEMO account needs **all** of the following:
 2. **Auto trading ON** (Trading Console, by a user allowed to control trading).
 3. **The trading worker started** (desktop window, `START TRADING WORKER`).
 
-The worker executes only signals created after auto trading was switched on, whose direction the review confirmed.
-Every order still goes through the Risk Engine. Manual orders are placed from the console.
+The worker executes only signals created after auto trading was switched on. Which ones depends on the **Engine**
+switch in the Live Trading Control Center:
+
+| Engine switch | What is auto-executed | AI provider needed |
+|---|---|---|
+| **With AI** (default) | only candidates whose direction the AI review confirmed | yes (AI Studio); without one, nothing is auto-executed |
+| **Without AI** | the engine's own BUY/SELL signals, with no AI review and no AI cost | no |
+
+* Every order still goes through the Risk Engine, with every risk limit, in both positions.
+* The switch applies to signals produced after it. A candidate the AI rejected or left unreviewed is never executed by
+  switching to Without AI, and a signal produced without AI is not executed after switching back to With AI.
+* In LIVE, switching to Without AI needs the LIVE permission and the typed phrase `RUN WITHOUT AI`. Switching back is
+  one click.
+* Every switch is in the audit log.
+
+Manual orders are placed from the console.
 
 **To stop:**
 * **Auto trading OFF** stops new entries.

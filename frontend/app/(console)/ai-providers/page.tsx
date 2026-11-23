@@ -54,7 +54,7 @@ export default function AIProviders() {
       {msg && <div className="mb-2 rounded border border-neon/40 bg-neon/5 px-2 py-1 text-[11px] text-neon">{msg}</div>}
       <div className="grid gap-3 xl:grid-cols-2">
         <Panel title="Providers">
-          <Table rows={provs} empty="No providers. Without one, candidate review uses RR_ANTHROPIC_API_KEY if it is set; otherwise candidates stay unreviewed and are never auto-executed." rowKey={(p) => p.id}
+          <Table rows={provs} empty="No providers. Without one, candidate review uses RR_ANTHROPIC_API_KEY if it is set; otherwise candidates stay unreviewed and are never auto-executed, unless the engine runs without AI (Control Center)." rowKey={(p) => p.id}
             cols={[{ k: "name", h: "Name" }, { k: "kind", h: "Kind" },
               { k: "base_url", h: "Endpoint", r: (p) => <span className="text-[10px] text-dim">{p.base_url || "Anthropic API"}</span> },
               { k: "has_key", h: "Key", r: (p) => p.has_key ? <Badge tone="neon">stored (encrypted)</Badge> : <Badge tone="dim">none</Badge> },

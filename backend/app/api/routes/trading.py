@@ -43,7 +43,16 @@ def state_out(db: Session) -> dict:
     return {"mode": st.active_mode, "auto_trading": st.auto_trading, "pause_new_entries": st.pause_new_entries,
             "kill_switch": st.kill_switch, "kill_reason": st.kill_reason, "risk_lock": st.risk_lock,
             "risk_lock_reason": st.risk_lock_reason, "startup_checks_passed": st.startup_checks_passed,
+            "ai_mode": st.ai_mode or "AI", "ai_configured": _ai_configured(),
             "account": account_out(acct) if acct else None}
+
+
+def _ai_configured() -> bool:
+    try:
+        from app.ai.gateway import configured
+        return bool(configured("candidate_review"))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 @router.get("/control/state")
@@ -76,6 +85,35 @@ def auto_trading(body: Toggle, request: Request, user: User = Depends(require("t
     st.auto_trading, st.updated_by = body.enabled, user.id
     audit(db, user.id, "AUTO_TRADING_" + ("ON" if body.enabled else "OFF"), st.active_mode, ip=client_ip(request))
     publish("control", {"auto_trading": body.enabled})
+    return state_out(db)
+
+
+ENGINE_ONLY_LIVE_PHRASE = "RUN WITHOUT AI"
+
+
+class AiModeIn(BaseModel):
+    mode: str = Field(pattern="^(AI|ENGINE_ONLY)$")
+    confirm_text: str = ""
+
+
+@router.post("/control/ai-mode")
+def set_ai_mode(body: AiModeIn, request: Request, user: User = Depends(require("trade.control")),
+                db: Session = Depends(get_db)):
+    """Run the engine with AI (default) or without AI. Without AI, the engine's own BUY/SELL signals are auto-executed
+    when auto trading is on; the Risk Engine keeps final authority and every risk limit applies unchanged. Only
+    signals produced after the switch follow the new mode. In LIVE, switching to engine-only needs trade.live and the
+    typed phrase."""
+    st = tr.get_state(db)
+    if body.mode == "ENGINE_ONLY" and st.active_mode == "LIVE" and (st.ai_mode or "AI") != "ENGINE_ONLY":
+        from app.api.deps import user_perms
+        if "trade.live" not in user_perms(user):
+            raise HTTPException(403, "Running LIVE without AI requires trade.live permission")
+        if body.confirm_text != ENGINE_ONLY_LIVE_PHRASE:
+            raise HTTPException(428, f'Type "{ENGINE_ONLY_LIVE_PHRASE}" to run LIVE without AI review')
+    if (st.ai_mode or "AI") != body.mode:
+        st.ai_mode, st.updated_by = body.mode, user.id
+        audit(db, user.id, "AI_MODE_" + body.mode, st.active_mode, ip=client_ip(request))
+        publish("control", {"ai_mode": body.mode})
     return state_out(db)
 
 

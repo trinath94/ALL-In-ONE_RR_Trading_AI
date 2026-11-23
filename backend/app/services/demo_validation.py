@@ -75,7 +75,13 @@ def report(db: Session, hours: int = 72) -> dict:
     reviewed = [x for x in sigs if (x.ai_review or {}).get("decision") not in (None, "UNREVIEWED")]
     errors = [x for x in sigs if (x.ai_review or {}).get("error") and "no AI provider" not in (x.ai_review or {}).get("error", "")]
     from app.ai.gateway import configured
-    if not configured("candidate_review"):
+    from app.services.trading import get_state
+    if (get_state(db).ai_mode or "AI") == "ENGINE_ONLY":
+        skipped = [x for x in sigs if (x.ai_review or {}).get("decision") == "SKIPPED"]
+        add("ai_review", "AI review of candidates", PASS,
+            f"engine-only mode (Run without AI): AI review switched off by the operator; {len(skipped)} of {len(sigs)} "
+            f"BUY/SELL candidates went to the Risk Engine without AI review")
+    elif not configured("candidate_review"):
         add("ai_review", "AI review of candidates", PENDING,
             "no AI provider configured: candidates stay unreviewed and are never auto-executed (configure one in AI Studio)")
     else:

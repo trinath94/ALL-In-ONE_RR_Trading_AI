@@ -90,8 +90,13 @@ def report(db: Session) -> dict:
          "locked on the PC (release it only in the RR Trading One window: LIVE on this PC, typed account number and phrase)"),
         required=False)
     from app.ai.gateway import configured
-    add("ai_review", "Candidate review provider", configured("candidate_review"),
-        "configured" if configured("candidate_review") else "none: candidates stay unreviewed and are never auto-executed",
-        required=False)
+    if (st.ai_mode or "AI") == "ENGINE_ONLY":
+        add("ai_review", "Candidate review provider", None,
+            "engine-only mode (Run without AI): no AI review; the engine's BUY/SELL signals go to the Risk Engine. "
+            "Switching LIVE to engine-only needs its own typed confirmation", required=False)
+    else:
+        add("ai_review", "Candidate review provider", configured("candidate_review"),
+            "configured" if configured("candidate_review") else
+            "none: candidates stay unreviewed and are never auto-executed (or choose Run without AI)", required=False)
     failing = [i["key"] for i in items if i["required"] and not i["passed"]]
     return {"ready": not failing, "failing": failing, "items": items}

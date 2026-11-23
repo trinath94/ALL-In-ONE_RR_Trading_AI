@@ -73,7 +73,7 @@ def db_clean(migrated_db):
     seed()  # restores risk configs / trading state removed by the cascade
     with session_scope() as db:
         db.execute(text("UPDATE trading_state SET active_mode='DEMO', auto_trading=false, pause_new_entries=false, "
-                        "kill_switch=false, risk_lock=false, startup_checks_passed=false"))
+                        "kill_switch=false, risk_lock=false, startup_checks_passed=false, ai_mode='AI'"))
     import redis
     redis.Redis.from_url(os.environ["RR_REDIS_URL"]).flushdb()
     from app.services import sources

@@ -14,7 +14,7 @@ No step here enables LIVE trading.
 
 1. **MT5 Manager:** select your DEMO profile and start the MT5 connector. The window must show the account as **DEMO**.
 2. **Trading Console → Broker Symbol Discovery:** enable 2–5 symbols you know (for example EURUSD, XAUUSD). New symbols start disabled.
-3. **Optional, AI review:** configure a provider in **AI Studio** (an API key with API billing; a chat subscription does not include API credits). For consensus, put two different providers first and set the mode to *consensus*. Without a provider, candidates stay unreviewed and are never auto-executed.
+3. **Optional, AI review:** configure a provider in **AI Studio** (an API key with API billing; a chat subscription does not include API credits). For consensus, put two different providers first and set the mode to *consensus*. Without a provider, candidates stay unreviewed and are never auto-executed, unless you choose **Without AI** in the Live Trading Control Center: then the engine's own BUY/SELL signals are auto-executed (DEMO here), the Risk Engine still decides, and the AI review item shows engine-only mode.
 
 ## 3. Let it run
 

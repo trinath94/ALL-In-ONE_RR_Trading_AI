@@ -61,6 +61,13 @@ boundary-checked on its own. The candidate is confirmed only if **both** confirm
 rejects it; any other combination waits. If either provider gives no valid answer, the candidate stays unreviewed and
 is never auto-executed. Consensus costs two calls per candidate.
 
+**Engine with or without AI.** The Live Trading Control Center has an **Engine** switch: *With AI* (default) or
+*Without AI*. Without AI, candidate review is skipped (no provider call, no cost) and the engine's own BUY/SELL signals
+are auto-executed when auto trading is on; the Risk Engine and every risk limit apply unchanged. The switch needs
+`trade.control`; in LIVE, switching to Without AI also needs `trade.live` and the typed phrase `RUN WITHOUT AI`. It
+affects only signals produced after the switch. API: `POST /api/control/ai-mode` (`AI` | `ENGINE_ONLY`), audited as
+`AI_MODE_*`; `GET /api/control/state` reports `ai_mode` and `ai_configured`.
+
 **Opportunity gate.** Each analysis with a setup is checked by the entry-validation and failure-prediction agents
 (see the Opportunity Lifecycle page). A stop or target on the wrong side of the entry always makes the setup NO_TRADE.
 The other checks are advisory by default; to let them downgrade BUY/SELL to WAIT, set in the engine's environment:

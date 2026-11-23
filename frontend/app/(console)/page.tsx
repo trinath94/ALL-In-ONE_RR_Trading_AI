@@ -74,7 +74,7 @@ export default function CommandCenter() {
               <div className="grid grid-cols-2 gap-1 text-[11px]">
                 {Object.entries(oppSum.states).map(([k, v]: any) => <a key={k} href={`/opportunities`} className="flex justify-between rounded border border-line px-2 py-0.5"><span className="text-dim">{k.replaceAll("_", " ").toLowerCase()}</span><span>{v}</span></a>)}
               </div>
-              <div className="mt-2 text-[10px] uppercase text-dim">Qualified (AI-confirmed, awaiting the Risk Engine)</div>
+              <div className="mt-2 text-[10px] uppercase text-dim">Qualified (AI-confirmed, or engine-only; awaiting the Risk Engine)</div>
               {(oppLatest || []).length === 0 ? <div className="text-[11px] text-dim">none</div> :
                 oppLatest!.map((o) => <a key={o.id} href={`/opportunities?id=${o.id}`} className="block text-[11px]">#{o.id} {o.symbol} {o.timeframe} {o.direction} · {fmt.time(o.created_at)}</a>)}
               <div className="mt-1 text-[10px] text-dim">gate mode: {oppSum.gate_mode}</div>

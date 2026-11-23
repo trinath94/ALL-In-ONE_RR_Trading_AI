@@ -700,6 +700,7 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
     with session_scope() as db:
         from app.services.trading import get_state
         mode = get_state(db).active_mode
+        ai_mode = get_state(db).ai_mode or "AI"
         enabled = enabled_strategies(db, mode)
         t_stats = time.perf_counter()
         stats = strategy_stats(db)
@@ -794,7 +795,12 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
     for r in ranked:
         with session_scope() as db:
             sig = db.get(TradingSignal, r["signal_id"])
-            if agent is not None:
+            if ai_mode == "ENGINE_ONLY":
+                # The operator runs the engine without AI: no provider call, no cost; the Risk Engine decides.
+                from app.services.trading import engine_only_review
+                sig.ai_review = engine_only_review()
+                _review_to_opportunity(db, sig, sig.ai_review, {"mode": "ENGINE_ONLY"})
+            elif agent is not None:
                 ar = db.get(AnalysisResult, sig.analysis_id)
                 sym = db.get(Symbol, sig.symbol_id)
                 sp_pts = (ar.structure or {}).get("spread_points")
