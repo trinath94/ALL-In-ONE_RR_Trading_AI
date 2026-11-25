@@ -257,14 +257,18 @@ def test_pre_trade_analysis_from_the_decision_trace(scan, monkeypatch, client):
     assert worker.startup_checks(bridge)[0]
     scan_once(bridge, None, lambda sid: None)
     with session_scope() as db:
-        o = db.scalars(select(Opportunity).where(Opportunity.direction == "BUY")).first()
+        o = db.scalars(select(Opportunity).where(Opportunity.direction == "BUY").order_by(Opportunity.id)).first()
         oid = o.id
     login(client, "viewer")
     t = client.get(f"/api/opportunities/{oid}/thesis").json()
     for k in ("why", "supporting_strategies", "favourable_conditions", "contradicting_conditions", "invalidation",
               "entry_justification", "stop_justification", "target_justification", "failure_risks", "should_reject"):
         assert k in t, k
-    assert t["direction"] == "BUY" and t["supporting_strategies"]
+    assert t["direction"] == "BUY"
+    # the test forces BUY whatever the strategies said: supporting ones are exactly those signalling BUY, and any
+    # strategy pointing the other way is listed as a contradiction
+    assert all(x["direction"] == "BUY" for x in t["supporting_strategies"])
+    assert t["why"].startswith(f"{len(t['supporting_strategies'])} strategies signal BUY")
     assert t["should_reject"] == bool(t["reject_reasons"])
     assert client.get("/api/opportunities/999999/thesis").status_code == 404
 
