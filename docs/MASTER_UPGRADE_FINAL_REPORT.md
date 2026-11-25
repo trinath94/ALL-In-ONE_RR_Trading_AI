@@ -88,14 +88,17 @@ success, last error); `/api/positions/history` (id). No route was removed.
 
 ## 5. Testing
 
-See §8 of the conversation report for the final numbers; summary at the time of writing:
+Commands as in `docs/TEST_MATRIX.md` (engine, MT5 connector, Windows connector, desktop core, then
+`scripts/test_matrix.py`). Results at `451b880`:
 
-| Suite | Result |
-|---|---|
-| Engine | see `docs/TEST_MATRIX.md` (all passing; baseline 408 before the upgrade) |
-| MT5 connector, Windows connector, desktop core | all passing |
-| Test matrix | 25 areas, 20 safety conditions, 35 Parts 27–30 validations proven |
-| CI on `dbae78e` | backend, desktop (Windows install/upgrade/uninstall), frontend: green |
+| Suite | Before the upgrade (`5c8b903`) | Now |
+|---|---|---|
+| Engine | 408 passed | **478 passed**, 0 failed |
+| MT5 connector | 17 | **17** |
+| Windows connector | 38 | **40** |
+| Desktop core | 134 | **135**, clippy clean |
+| Test matrix | 25 areas, 16 safety conditions | **25 areas, 20 safety conditions, 35 Parts 27–30 validations: all proven** |
+| CI on `451b880` | — | desktop (Windows install/upgrade/uninstall) green and installer published; backend, frontend, security green on `dbae78e` |
 
 **Failures introduced and fixed:** one test of the pre-trade analysis (step 4) assumed that a forced BUY always has a
 supporting strategy; it failed once in CI depending on which opportunity it picked. The assertion now checks what the
