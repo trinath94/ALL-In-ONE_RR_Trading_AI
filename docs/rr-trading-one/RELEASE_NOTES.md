@@ -2,6 +2,33 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Claude Code and the Anthropic API in the Engine Assistant (2026-11-25).**
+
+The chat now routes each request to one of three handlers:
+* **Claude Code**, through the official Claude Agent SDK, for development work: start a request with `/code`.
+* **The Anthropic API**, for analyses: market summary, trade review, performance, strategy research, error explanation.
+* **The engine itself**, for everything about the running engine.
+
+**Claude Code tasks.**
+* Each task works in an isolated git branch of a copy of the engine source, in the new `claude-code` service.
+* Every file, shell and tool call is checked by the engine: no secrets, nothing outside the task's workspace, no
+  web, only listed commands.
+* The chat shows live progress, with **Cancel** and **Resume**.
+* When Claude finishes, the engine runs the test suite itself, against a separate test database.
+* The patch is shown with its approval gates: migration, order execution, risk, LIVE, credentials, deletions.
+* An administrator merges only after the tests pass and each gate is acknowledged. It is never deployed from there.
+
+**Anthropic API analyses.** Each analysis is its own AI task with its own model choice, and uses the engine's records
+only.
+
+**Budget alert.** New threshold, with an incident when it is reached. The usage ledger now records prompt-cache
+tokens.
+
+**Defaults and changes.**
+* Off by default (AI Studio → Claude Code). The engine trades without it.
+* Migration 0022 (additive).
+* New dependency: `claude-agent-sdk`; `pytest` is now in the engine image.
+
 **Engine Assistant commands, AI budget, continue without AI (2026-11-25).**
 * **Commands in the Engine Assistant**: "Audit my entire trading engine", "Find and repair all errors", "Is the engine
   ready for autonomous trading?", "Inspect all connected broker accounts", "Check all available trading symbols",

@@ -43,10 +43,18 @@ TASKS = {
     "diagnostics": "Operational diagnostics and provider tests",
     "config_proposal": "Strategy configuration proposals (validated before any use)",
     "engine_assistant": "Engine Assistant chat (explains engine state; read-only)",
+    # Claude Code + Anthropic API integration: analyses the chat orchestrator sends to the Anthropic API (or the
+    # task's configured provider). Each has its own route, so a lighter or stronger model can be chosen per task.
+    "market_summary": "Market summaries (engine facts only; no orders)",
+    "trade_review": "Trade reviews of closed trades",
+    "performance_analysis": "Performance analysis of strategies and accounts",
+    "strategy_research": "Strategy research questions (no fabricated backtests)",
+    "error_explanation": "Explanations of engine errors and incidents",
 }
 # Tasks the engine calls (Phase 14: all of them).
 WIRED_TASKS = ("candidate_review", "strategy_discovery", "trade_research", "learning_explanation", "research_summary",
-               "diagnostics", "config_proposal", "engine_assistant")
+               "diagnostics", "config_proposal", "engine_assistant", "market_summary", "trade_review",
+               "performance_analysis", "strategy_research", "error_explanation")
 # Parts 27-30 Phase 4: tasks whose route may use mode "consensus" (two providers answer independently).
 CONSENSUS_TASKS = ("candidate_review",)
 ENV_PROVIDER = "anthropic (RR_ANTHROPIC_API_KEY)"
@@ -264,7 +272,7 @@ def _note_success(name: str) -> None:
 
 
 def _record(task: str, h: Hop, model: str, status: str, tin: int, tout: int, latency: float, attempts: int,
-            error: str | None, fallback_from: str | None) -> None:
+            error: str | None, fallback_from: str | None, cache_read: int = 0, cache_write: int = 0) -> None:
     cost = None
     if h.price_in is not None and h.price_out is not None and status == "ok":
         cost = round(tin / 1e6 * h.price_in + tout / 1e6 * h.price_out, 6)
@@ -272,7 +280,8 @@ def _record(task: str, h: Hop, model: str, status: str, tin: int, tout: int, lat
         with session_scope() as db:
             db.add(AIUsage(task=task, provider=h.name, model=model or h.model or "?", requested_model=h.model or None,
                            status=status, input_tokens=tin,
-                           output_tokens=tout, cost=cost, latency_ms=round(latency, 1), attempts=attempts,
+                           output_tokens=tout, cache_read_tokens=int(cache_read or 0),
+                           cache_write_tokens=int(cache_write or 0), cost=cost, latency_ms=round(latency, 1), attempts=attempts,
                            error=(error or None) and error[:1000], fallback_from=fallback_from))
     except Exception:  # noqa: BLE001 - accounting must not break the call
         log.exception("ai usage record failed")
@@ -313,6 +322,7 @@ def budget_status() -> dict:
                                       .where(AIUsage.created_at >= month)) or 0)
         tokens_day = int(db.scalar(select(func.coalesce(func.sum(AIUsage.input_tokens + AIUsage.output_tokens), 0))
                                    .where(AIUsage.created_at >= day)) or 0)
+        pct = int(c.budget_alert_pct) if c and c.budget_alert_pct else 80
         lim = {"daily_budget_usd": c.daily_budget_usd if c else None,
                "monthly_budget_usd": c.monthly_budget_usd if c else None,
                "daily_token_limit": c.daily_token_limit if c else None}
@@ -323,8 +333,30 @@ def budget_status() -> dict:
         exhausted = f"monthly budget {lim['monthly_budget_usd']} USD reached ({spend_month:.4f})"
     elif lim["daily_token_limit"] is not None and tokens_day >= lim["daily_token_limit"]:
         exhausted = f"daily token limit {lim['daily_token_limit']} reached ({tokens_day})"
+    alert = None
+    for used, limit, name in ((spend_day, lim["daily_budget_usd"], "daily budget"),
+                              (spend_month, lim["monthly_budget_usd"], "monthly budget"),
+                              (tokens_day, lim["daily_token_limit"], "daily token limit")):
+        if limit and used >= limit * pct / 100:
+            alert = f"{name}: {round(used / limit * 100)}% used ({used:.4f} of {limit})"
+            break
     return {"spend_today_usd": round(spend_day, 6), "spend_month_usd": round(spend_month, 6), "tokens_today": tokens_day,
-            **lim, "exhausted": exhausted}
+            **lim, "alert_pct": pct, "alert": alert, "exhausted": exhausted}
+
+
+def budget_alert() -> str | None:
+    """A warning incident (de-duplicated by the incident system) when spend passes the alert threshold."""
+    try:
+        b = budget_status()
+        if b.get("alert"):
+            from app.services import incidents
+            with session_scope() as db:
+                incidents.record(db, "ai", "warning", f"AI budget alert: {b['alert']}",
+                                 {"exhausted": b.get("exhausted")}, category="ai_budget")
+        return b.get("alert")
+    except Exception:  # noqa: BLE001 - alerts never break an AI call
+        log.debug("budget alert failed", exc_info=True)
+        return None
 
 
 def _cache_key(task: str, hops: list[Hop], system: str, payload, max_tokens: int) -> str:
@@ -394,10 +426,11 @@ def run_hops(task: str, hops: list[Hop], system: str, user: dict, schema: dict, 
                 last = None
                 break
             _record(task, h, comp.model, "ok", comp.input_tokens, comp.output_tokens, comp.latency_ms, attempts, None,
-                    previous)
+                    previous, comp.cache_read_tokens, comp.cache_write_tokens)
             _note_success(h.name)
+            budget_alert()
             meta = {"provider": h.name, "model": comp.model, "input_tokens": comp.input_tokens,
-                    "output_tokens": comp.output_tokens, "latency_ms": comp.latency_ms, "attempts": attempts,
+                    "output_tokens": comp.output_tokens, "cache_read_tokens": comp.cache_read_tokens, "latency_ms": comp.latency_ms, "attempts": attempts,
                     "fallback_from": previous}
             if key:
                 try:

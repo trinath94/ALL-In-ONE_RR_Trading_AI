@@ -174,6 +174,8 @@ class ClaudeAgent:
             raise AgentError(f"connection error: {exc}", "connection") from exc
         meta = {"model": resp.model, "latency_ms": (time.perf_counter() - t0) * 1000,
                 "input_tokens": resp.usage.input_tokens, "output_tokens": resp.usage.output_tokens,
+                "cache_read_tokens": getattr(resp.usage, "cache_read_input_tokens", None) or 0,
+                "cache_write_tokens": getattr(resp.usage, "cache_creation_input_tokens", None) or 0,
                 "stop_reason": resp.stop_reason}
         if resp.stop_reason == "refusal":
             raise AgentError("model declined the request (refusal)", "refusal")

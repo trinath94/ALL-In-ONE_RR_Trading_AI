@@ -27,13 +27,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "desktop" / "target" / "bundle-src"
 ENGINE_PATHS = ["backend", "frontend", "infrastructure", "docker/frontend.Dockerfile",
+                # Claude Code workspace: the simulated MT5 connector the engine's tests run against (sources)
+                "mt5-connector/connector", "mt5-connector/tests", "mt5-connector/windows/gen_cert.py",
                 # Phase 24-26: the manuals ship with the application
                 "docs/rr-trading-one", "docs/MIGRATION_FROM_UBUNTU.md"]
 REQUIRED = [
     "infrastructure/compose.yml", "infrastructure/nginx.local.conf", "infrastructure/backend.Dockerfile",
     "infrastructure/windows/uninstall-stop.ps1", "docker/frontend.Dockerfile", "backend/requirements.lock",
     "backend/alembic.ini", "backend/app/main.py", "backend/tests/baseline/strategy_inventory.json",
-    "frontend/package.json", "frontend/package-lock.json", ".dockerignore",
+    "mt5-connector/connector/service.py", "frontend/package.json", "frontend/package-lock.json", ".dockerignore",
     "docs/rr-trading-one/README.md", "docs/rr-trading-one/INSTALLATION_MANUAL.md", "docs/MIGRATION_FROM_UBUNTU.md",
 ]
 # Never shipped, even if tracked by mistake.
@@ -73,7 +75,7 @@ def main() -> int:
         if not exe.is_file():
             print(f"{exe} not found: build the connector first (windows-connector/packaging)", file=sys.stderr)
             return 1
-        shutil.copytree(args.connector, OUT / "mt5-connector")
+        shutil.copytree(args.connector, OUT / "mt5-connector", dirs_exist_ok=True)
         REQUIRED.append("mt5-connector/RR_MT5_Connector.exe")
 
     missing = [r for r in REQUIRED if not (OUT / r).is_file()]

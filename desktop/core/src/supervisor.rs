@@ -1130,6 +1130,7 @@ mod tests {
 {"Service":"monitor","State":"running","Health":"healthy","ExitCode":0}
 {"Service":"analysis","State":"running","Health":"healthy","ExitCode":0}
 {"Service":"learner","State":"running","Health":"healthy","ExitCode":0}
+{"Service":"claude-code","State":"running","Health":"","ExitCode":0}
 {"Service":"trading-worker","State":"running","Health":"healthy","ExitCode":0}"#;
 
     fn has(spec: &CommandSpec, word: &str) -> bool {
@@ -1517,7 +1518,7 @@ mod tests {
         let reset = at(&|c| c.iter().any(|a| a.starts_with("UPDATE trading_state SET auto_trading = false")));
         let up_api = at(&|c| c[0] == "up" && c.contains(&"api".to_string()));
         assert!(safety < stop && stop < copy && copy < restore && restore < reset && reset < up_api, "{cmds:?}");
-        assert_eq!(cmds[stop][cmds[stop].len() - 7..].first().map(String::as_str), Some("trading-worker"), "{:?}", cmds[stop]);
+        assert_eq!(cmds[stop][cmds[stop].len() - 8..].first().map(String::as_str), Some("trading-worker"), "{:?}", cmds[stop]);
         assert!(cmds[restore].contains(&"--single-transaction".to_string()));
         assert!(cmds[copy][1].ends_with("manual-1700000000.dump"), "the file is resolved in the backups folder");
         assert!(!cmds.iter().any(|c| c[0] == "up" && c.contains(&"trading-worker".to_string())));

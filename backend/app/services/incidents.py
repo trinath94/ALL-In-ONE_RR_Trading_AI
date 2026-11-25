@@ -98,6 +98,10 @@ CATEGORIES: list[Category] = [
       "An AI provider keeps failing or rate-limits requests.", "AI review pauses for that provider (cool-down).",
       "Check the provider's key, model and billing in AI Studio, or switch the active provider.", None,
       (("ai", r""),)),
+    C("ai_budget", "AI budget alert", "warning", "AI spend has passed the alert threshold of a daily or monthly "
+      "budget (or the daily token limit).", "When the limit itself is reached, AI calls stop and the engine continues "
+      "without AI according to the unavailable-AI policy.", "Raise the budget or lower AI usage in AI Studio → Budget; "
+      "nothing else is needed.", None, (("ai", r"budget alert"),)),
     C("auth_failure", "Authentication failures", "warning", "Repeated failed logins or rejected credentials.",
       "Someone may be using a wrong password, or a credential was rotated.",
       "Check the users list and the audit log; rotate credentials if unexpected.", None,

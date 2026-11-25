@@ -196,6 +196,90 @@ Promotion follows the experiment lifecycle and your approval.
 AI output is schema-checked and advisory. AI cannot place orders, enable LIVE, change permissions or raise
 confidence. Broker passwords are never sent to a provider.
 
+### 5.1 Claude Code and the Anthropic API in the Engine Assistant
+
+The Engine Assistant routes each request to one of three handlers. Routing is fixed rules, not AI, so it works when
+Claude is unavailable.
+
+| Request | Handled by | Examples |
+|---|---|---|
+| Development work on the engine's code | **Claude Code** (Claude Agent SDK) | `/code fix the bug in the symbol mapper and add a test`, "write tests for …", "refactor …" |
+| Analysis | **Anthropic API** through the AI gateway | "Give me a market summary", "Review my recent trades", "How is the win rate and drawdown?", "Which strategies should I research?", "Explain the open errors" |
+| The running engine | **The engine itself** | status, "why was signal #42 not executed?", audit, repair, readiness, accounts, symbols, DEMO test, LIVE preparation, handover |
+
+Prefixes force a route: `/code`, `/ai`, `/engine`. Scanning, signals, risk, execution and position management always
+stay with the engine; neither Claude path can drive them.
+
+**Anthropic API analyses.** Each analysis is its own AI task in AI Studio:
+* `market_summary`, `trade_review`, `performance_analysis`, `strategy_research`, `error_explanation`.
+* Each task can have its own provider and model, so a lighter or stronger model can be chosen per task.
+* They use the gateway's timeouts, retries with backoff, rate limits, cooldown, budget and usage ledger, as every
+  other AI task does. The ledger now also records prompt-cache read and write tokens.
+* The AI receives only the engine's own records, never credentials.
+* The answer must not invent prices, statistics or backtest results, or promise profitability.
+* Without a provider, with the budget exhausted, or on an error, the engine's records are still returned and trading
+  is not affected.
+
+**Budget alert.** AI Studio → Budget has an alert threshold (default 80 %). When AI spend passes that share of the
+daily or monthly budget, or of the daily token limit, an *AI budget alert* incident appears. At 100 % AI calls stop
+and the engine continues according to the unavailable-AI policy.
+
+**Claude Code: how it works.**
+1. **Service.** Claude Code runs in its own service, `claude-code`.
+   * It holds no broker key and never places orders.
+   * It is idle until an administrator switches Claude Code on (AI Studio → Claude Code).
+   * Stopping it never affects trading.
+2. **Workspace.** It works only in its own workspace volume, which holds a git copy of the engine source.
+   * On first start the service copies the engine's `backend/` and the simulated MT5 connector the tests need. It
+     leaves out `.env` and key files.
+   * Each task gets its own branch, `rr-claude/task-<id>`, in a separate worktree.
+3. **What it can do.** Every tool call is checked by the engine:
+   * files: only inside the task's worktree; secrets (.env, keys, certificates, credential files) cannot be read or
+     written; git metadata cannot be written;
+   * shell: only listed commands (pytest, ruff, read-only git, ls/cat/grep/find), with no pipes, redirection,
+     substitution or chained commands;
+   * no web access and no sub-agents;
+   * settings files in the copy are ignored, so a file in the repository cannot widen these rules.
+4. **Limits per task.** A model, a USD budget and a maximum number of turns.
+   * Empty model = the engine's configured Claude model (`RR_CLAUDE_MODEL`).
+   * The Anthropic key is the AI Studio Anthropic provider's key (or `RR_ANTHROPIC_API_KEY`). It is passed only to the
+     Claude Code process and never shown or returned by any API.
+5. **Progress.** The chat shows the phase, Claude's messages, the files inspected and changed, and the blocked tool
+   calls. **Cancel** interrupts the session. **Resume** continues the same session in the same worktree; this works
+   for cancelled or failed tasks, and for tasks interrupted by a restart.
+6. **Tests.** When Claude finishes, the engine runs the test command itself.
+   * The default command is the engine's suite, without the desktop GUI connector test.
+   * The tests run against a separate database (`rr_claude_test`) and Redis database 14, never the trading database.
+     The engine refuses to run them against the trading database.
+7. **Review and approval gates.** The change is committed on the task branch and shown as a patch. Approval gates are
+   raised for:
+   * database migrations;
+   * code that places, modifies or closes orders;
+   * risk configuration;
+   * LIVE authorisation;
+   * credentials and security;
+   * deleted files.
+8. **Merge.** Only an administrator (system.manage and users.manage) can merge, and only:
+   * after the engine's test run passed;
+   * with each gate acknowledged.
+
+   Merging puts the change on the workspace's base branch.
+9. **Deployment.** There is no path from Claude Code into the running engine. A change reaches it only through the
+   release pipeline: tests, image build, new installer.
+10. **Audit.** Rejected patches delete their branch. Configuration changes, merges, cancellations and resumes are in
+    the audit log.
+
+Claude Code never enables LIVE, raises risk limits, removes stop-loss requirements, bypasses permissions, changes
+broker credentials, deletes production data, applies migrations or deploys. The engine trades without it.
+
+**Server configuration** (compose service `claude-code`):
+* `RR_CLAUDE_CODE_WORKSPACE`: the workspace volume.
+* `RR_CLAUDE_CODE_SOURCE`, `RR_CLAUDE_CODE_EXTRA_SOURCES`: the sources copied on first start.
+* `RR_CLAUDE_CODE_TEST_DATABASE_URL`, `RR_CLAUDE_CODE_TEST_REDIS_URL`: the test infrastructure.
+* `RR_CLAUDE_CODE_TEST_TIMEOUT_S`: the test timeout (default 2400 s).
+
+The workspace location can only be set in server configuration, never from the console.
+
 ## 6. The desktop supervisor
 
 **Allowed actions.** The desktop window runs a closed list of actions:

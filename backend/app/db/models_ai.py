@@ -51,6 +51,9 @@ class AIProvider(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+DEFAULT_TEST_COMMAND = "python -m pytest -x -q -p no:cacheprovider --ignore=tests/test_mt5_agent.py"
+
+
 class AIControl(Base):
     """Single Active AI (migration 0018): one row (id=1). When ``single_active`` is on, every AI task uses only the
     selected provider and model (plus the explicitly configured fallback, if enabled) instead of the per-task routes.
@@ -72,6 +75,20 @@ class AIControl(Base):
     # provider): "pause" (default: candidates stay unreviewed, nothing is auto-executed) or "engine_only" (the
     # engine's own validated signals continue through the Risk Engine).
     ai_unavailable_policy: Mapped[str] = mapped_column(String(16), default="pause", server_default="pause")
+    # Claude Code (migration 0022): development tasks through the Claude Agent SDK in an isolated git workspace. Off
+    # by default. Empty model = the engine's configured Claude model (RR_CLAUDE_MODEL). The engine runs the test
+    # command itself after Claude finishes; a patch is never merged without passing tests and an administrator's
+    # approval. The workspace path is server configuration only (RR_CLAUDE_CODE_WORKSPACE), never set from the console.
+    claude_code_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    claude_code_model: Mapped[str] = mapped_column(String(96), default="", server_default="")
+    claude_code_max_budget_usd: Mapped[float] = mapped_column(Float, default=2.0, server_default="2")
+    claude_code_max_turns: Mapped[int] = mapped_column(Integer, default=40, server_default="40")
+    # Run in the workspace's backend/ folder. test_mt5_agent.py drives the Windows desktop connector (GUI toolkit),
+    # which cannot run in the server container, so it is left out by default.
+    claude_code_test_command: Mapped[str] = mapped_column(String(255), default=DEFAULT_TEST_COMMAND,
+                                                          server_default=DEFAULT_TEST_COMMAND)
+    # Budget alert: an incident (warning) when spend reaches this % of a daily or monthly budget.
+    budget_alert_pct: Mapped[int] = mapped_column(Integer, default=80, server_default="80")
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -97,6 +114,8 @@ class AIUsage(Base):
     status: Mapped[str] = mapped_column(String(24))            # ok | error | invalid_output | rate_limited | skipped
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")    # migration 0022
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     cost: Mapped[float | None] = mapped_column(Float)          # None when no price is configured (never guessed)
     latency_ms: Mapped[float] = mapped_column(Float, default=0)
     attempts: Mapped[int] = mapped_column(Integer, default=1)

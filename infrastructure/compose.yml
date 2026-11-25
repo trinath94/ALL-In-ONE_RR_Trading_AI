@@ -191,6 +191,32 @@ services:
       test: ["CMD", "python", "-c", "import redis,os,sys;sys.exit(0 if redis.Redis.from_url(os.environ['RR_REDIS_URL']).exists('rr:learner:lock') else 1)"]
     networks: [internal, egress]
 
+  # Claude Code + Anthropic API integration: development tasks through the Claude Agent SDK. It works only in its own
+  # workspace volume (a git copy of the engine source, one worktree per task), holds no broker key (read scope: no
+  # RR_ENCRYPTION_KEY) and never places orders. Idle until an administrator switches Claude Code on in the console;
+  # stopping it never affects trading. Approved patches are merged inside the workspace only; nothing is deployed.
+  claude-code:
+    <<: *backend
+    command: ["python", "-m", "app.workers.claude_code"]
+    environment:
+      <<: *read-scope
+      RR_AI_KEYS_KEY: ${RR_ONE_AI_KEYS_KEY:?missing}       # the Anthropic key stored in AI Studio
+      RR_CLAUDE_CODE_WORKSPACE: /workspace
+      RR_CLAUDE_CODE_SOURCE: /app
+      # The engine's test fixtures truncate tables and flush Redis: patches are tested against a separate database
+      # (created on first start) and Redis database 14, never the trading database.
+      RR_CLAUDE_CODE_TEST_DATABASE_URL: postgresql+psycopg://rr:${RR_ONE_DB_PASSWORD:?missing}@postgres:5432/rr_claude_test
+      RR_CLAUDE_CODE_TEST_REDIS_URL: redis://:${RR_ONE_REDIS_PASSWORD:?missing}@redis:6379/14
+      HOME: /workspace/home
+    hostname: rr-claude-code
+    volumes: [claudeworkspace:/workspace]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    cpus: "1.0"
+    mem_limit: 2g
+    cpu_shares: 128
+    networks: [internal, egress]
+
   trading-worker:
     <<: *backend
     profiles: ["trading"]          # never started by a plain `up`; only when named explicitly
@@ -209,6 +235,7 @@ services:
 volumes:
   pgdata: {}
   redisdata: {}
+  claudeworkspace: {}
 
 networks:
   internal: {internal: true}   # databases and engine services; no route out

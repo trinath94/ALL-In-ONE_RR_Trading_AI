@@ -184,6 +184,16 @@ SAFETY: list[tuple[str, list[str]]] = [
       "py:test_agent.py::test_live_preparation_reports_and_never_enables_live",
       "py:test_agent.py::test_a_rejection_by_the_ai_is_never_overridden_by_the_policy",
       "py:test_agent.py::test_the_budget_stops_ai_calls_and_the_engine_continues"]),
+    ("22. Claude Code works only in its isolated workspace branch (paths, secrets, shell allow-list), is tested by the "
+     "engine, and merges only reviewed patches with every approval gate acknowledged; it never deploys and the engine "
+     "continues without it",
+     ["py:test_claude_code.py::test_tool_policy_paths_secrets_and_tools",
+      "py:test_claude_code.py::test_shell_allow_list",
+      "py:test_claude_code.py::test_task_runs_in_an_isolated_worktree_tests_and_waits_for_review",
+      "py:test_claude_code.py::test_gated_patch_needs_each_acknowledgement_and_failing_tests_block_merge",
+      "py:test_claude_code.py::test_claude_unavailable_fails_the_task_and_the_engine_continues",
+      "py:test_claude_code.py::test_test_run_never_uses_the_production_database",
+      "py:test_claude_code.py::test_api_permissions_status_config_and_merge"]),
     ("14. Original strategy preservation tests pass", ["py:test_preservation.py::test_all_original_strategy_ids_present",
                                                       "py:test_preservation.py::test_original_strategy_logic_and_config_unchanged",
                                                       "py:test_preservation.py::test_experimental_strategies_never_enter_production_registry"]),

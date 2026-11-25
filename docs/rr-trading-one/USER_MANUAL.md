@@ -84,6 +84,19 @@ Signal Centre, **Ask why** on a signal does the same for that signal. The answer
 applies (✔ passed, ✖ stopped here), each account's result (eligible, reconciled, Risk Engine decision, order) and the
 next step. The assistant only reads; it never changes a setting or places an order.
 
+**Analyses and Claude Code in the same chat.**
+* Analysis requests are answered by the AI from the engine's own records. Examples: "Give me a market summary",
+  "Review my recent trades", "How is the win rate and drawdown?", "Explain the open errors".
+* Development requests go to Claude Code, for administrators only, when it is switched on: start with `/code`. The
+  task shows its progress live.
+* When Claude Code finishes, you see:
+  * the files it changed;
+  * the engine's own test result;
+  * the patch;
+  * the approval gates to acknowledge.
+* Approve and merge puts the change into the Claude Code workspace only; it is never deployed to the running engine
+  from there.
+
 **To stop:**
 * **Auto trading OFF** stops new entries.
 * **Stop Trading Worker** stops execution.

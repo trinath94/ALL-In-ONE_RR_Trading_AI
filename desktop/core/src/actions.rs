@@ -45,12 +45,14 @@ pub enum Service {
     Monitor,
     Analysis,
     Learner,
+    /// Claude Code development tasks in an isolated workspace (idle unless enabled in the console; never trades).
+    ClaudeCode,
     TradingWorker,
     Mt5Connector,
 }
 
 impl Service {
-    pub const ALL: [Service; 11] = [
+    pub const ALL: [Service; 12] = [
         Service::Postgres,
         Service::Redis,
         Service::Migrate,
@@ -60,6 +62,7 @@ impl Service {
         Service::Monitor,
         Service::Analysis,
         Service::Learner,
+        Service::ClaudeCode,
         Service::TradingWorker,
         Service::Mt5Connector,
     ];
@@ -85,6 +88,7 @@ impl Service {
             Service::Monitor => "monitor",
             Service::Analysis => "analysis",
             Service::Learner => "learner",
+            Service::ClaudeCode => "claude-code",
             Service::TradingWorker => "trading-worker",
             Service::Mt5Connector => return None,
         })
@@ -101,6 +105,7 @@ impl Service {
             Service::Monitor => "Account monitor & position protection",
             Service::Analysis => "Market analysis (scanner & signals)",
             Service::Learner => "AI Learner",
+            Service::ClaudeCode => "Claude Code workspace",
             Service::TradingWorker => "Trading worker (auto-execution)",
             Service::Mt5Connector => "MT5 connector",
         }
@@ -174,14 +179,14 @@ pub fn import_plan(backup: &str, confirmation: Option<&str>) -> Result<Vec<Step>
         StartServices { services: INFRA.to_vec() },
         VerifyDump { backup: backup.to_string(), replace_local },
         BackupDatabase { purpose: BackupPurpose::PreRestore },
-        StopServices { services: stop_order(&[Service::TradingWorker, Service::Learner, Service::Analysis, Service::Monitor,
+        StopServices { services: stop_order(&[Service::TradingWorker, Service::ClaudeCode, Service::Learner, Service::Analysis, Service::Monitor,
             Service::Gateway, Service::Frontend, Service::Api]) },
         RestoreDatabase { backup: backup.to_string() },
         RunMigrations,
         VerifyRestored { backup: backup.to_string() },
         ResetForNewInstallation,
         StartServices { services: BACKEND.to_vec() },
-        StartServices { services: vec![Service::Learner] },
+        StartServices { services: vec![Service::Learner, Service::ClaudeCode] },
         VerifyHealth,
     ])
 }
@@ -229,13 +234,13 @@ pub fn restore_plan(backup: &str, confirmation: Option<&str>) -> Result<Vec<Step
         CheckPrerequisites,
         StartServices { services: INFRA.to_vec() },
         BackupDatabase { purpose: BackupPurpose::PreRestore },
-        StopServices { services: stop_order(&[Service::TradingWorker, Service::Learner, Service::Analysis, Service::Monitor,
+        StopServices { services: stop_order(&[Service::TradingWorker, Service::ClaudeCode, Service::Learner, Service::Analysis, Service::Monitor,
             Service::Gateway, Service::Frontend, Service::Api]) },
         RestoreDatabase { backup: backup.to_string() },
         RunMigrations,
         ResetTradingState,
         StartServices { services: BACKEND.to_vec() },
-        StartServices { services: vec![Service::Learner] },
+        StartServices { services: vec![Service::Learner, Service::ClaudeCode] },
         VerifyHealth,
     ])
 }
@@ -289,12 +294,12 @@ pub fn rotate_plans(confirmation: Option<&str>) -> Result<(Vec<Step>, Vec<Step>)
         CheckPrerequisites,
         StartServices { services: INFRA.to_vec() },
         BackupDatabase { purpose: BackupPurpose::Manual },
-        StopServices { services: stop_order(&[Service::TradingWorker, Service::Learner, Service::Analysis, Service::Monitor,
+        StopServices { services: stop_order(&[Service::TradingWorker, Service::ClaudeCode, Service::Learner, Service::Analysis, Service::Monitor,
             Service::Gateway, Service::Frontend, Service::Api]) },
     ], vec![
         StartServices { services: INFRA.to_vec() },
         StartServices { services: BACKEND.to_vec() },
-        StartServices { services: vec![Service::Learner] },
+        StartServices { services: vec![Service::Learner, Service::ClaudeCode] },
         VerifyHealth,
     ]))
 }
@@ -358,7 +363,7 @@ impl Action {
                 RunMigrations,
                 StartServices { services: BACKEND.to_vec() },
                 StartServices { services: vec![Service::Mt5Connector] },
-                StartServices { services: vec![Service::Learner] },
+                StartServices { services: vec![Service::Learner, Service::ClaudeCode] },
                 VerifyHealth,
             ],
             Action::StopAll => vec![StopServices { services: stop_order(&Service::ALL) }],
@@ -376,7 +381,7 @@ impl Action {
             ],
             // Stopping the backend stops everything that depends on it, trading worker first.
             Action::StopBackend => vec![StopServices {
-                services: stop_order(&[Service::TradingWorker, Service::Learner, Service::Analysis, Service::Monitor,
+                services: stop_order(&[Service::TradingWorker, Service::ClaudeCode, Service::Learner, Service::Analysis, Service::Monitor,
                     Service::Gateway, Service::Frontend, Service::Api]),
             }],
             Action::StartMt5Connector => vec![StartServices { services: vec![Service::Mt5Connector] }, VerifyHealth],
@@ -409,8 +414,9 @@ impl fmt::Display for Action {
 /// Order services for shutdown: trading worker first (no new orders can be in flight from it while its
 /// dependencies go away), databases last.
 pub fn stop_order(services: &[Service]) -> Vec<Service> {
-    const ORDER: [Service; 11] = [
+    const ORDER: [Service; 12] = [
         Service::TradingWorker,
+        Service::ClaudeCode,
         Service::Learner,
         Service::Analysis,
         Service::Monitor,

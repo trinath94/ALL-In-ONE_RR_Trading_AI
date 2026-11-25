@@ -327,14 +327,34 @@ SYSTEM = ("You are the Engine Assistant of a trading platform. Answer the operat
 
 
 def task_out(t) -> dict:
-    return {"id": t.id, "workflow": t.workflow, "status": t.status, "command": t.command, "findings": t.findings,
-            "plan": t.plan, "report": t.report, "created_at": t.created_at, "finished_at": t.finished_at}
+    return {"id": t.id, "kind": t.kind or "operator", "workflow": t.workflow, "status": t.status, "command": t.command,
+            "findings": t.findings, "plan": t.plan, "report": t.report, "progress": t.progress or [],
+            "branch": t.branch, "session_id": t.session_id, "usage": t.usage or {},
+            "cancel_requested": bool(t.cancel_requested), "created_at": t.created_at, "started_at": t.started_at,
+            "finished_at": t.finished_at}
+
 
 
 def answer(db: Session, question: str, signal_id: int | None = None, history: list[dict] | None = None,
            use_ai: bool = True, provider_factory=None, user_id: int | None = None) -> dict:
-    q = (question or "").strip()[:1000]
-    from app.services import agent
+    q = (question or "").strip()[:4000]
+    from app.services import agent, orchestrator
+    target, detail = orchestrator.route(q) if not signal_id else ("runtime", None)
+    if target == "anthropic_api":
+        return orchestrator.analyse(db, detail, q, provider_factory=provider_factory, use_ai=use_ai)
+    if target == "claude_code":
+        from app.ai import claude_code
+        st = claude_code.status(db)
+        if st["ready"]:
+            t = claude_code.submit(db, q, user_id)
+            return {"answer": claude_code.describe(t), "source": "claude_code", "intent": "claude_code",
+                    "route": "claude_code", "task": task_out(t), "next_steps": []}
+        if q.lower().startswith("/code") or not agent.is_command(q):
+            return {"answer": "This is a development request for Claude Code, which is not available: "
+                    + "; ".join(st["not_ready"]) + ". Set it up in AI Studio → Claude Code. The engine keeps running "
+                    "without it.", "source": "engine", "intent": "claude_code", "route": "claude_code",
+                    "claude_code": {k: st[k] for k in ("enabled", "ready", "not_ready")}, "next_steps": []}
+    q = q[:1000]
     if not signal_id and agent.is_command(q):
         # Autonomous agent upgrade: a command becomes an inspected, planned task; safe actions wait for approval.
         t = agent.start(db, q, user_id)

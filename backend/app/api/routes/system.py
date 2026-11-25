@@ -8,6 +8,7 @@ import ssl
 import socket
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import psutil
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -400,7 +401,7 @@ def client_error(body: ClientErrorIn, user: User = Depends(current_user), db: Se
 
 # ---- Engine Assistant (chat; read-only) -----------------------------------------------------------------------------
 class AskIn(_BM):
-    question: str = _F(min_length=1, max_length=1000)
+    question: str = _F(min_length=1, max_length=4000)
     signal_id: int | None = None
     history: list[dict] = _F(default_factory=list, max_length=12)
 
@@ -411,6 +412,12 @@ def assistant_ask(body: AskIn, user: User = Depends(current_user), db: Session =
     from app.api.deps import rate_limit
     from app.services import assistant
     rate_limit(f"assistant:{user.id}", 30, 60)
+    from app.services import orchestrator
+    if not body.signal_id and orchestrator.route(body.question)[0] == "claude_code" and not _code_admin(user):
+        from app.services import agent
+        if body.question.strip().lower().startswith("/code") or not agent.is_command(body.question):
+            raise HTTPException(403, "Claude Code development tasks need an administrator "
+                                     "(system.manage and users.manage)")
     hist = [{"role": str(h.get("role", ""))[:10], "text": str(h.get("text", ""))[:500]} for h in body.history][-6:]
     return assistant.answer(db, body.question, body.signal_id, hist, user_id=user.id)
 
@@ -433,12 +440,27 @@ def assistant_overview(_: User = Depends(current_user), db: Session = Depends(ge
     return {"overview": ov, "next_steps": assistant.next_steps(ov)}
 
 
-# ---- Engine Assistant tasks (safe operator agent) ------------------------------------------------------------------
+# ---- Engine Assistant tasks (safe operator agent; Claude Code) ------------------------------------------------------
+def _code_admin(user: User) -> bool:
+    from app.api.deps import user_perms
+    return {"system.manage", "users.manage"} <= user_perms(user)
+
+
+def require_code_admin(user: User = Depends(current_user)) -> User:
+    if not _code_admin(user):
+        raise HTTPException(403, "Claude Code needs an administrator (system.manage and users.manage)")
+    return user
+
+
 @router.get("/agent/tasks")
-def agent_tasks(limit: int = 30, _: User = Depends(current_user), db: Session = Depends(get_db)):
+def agent_tasks(limit: int = 30, kind: str | None = None, _: User = Depends(current_user),
+                db: Session = Depends(get_db)):
     from app.db.models_opportunity import AgentTask
     from app.services.assistant import task_out
-    return [task_out(t) for t in db.scalars(select(AgentTask).order_by(AgentTask.id.desc()).limit(min(limit, 200)))]
+    q = select(AgentTask).order_by(AgentTask.id.desc()).limit(min(limit, 200))
+    if kind:
+        q = q.where(AgentTask.kind == kind)
+    return [task_out(t) for t in db.scalars(q)]
 
 
 @router.get("/agent/tasks/{task_id}")
@@ -451,10 +473,16 @@ def agent_task(task_id: int, _: User = Depends(current_user), db: Session = Depe
     return task_out(t)
 
 
+class ApproveIn(_BM):
+    acknowledged_gates: list[str] = _F(default_factory=list, max_length=10)
+
+
 @router.post("/agent/tasks/{task_id}/approve")
-def agent_approve(task_id: int, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
-    """Run the task's plan of safe catalogue actions (each verified and recorded). Never code, LIVE, risk limits,
-    trading controls or orders."""
+def agent_approve(task_id: int, body: ApproveIn | None = None, user: User = Depends(require("system.manage")),
+                  db: Session = Depends(get_db)):
+    """Operator task: run its plan of safe catalogue actions (each verified and recorded); never code, LIVE, risk
+    limits, trading controls or orders. Claude Code task: merge the reviewed patch into the workspace's base branch
+    (administrator; tests must have passed; every approval gate acknowledged). Nothing is ever deployed from here."""
     from app.db.models_opportunity import AgentTask
     from app.services import agent
     from app.services.assistant import task_out
@@ -462,6 +490,19 @@ def agent_approve(task_id: int, user: User = Depends(require("system.manage")), 
     t = db.get(AgentTask, task_id)
     if t is None:
         raise HTTPException(404)
+    if t.kind == "claude_code":
+        from app.ai import claude_code
+        if not _code_admin(user):
+            raise HTTPException(403, "merging a Claude Code patch needs an administrator")
+        acks = (body.acknowledged_gates if body else [])
+        try:
+            claude_code.approve(db, t, user.id, acks)
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(409, str(exc)) from None
+        audit(db, user.id, "CLAUDE_CODE_PATCH_MERGED", t.command[:200],
+              {"task": t.id, "gates": (t.report or {}).get("gates"), "acknowledged": acks,
+               "commit": ((t.report or {}).get("merged") or {}).get("commit")})
+        return {**task_out(t), "answer": claude_code.describe(t)}
     try:
         agent.approve(db, t, user.id)
     except ValueError as exc:
@@ -471,11 +512,83 @@ def agent_approve(task_id: int, user: User = Depends(require("system.manage")), 
 
 
 @router.post("/agent/tasks/{task_id}/cancel")
-def agent_cancel(task_id: int, _: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+def agent_cancel(task_id: int, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """Cancel: a queued Claude Code task stops at once, a running one is interrupted at its next message (resumable),
+    a patch awaiting review is rejected (its branch removed)."""
     from app.db.models_opportunity import AgentTask
     from app.services import agent
     from app.services.assistant import task_out
+    from app.services.events import audit
     t = db.get(AgentTask, task_id)
     if t is None:
         raise HTTPException(404)
+    if t.kind == "claude_code":
+        from app.ai import claude_code
+        claude_code.cancel(db, t)
+        audit(db, user.id, "CLAUDE_CODE_TASK_CANCEL", t.command[:200], {"task": t.id, "status": t.status})
+        return task_out(t)
     return task_out(agent.cancel(db, t))
+
+
+class ResumeIn(_BM):
+    instruction: str = _F(default="", max_length=2000)
+
+
+@router.post("/agent/tasks/{task_id}/resume")
+def agent_resume(task_id: int, body: ResumeIn | None = None, user: User = Depends(require_code_admin),
+                 db: Session = Depends(get_db)):
+    """Resume a cancelled, failed or interrupted Claude Code task in the same SDK session and worktree."""
+    from app.ai import claude_code
+    from app.db.models_opportunity import AgentTask
+    from app.services.assistant import task_out
+    from app.services.events import audit
+    t = db.get(AgentTask, task_id)
+    if t is None or t.kind != "claude_code":
+        raise HTTPException(404)
+    try:
+        claude_code.resume(db, t, body.instruction if body else "")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    audit(db, user.id, "CLAUDE_CODE_TASK_RESUME", t.command[:200], {"task": t.id})
+    return task_out(t)
+
+
+# ---- Claude Code status and settings --------------------------------------------------------------------------------
+@router.get("/claude-code/status")
+def claude_code_status(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Claude Code availability (SDK, workspace, API key present - never the key), settings and task counts."""
+    from app.ai import claude_code
+    return claude_code.status(db)
+
+
+class ClaudeCodeIn(_BM):
+    enabled: bool | None = None
+    model: str | None = _F(default=None, max_length=96, pattern=r"^[A-Za-z0-9._:\-]*$")
+    max_budget_usd: float | None = _F(default=None, gt=0, le=100)
+    max_turns: int | None = _F(default=None, ge=1, le=200)
+    test_command: str | None = _F(default=None, min_length=1, max_length=255)
+
+
+@router.put("/claude-code/config")
+def claude_code_config(body: ClaudeCodeIn, user: User = Depends(require_code_admin), db: Session = Depends(get_db)):
+    """Switch Claude Code on or off and set its model (empty = the engine's configured Claude model), per-task budget
+    and turn limits, and the test command the engine runs. The workspace location is server configuration only."""
+    from app.ai import claude_code
+    from app.services.events import audit
+    if body.test_command is not None:
+        d = claude_code.ToolPolicy(Path("/nonexistent-root")).check_command(body.test_command)
+        if not d.allow or not body.test_command.split()[0] in ("python", "python3", "pytest"):
+            raise HTTPException(422, "the test command must be a plain pytest/python -m pytest command")
+    c = claude_code.control(db)
+    old = {"enabled": c.claude_code_enabled, "model": c.claude_code_model, "budget": c.claude_code_max_budget_usd,
+           "turns": c.claude_code_max_turns, "test": c.claude_code_test_command}
+    for k, attr in (("enabled", "claude_code_enabled"), ("model", "claude_code_model"),
+                    ("max_budget_usd", "claude_code_max_budget_usd"), ("max_turns", "claude_code_max_turns"),
+                    ("test_command", "claude_code_test_command")):
+        v = getattr(body, k)
+        if v is not None:
+            setattr(c, attr, v)
+    c.updated_by = user.id
+    db.flush()
+    audit(db, user.id, "CLAUDE_CODE_CONFIG", "", {"old": old, "new": body.model_dump(exclude_none=True)})
+    return claude_code.status(db)

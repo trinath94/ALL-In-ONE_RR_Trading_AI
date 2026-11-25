@@ -5,6 +5,7 @@ import { Badge, Btn, ErrorLine, Field, inputCls, Panel, Table } from "@/componen
 import { api, fmt, patch, post, put } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
 import ActiveAI from "@/components/ActiveAI";
+import { ClaudeCodeSettings } from "@/components/ClaudeCode";
 
 const HEALTH: Record<string, any> = { healthy: "neon", degraded: "warn", failing: "bear", "cooling down": "bear" };
 
@@ -55,6 +56,7 @@ export default function AIProviders() {
       {msg && <div className="mb-2 rounded border border-neon/40 bg-neon/5 px-2 py-1 text-[11px] text-neon">{msg}</div>}
       <div className="grid gap-3 xl:grid-cols-2">
         <div className="xl:col-span-2"><ActiveAI providers={provs} canManage={admin} onSaved={() => { reload(); reloadRoutes(); reloadHealth(); }} /></div>
+        <div className="xl:col-span-2"><Panel title="Claude Code (development tasks)"><ClaudeCodeSettings /></Panel></div>
         <Panel title="Providers">
           <Table rows={provs} empty="No providers. Without one, candidate review uses RR_ANTHROPIC_API_KEY if it is set; otherwise candidates stay unreviewed and are never auto-executed, unless the engine runs without AI (Control Center)." rowKey={(p) => p.id}
             cols={[{ k: "name", h: "Name" }, { k: "kind", h: "Kind" },

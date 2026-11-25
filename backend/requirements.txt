@@ -21,3 +21,6 @@ scikit-learn>=1.5
 scipy>=1.13
 lightgbm>=4.3
 xgboost>=2.0
+claude-agent-sdk>=0.2.189   # Claude Code integration (claude-code service); bundles the Claude Code CLI
+pytest>=8                    # Claude Code: the engine runs the test suite on every patch before review
+pytest-asyncio>=0.24

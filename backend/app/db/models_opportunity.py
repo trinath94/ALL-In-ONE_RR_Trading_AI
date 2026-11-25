@@ -202,3 +202,13 @@ class AgentTask(Base):
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Migration 0022: operator | claude_code | ai. Claude Code tasks stream progress events ({at, phase, kind, text,
+    # file?}), keep the SDK session id (resume) and the isolated workspace branch; cancellation is a request the
+    # runner honours between messages (it interrupts the Claude Code session).
+    kind: Mapped[str] = mapped_column(String(16), default="operator", server_default="operator")
+    progress: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+    session_id: Mapped[str | None] = mapped_column(String(64))
+    branch: Mapped[str | None] = mapped_column(String(128))
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    usage: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")

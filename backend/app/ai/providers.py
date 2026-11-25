@@ -66,6 +66,8 @@ class Completion:
     input_tokens: int
     output_tokens: int
     latency_ms: float
+    cache_read_tokens: int = 0       # prompt cache (Anthropic); 0 where the provider does not report it
+    cache_write_tokens: int = 0
 
 
 class AnthropicProvider:
@@ -89,7 +91,8 @@ class AnthropicProvider:
             data, meta = agent._call(system, user, schema, max_tokens=max_tokens)
         except AgentError as exc:
             raise ProviderError(str(exc), getattr(exc, "kind", "error"), getattr(exc, "retry_after", None)) from exc
-        return Completion(data, meta["model"], meta["input_tokens"], meta["output_tokens"], meta["latency_ms"])
+        return Completion(data, meta["model"], meta["input_tokens"], meta["output_tokens"], meta["latency_ms"],
+                          meta.get("cache_read_tokens", 0), meta.get("cache_write_tokens", 0))
 
 
 def _strip_fences(text: str) -> str:

@@ -5,6 +5,10 @@
 *
 !backend
 !frontend
+# Claude Code workspace: the simulated connector the engine tests use (sources only, never the packaged exe)
+!mt5-connector/connector
+!mt5-connector/tests
+!mt5-connector/windows/gen_cert.py
 **/__pycache__
 **/*.pyc
 frontend/node_modules

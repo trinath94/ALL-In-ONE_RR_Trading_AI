@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""  # read by the SDK from ANTHROPIC_API_KEY as well
     claude_model: str = "claude-opus-5-5"
     claude_effort: str = "high"
+    # Claude Code (Claude Agent SDK) development workspace: a directory the claude-code role owns, holding a git copy of
+    # the engine source (repo/) and one git worktree per task (tasks/). Empty = Claude Code is not available. Never the
+    # running engine's own directory; set only in server configuration, never from the console.
+    claude_code_workspace: str = ""
+    claude_code_source: str = ""              # source copied into a new workspace (default: this engine's backend)
+    claude_code_extra_sources: str = "/opt/rr-source"   # sibling sources the tests need (simulated MT5 connector)
+    claude_code_test_timeout_s: int = 2400
     claude_max_candidates_per_scan: int = 5
     claude_min_interval_seconds: int = 300  # per symbol/timeframe re-analysis throttle
 
