@@ -101,7 +101,7 @@ The round trip was verified on a scratch database: 0021 with an existing task �
 
 | Suite | Result |
 |---|---|
-| Engine (full) | see §6.1 |
+| Engine (full) | **573 passed**, 0 failed (before: 508; +65 new) |
 | `test_claude_code.py` | 65 passed. Covers: tool policy (13 cases), shell allow-list (26), gates, the isolated run → engine test run → review → merge, gated and failing-test merges refused, cancel and resume of the same session, Claude unavailable, restart recovery, the test database guard, the workspace layout, routing (13), API analysis via the route, the budget alert, API permissions and audit, the real SDK client construction |
 | Related existing suites (agent, assistant, gateway, AI studio, AI control, incidents, AI mode) | 87 passed |
 | Desktop core | 135 passed, Clippy clean (3 test fixtures updated for the new service, unchanged in intent) |
@@ -129,7 +129,8 @@ The round trip was verified on a scratch database: 0021 with an existing task �
 
 ### 6.1 Full engine suite
 
-(filled in below)
+573 passed, 0 failed in 21 min 38 s (local run at `2693a63`). No existing test was changed except the desktop
+fixtures named above.
 
 ## 7. Installation and configuration
 
