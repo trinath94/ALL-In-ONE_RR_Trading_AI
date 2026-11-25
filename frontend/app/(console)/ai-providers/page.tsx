@@ -4,6 +4,7 @@ import { can, PageTitle, useMe } from "@/components/Shell";
 import { Badge, Btn, ErrorLine, Field, inputCls, Panel, Table } from "@/components/ui";
 import { api, fmt, patch, post, put } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
+import ActiveAI from "@/components/ActiveAI";
 
 const HEALTH: Record<string, any> = { healthy: "neon", degraded: "warn", failing: "bear", "cooling down": "bear" };
 
@@ -53,6 +54,7 @@ export default function AIProviders() {
       <ErrorLine error={error || err} />
       {msg && <div className="mb-2 rounded border border-neon/40 bg-neon/5 px-2 py-1 text-[11px] text-neon">{msg}</div>}
       <div className="grid gap-3 xl:grid-cols-2">
+        <div className="xl:col-span-2"><ActiveAI providers={provs} canManage={admin} onSaved={() => { reload(); reloadRoutes(); reloadHealth(); }} /></div>
         <Panel title="Providers">
           <Table rows={provs} empty="No providers. Without one, candidate review uses RR_ANTHROPIC_API_KEY if it is set; otherwise candidates stay unreviewed and are never auto-executed, unless the engine runs without AI (Control Center)." rowKey={(p) => p.id}
             cols={[{ k: "name", h: "Name" }, { k: "kind", h: "Kind" },
@@ -60,6 +62,9 @@ export default function AIProviders() {
               { k: "has_key", h: "Key", r: (p) => p.has_key ? <Badge tone="neon">stored (encrypted)</Badge> : <Badge tone="dim">none</Badge> },
               { k: "enabled", h: "On", r: (p) => admin ? <Btn small tone={p.enabled ? "neon" : "dim"} onClick={() => run(() => patch(`/api/ai/providers/${p.id}`, { enabled: !p.enabled }), () => `${p.name} ${p.enabled ? "disabled" : "enabled"}.`)}>{p.enabled ? "on" : "off"}</Btn> : (p.enabled ? "on" : "off") },
               { k: "price", h: "Price / M tok", sort: false, r: (p) => p.price_in_per_mtok == null ? <span className="text-dim">not set</span> : `${p.price_in_per_mtok} / ${p.price_out_per_mtok}` },
+              { k: "last_success_at", h: "Last call", sort: false, r: (p) => <div className="text-[10px]">
+                <div>{p.last_success_at ? <span className="text-neon">ok {fmt.time(p.last_success_at)}</span> : <span className="text-dim">no success yet</span>}</div>
+                {p.last_error_at && <div className="text-bear" title={p.last_error}>error {fmt.time(p.last_error_at)}</div>}</div> },
               { k: "max_requests_per_minute", h: "Limit", r: (p) => p.max_requests_per_minute ? `${p.max_requests_per_minute}/min` : <span className="text-dim">none</span> },
               { k: "models", h: "Models", sort: false, r: (p) => admin ? <div className="flex items-center gap-1"><Btn small tone="dim" onClick={() => discover(p)}>Discover</Btn>{models[p.id] && <span className="text-[10px] text-dim">{models[p.id].length}</span>}
                 <Btn small tone="dim" onClick={() => setEd({ id: p.id, name: p.name, timeout_s: p.timeout_s, max_retries: p.max_retries, price_in_per_mtok: p.price_in_per_mtok ?? "", price_out_per_mtok: p.price_out_per_mtok ?? "", max_requests_per_minute: p.max_requests_per_minute ?? "" })}>Edit</Btn></div> : null },

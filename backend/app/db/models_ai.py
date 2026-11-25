@@ -51,6 +51,22 @@ class AIProvider(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class AIControl(Base):
+    """Single Active AI (migration 0018): one row (id=1). When ``single_active`` is on, every AI task uses only the
+    selected provider and model (plus the explicitly configured fallback, if enabled) instead of the per-task routes.
+    Off (default) = the per-task routes as before."""
+    __tablename__ = "ai_control"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    single_active: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    active_provider_id: Mapped[int | None] = mapped_column(ForeignKey("ai_providers.id", ondelete="SET NULL"))
+    active_model: Mapped[str] = mapped_column(String(96), default="", server_default="")
+    fallback_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    fallback_provider_id: Mapped[int | None] = mapped_column(ForeignKey("ai_providers.id", ondelete="SET NULL"))
+    fallback_model: Mapped[str] = mapped_column(String(96), default="", server_default="")
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class AITaskRoute(Base):
     __tablename__ = "ai_task_routes"
     task: Mapped[str] = mapped_column(String(48), primary_key=True)

@@ -93,9 +93,45 @@ def _decrypt(enc: str | None) -> str | None:
     return decrypt_ai_key(enc)
 
 
+def _hop(p: AIProvider, model: str) -> Hop | None:
+    if p is None or not p.enabled:
+        return None
+    try:
+        key = _decrypt(p.api_key_enc)
+    except Exception as exc:  # noqa: BLE001 - an unreadable key skips the provider, visibly
+        log.warning("provider %s: stored key unreadable (%s)", p.name, type(exc).__name__)
+        return None
+    return Hop(p.name, p.kind, model or "", p.base_url, key, float(p.timeout_s), int(p.max_retries),
+               p.price_in_per_mtok, p.price_out_per_mtok, p.max_requests_per_minute)
+
+
+def single_active_chain(db) -> list[Hop] | None:
+    """Single Active AI: None when the mode is off (per-task routes apply). When on: the selected provider, then the
+    explicitly configured fallback if enabled, and nothing else. Disabled or missing providers are left out, so a
+    failed or disabled active provider with fallback off leaves AI tasks without a provider: candidates stay
+    unreviewed and are never auto-executed in AI mode."""
+    from app.db.models_ai import AIControl
+    c = db.get(AIControl, 1)
+    if c is None or not c.single_active:
+        return None
+    hops = []
+    if c.active_provider_id:
+        h = _hop(db.get(AIProvider, c.active_provider_id), c.active_model)
+        if h:
+            hops.append(h)
+    if c.fallback_enabled and c.fallback_provider_id and c.fallback_provider_id != c.active_provider_id:
+        h = _hop(db.get(AIProvider, c.fallback_provider_id), c.fallback_model)
+        if h:
+            hops.append(h)
+    return hops
+
+
 def chain_for(task: str) -> list[Hop]:
     s = get_settings()
     with session_scope() as db:
+        single = single_active_chain(db)
+        if single is not None:
+            return single
         route = db.get(AITaskRoute, task)
         if route and route.chain:
             hops = []
@@ -120,6 +156,8 @@ def route_mode(task: str) -> str:
     """'fallback' (original: first valid answer in chain order) or 'consensus'."""
     try:
         with session_scope() as db:
+            if single_active_chain(db) is not None:
+                return "fallback"          # Single Active AI: one provider; consensus needs two
             r = db.get(AITaskRoute, task)
             mode = (r.mode if r and r.chain else None) or "fallback"
     except Exception:  # noqa: BLE001

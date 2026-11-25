@@ -146,9 +146,103 @@ def _encrypt(key: str) -> str:
         raise HTTPException(409, f"{exc}") from None
 
 
+def _last_calls(db: Session) -> dict:
+    """Per provider name: the last successful request and the last failed one, from the usage ledger."""
+    out: dict = {}
+    ok = db.execute(select(AIUsage.provider, func.max(AIUsage.created_at)).where(AIUsage.status == "ok")
+                    .group_by(AIUsage.provider)).all()
+    for name, at in ok:
+        out.setdefault(name, {})["last_success_at"] = at
+    bad = db.execute(select(AIUsage.provider, func.max(AIUsage.id)).where(AIUsage.status.notin_(["ok", "skipped"]))
+                     .group_by(AIUsage.provider)).all()
+    for name, uid in bad:
+        u = db.get(AIUsage, uid)
+        out.setdefault(name, {}).update({"last_error_at": u.created_at, "last_error": (u.error or u.status)[:300]})
+    return out
+
+
 @router.get("/ai/providers")
 def providers(_: User = Depends(current_user), db: Session = Depends(get_db)):
-    return [_provider(p) for p in db.scalars(select(AIProvider).order_by(AIProvider.id))]
+    last = _last_calls(db)
+    return [{**_provider(p), "last_success_at": None, "last_error_at": None, "last_error": None, **last.get(p.name, {})}
+            for p in db.scalars(select(AIProvider).order_by(AIProvider.id))]
+
+
+# ---- Single Active AI ----------------------------------------------------------------------------------------------
+CLAUDE_PRO = {"available": False, "label": "Claude Pro / Claude.ai subscription",
+              "reason": "Anthropic offers no official way for an application to use a Claude.ai (Pro or Max) "
+                        "subscription; the app does not use browser sessions or cookies. Use the Anthropic API "
+                        "(an API key from the Anthropic Console, billed separately) as the Claude provider."}
+
+
+def _control(db: Session) -> dict:
+    from app.db.models_ai import AIControl
+    c = db.get(AIControl, 1) or AIControl(id=1, single_active=False, active_model="", fallback_enabled=False,
+                                           fallback_model="")
+    name = lambda pid: (db.get(AIProvider, pid).name if pid and db.get(AIProvider, pid) else None)  # noqa: E731
+    hops = gateway.single_active_chain(db)
+    return {"single_active": bool(c.single_active), "active_provider_id": c.active_provider_id,
+            "active_provider": name(c.active_provider_id), "active_model": c.active_model or "",
+            "fallback_enabled": bool(c.fallback_enabled), "fallback_provider_id": c.fallback_provider_id,
+            "fallback_provider": name(c.fallback_provider_id), "fallback_model": c.fallback_model or "",
+            "effective_chain": [{"provider": h.name, "model": h.model} for h in hops] if hops is not None else None,
+            "updated_at": c.updated_at, "claude_pro": CLAUDE_PRO}
+
+
+@router.get("/ai/control")
+def get_control(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Single Active AI: whether one provider serves every AI task, which one, and its optional fallback.
+    ``effective_chain`` is what the gateway uses now (None: the per-task routes apply)."""
+    return _control(db)
+
+
+class ControlIn(BaseModel):
+    single_active: bool
+    active_provider_id: int | None = None
+    active_model: str = Field(default="", max_length=96)
+    fallback_enabled: bool = False
+    fallback_provider_id: int | None = None
+    fallback_model: str = Field(default="", max_length=96)
+
+
+@router.put("/ai/control")
+def put_control(body: ControlIn, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """Switch Single Active AI on or off, choose the provider and model, and an optional fallback. The fallback is
+    used only when enabled here; the gateway never switches to any other provider. Switching providers changes
+    nothing in the trading engine; every analysis records the provider and model that answered."""
+    from app.db.models_ai import AIControl
+    if body.single_active:
+        p = db.get(AIProvider, body.active_provider_id) if body.active_provider_id else None
+        if p is None:
+            raise HTTPException(422, "choose the active provider")
+        if not p.enabled:
+            raise HTTPException(409, f"{p.name} is switched off; switch it on first")
+        if not body.active_model.strip():
+            raise HTTPException(422, "choose the active provider's model")
+        if body.fallback_enabled:
+            fb = db.get(AIProvider, body.fallback_provider_id) if body.fallback_provider_id else None
+            if fb is None or fb.id == p.id:
+                raise HTTPException(422, "choose a fallback provider different from the active one")
+            if not body.fallback_model.strip():
+                raise HTTPException(422, "choose the fallback provider's model")
+    c = db.get(AIControl, 1)
+    if c is None:
+        c = AIControl(id=1)
+        db.add(c)
+    old = _control(db) if c.updated_at else None
+    c.single_active = body.single_active
+    if body.single_active or body.active_provider_id is not None:
+        c.active_provider_id, c.active_model = body.active_provider_id, body.active_model.strip()
+    c.fallback_enabled = body.fallback_enabled and body.single_active
+    c.fallback_provider_id = body.fallback_provider_id if c.fallback_enabled else None
+    c.fallback_model = body.fallback_model.strip() if c.fallback_enabled else ""
+    c.updated_by, c.updated_at = user.id, datetime.now(UTC)
+    db.flush()
+    new = _control(db)
+    keep = ("single_active", "active_provider", "active_model", "fallback_enabled", "fallback_provider", "fallback_model")
+    audit(db, user.id, "AI_CONTROL_UPDATE", new["active_provider"] or "",
+          {"old": {k: old[k] for k in keep} if old else None, "new": {k: new[k] for k in keep}})
+    return new
 
 
 @router.post("/ai/providers")

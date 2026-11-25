@@ -2,6 +2,14 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Single Active AI (2026-11-25).** AI Studio → **Active AI**: one provider (Anthropic API, OpenAI, Qwen or Ollama) and
+model serve every AI task, with an optional fallback used only when enabled. Without fallback, a failed provider stops
+AI analysis: candidates stay unreviewed and are not auto-executed in With AI mode. The gateway never switches to an
+unconfigured provider; every analysis records the provider and model that answered. Each provider shows its last
+successful request and last error. Claude Pro (a Claude.ai subscription) is shown as not available: there is no
+official way for an application to use it; use the Anthropic API. Off by default (per-task routes as before).
+Migration 0018 (additive).
+
 **Multi-account execution (2026-11-25).** The engine trades every execution account of the active mode at once: the
 active account and every other account enabled for trading (verified; a LIVE account also approved, and only while
 LIVE is the active mode). Each signal is evaluated separately for every account: its symbols and strategies, its own

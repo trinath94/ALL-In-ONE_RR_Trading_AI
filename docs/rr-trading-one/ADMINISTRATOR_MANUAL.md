@@ -55,6 +55,17 @@ Every order passes the Risk Engine; nothing (including AI) can bypass it.
 API access is billed separately from chat subscriptions: a Claude.ai or ChatGPT subscription does not include API
 credits.
 
+**Active AI (one provider for everything).** AI Studio → Active AI: tick *Use one provider for every AI task*, choose
+the provider and model (Discover lists the provider's models), and optionally a fallback provider and model. Then:
+* only the active provider (and the fallback, if enabled) receives requests; the per-task routes and consensus are
+  set aside until you switch the mode off;
+* without fallback, if the active provider fails or is switched off, AI analysis stops: candidates stay unreviewed,
+  nothing is auto-executed in With AI mode (Run without AI is a separate, explicit switch);
+* each provider row shows its last successful request and last error.
+Claude Pro is listed as not available: Anthropic offers no official way for applications to use a Claude.ai
+subscription. Use the Anthropic API key from the Anthropic Console. API: `GET/PUT /api/ai/control` (`system.manage`,
+audited as `AI_CONTROL_UPDATE`).
+
 **Consensus mode (candidate review only).** Set the route's mode to *consensus* and put two different providers first
 (for example Claude, then OpenAI). Each reviews the candidate independently; each answer is schema-checked and
 boundary-checked on its own. The candidate is confirmed only if **both** confirm the engine's direction; any rejection
