@@ -36,7 +36,7 @@ class AIProvider(Base):
     __tablename__ = "ai_providers"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True)
-    kind: Mapped[str] = mapped_column(String(24))              # anthropic | openai_compatible
+    kind: Mapped[str] = mapped_column(String(24))              # anthropic (the only kind since migration 0023)
     base_url: Mapped[str | None] = mapped_column(String(255))
     api_key_enc: Mapped[str | None] = mapped_column(Text)      # Fernet (RR_AI_KEYS_KEY); never returned by the API
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

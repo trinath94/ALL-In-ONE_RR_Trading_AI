@@ -1,17 +1,18 @@
 "use client";
 import { useState } from "react";
 import { can, PageTitle, useMe } from "@/components/Shell";
-import { Badge, Btn, ErrorLine, Field, inputCls, Panel, Table } from "@/components/ui";
-import { api, fmt, patch, post, put } from "@/lib/api";
+import { Badge, Btn, ErrorLine, inputCls, Panel, Table } from "@/components/ui";
+import { fmt, put } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
 import ActiveAI from "@/components/ActiveAI";
 import { ClaudeCodeSettings } from "@/components/ClaudeCode";
+import { AnthropicKeyGuide, AnthropicProviders } from "@/components/AnthropicProviders";
 
 const HEALTH: Record<string, any> = { healthy: "neon", degraded: "warn", failing: "bear", "cooling down": "bear" };
 
-/** AI Studio (Part 14): providers (presets for Anthropic, OpenAI, Qwen, Ollama) and encrypted keys, the provider's own model
- *  list, which model handles which task (with fallback), per-minute limits, health, the usage / token / cost ledger and
- *  the model version history. Every provider gets the same schema validation and trading boundaries. */
+/** AI Studio: the Anthropic API (the only AI provider) with its encrypted key (add, replace, remove, test), a guide to
+ *  creating the key, the models the key can use, which model handles which task (with fallback), per-minute limits,
+ *  health, the usage / token / cost ledger and the model version history. */
 export default function AIProviders() {
   const me = useMe();
   const admin = can(me, "system.manage");
@@ -20,25 +21,9 @@ export default function AIProviders() {
   const { data: health, reload: reloadHealth } = useApi<any[]>("/api/ai/health", 30000);
   const { data: usage, reload: reloadUsage } = useApi<any>("/api/ai/usage?days=7", 30000);
   const [err, setErr] = useState<string | null>(null); const [msg, setMsg] = useState<string | null>(null);
-  const { data: presets } = useApi<any[]>("/api/ai/presets");
   const { data: hist, reload: reloadHist } = useApi<any>("/api/ai/models/history?days=90", 60000);
-  const blank = { name: "", kind: "openai_compatible", base_url: "", api_key: "", timeout_s: 120, max_retries: 2, price_in_per_mtok: "", price_out_per_mtok: "", max_requests_per_minute: "" };
-  const [nw, setNw] = useState<any>(blank);
-  const [preset, setPreset] = useState<any>(null);
   const [models, setModels] = useState<Record<number, string[]>>({});
-  const [ed, setEd] = useState<any>(null);
-  const num = (v: any) => (v === "" || v == null ? null : Number(v));
-  function applyPreset(id: string) {
-    const p = (presets || []).find((x) => x.id === id); setPreset(p || null);
-    if (p) setNw({ ...nw, kind: p.kind, base_url: p.base_url || "", name: nw.name || p.label.split(" (")[0] });
-  }
-  async function discover(p: any) {
-    setErr(null); setMsg(null);
-    try { const r = await api<any>(`/api/ai/providers/${p.id}/models`); if (r.ok) { setModels({ ...models, [p.id]: r.models }); setMsg(`${p.name}: ${r.models.length} models offered by the provider.`); } else setErr(`${p.name}: ${r.error}`); }
-    catch (e: any) { setErr(e.message); }
-  }
   const [edit, setEdit] = useState<Record<string, any[]>>({});
-  const [testModel, setTestModel] = useState<Record<number, string>>({});
   async function run(fn: () => Promise<any>, ok: (r: any) => string) {
     setErr(null); setMsg(null);
     try { const r = await fn(); setMsg(ok(r)); reload(); reloadRoutes(); reloadHealth(); reloadUsage(); reloadHist(); } catch (e: any) { setErr(e.message); }
@@ -57,51 +42,10 @@ export default function AIProviders() {
       <div className="grid gap-3 xl:grid-cols-2">
         <div className="xl:col-span-2"><ActiveAI providers={provs} canManage={admin} onSaved={() => { reload(); reloadRoutes(); reloadHealth(); }} /></div>
         <div className="xl:col-span-2"><Panel title="Claude Code (development tasks)"><ClaudeCodeSettings /></Panel></div>
-        <Panel title="Providers">
-          <Table rows={provs} empty="No providers. Without one, candidate review uses RR_ANTHROPIC_API_KEY if it is set; otherwise candidates stay unreviewed and are never auto-executed, unless the engine runs without AI (Control Center)." rowKey={(p) => p.id}
-            cols={[{ k: "name", h: "Name" }, { k: "kind", h: "Kind" },
-              { k: "base_url", h: "Endpoint", r: (p) => <span className="text-[10px] text-dim">{p.base_url || "Anthropic API"}</span> },
-              { k: "has_key", h: "Key", r: (p) => p.has_key ? <Badge tone="neon">stored (encrypted)</Badge> : <Badge tone="dim">none</Badge> },
-              { k: "enabled", h: "On", r: (p) => admin ? <Btn small tone={p.enabled ? "neon" : "dim"} onClick={() => run(() => patch(`/api/ai/providers/${p.id}`, { enabled: !p.enabled }), () => `${p.name} ${p.enabled ? "disabled" : "enabled"}.`)}>{p.enabled ? "on" : "off"}</Btn> : (p.enabled ? "on" : "off") },
-              { k: "price", h: "Price / M tok", sort: false, r: (p) => p.price_in_per_mtok == null ? <span className="text-dim">not set</span> : `${p.price_in_per_mtok} / ${p.price_out_per_mtok}` },
-              { k: "last_success_at", h: "Last call", sort: false, r: (p) => <div className="text-[10px]">
-                <div>{p.last_success_at ? <span className="text-neon">ok {fmt.time(p.last_success_at)}</span> : <span className="text-dim">no success yet</span>}</div>
-                {p.last_error_at && <div className="text-bear" title={p.last_error}>error {fmt.time(p.last_error_at)}</div>}</div> },
-              { k: "max_requests_per_minute", h: "Limit", r: (p) => p.max_requests_per_minute ? `${p.max_requests_per_minute}/min` : <span className="text-dim">none</span> },
-              { k: "models", h: "Models", sort: false, r: (p) => admin ? <div className="flex items-center gap-1"><Btn small tone="dim" onClick={() => discover(p)}>Discover</Btn>{models[p.id] && <span className="text-[10px] text-dim">{models[p.id].length}</span>}
-                <Btn small tone="dim" onClick={() => setEd({ id: p.id, name: p.name, timeout_s: p.timeout_s, max_retries: p.max_retries, price_in_per_mtok: p.price_in_per_mtok ?? "", price_out_per_mtok: p.price_out_per_mtok ?? "", max_requests_per_minute: p.max_requests_per_minute ?? "" })}>Edit</Btn></div> : null },
-              { k: "test", h: "", sort: false, r: (p) => admin && <div className="flex gap-1"><div className="w-28"><input className={inputCls} placeholder="model" list={`models-${p.id}`} value={testModel[p.id] || ""} onChange={(e) => setTestModel({ ...testModel, [p.id]: e.target.value })} /></div>
-                <Btn small disabled={!testModel[p.id]} onClick={() => run(() => post(`/api/ai/providers/${p.id}/test?model=${encodeURIComponent(testModel[p.id])}`), (r) => r.ok ? `${p.name}: OK (${r.model}, ${r.latency_ms} ms)` : `${p.name}: failed: ${r.error}`)}>Test</Btn></div> }]} />
-          {Object.entries(models).map(([pid, ms]) => <datalist key={pid} id={`models-${pid}`}>{ms.map((m) => <option key={m} value={m} />)}</datalist>)}
-          {admin && ed && (
-            <div className="mt-3 grid grid-cols-3 gap-2 rounded border border-line p-2">
-              <div className="col-span-3 text-[11px] text-dim">Edit {ed.name}</div>
-              <Field label="Price in / M tok"><input type="number" className={inputCls} value={ed.price_in_per_mtok} onChange={(e) => setEd({ ...ed, price_in_per_mtok: e.target.value })} /></Field>
-              <Field label="Price out / M tok"><input type="number" className={inputCls} value={ed.price_out_per_mtok} onChange={(e) => setEd({ ...ed, price_out_per_mtok: e.target.value })} /></Field>
-              <Field label="Max requests / min"><input type="number" className={inputCls} value={ed.max_requests_per_minute} placeholder="none" onChange={(e) => setEd({ ...ed, max_requests_per_minute: e.target.value })} /></Field>
-              <Field label="Timeout (s)"><input type="number" className={inputCls} value={ed.timeout_s} onChange={(e) => setEd({ ...ed, timeout_s: Number(e.target.value) })} /></Field>
-              <Field label="Retries"><input type="number" className={inputCls} value={ed.max_retries} onChange={(e) => setEd({ ...ed, max_retries: Number(e.target.value) })} /></Field>
-              <div className="flex items-end gap-1"><Btn small tone="neon" onClick={() => run(() => patch(`/api/ai/providers/${ed.id}`, { timeout_s: ed.timeout_s, max_retries: ed.max_retries, price_in_per_mtok: num(ed.price_in_per_mtok), price_out_per_mtok: num(ed.price_out_per_mtok), max_requests_per_minute: num(ed.max_requests_per_minute) }), () => { setEd(null); return `${ed.name} updated.`; })}>Save</Btn><Btn small tone="dim" onClick={() => setEd(null)}>Cancel</Btn></div>
-              <div className="col-span-3 text-[10px] text-dim">Without prices, cost is shown as "no price configured", never estimated. Above the per-minute limit the gateway moves to the next provider in the route instead of calling.</div>
-            </div>)}
-          {admin && (
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <Field label="Preset"><select className={inputCls} value={preset?.id || ""} onChange={(e) => applyPreset(e.target.value)}>
-                <option value="">choose…</option>{(presets || []).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></Field>
-              <Field label="Name"><input className={inputCls} value={nw.name} onChange={(e) => setNw({ ...nw, name: e.target.value })} placeholder="Qwen" /></Field>
-              <Field label="Kind"><select className={inputCls} value={nw.kind} onChange={(e) => setNw({ ...nw, kind: e.target.value })}>
-                <option value="openai_compatible">OpenAI-compatible (Qwen, Ollama, …)</option><option value="anthropic">Anthropic Claude</option></select></Field>
-              {nw.kind === "openai_compatible" && <Field label="Base URL"><input className={inputCls} value={nw.base_url} onChange={(e) => setNw({ ...nw, base_url: e.target.value })} placeholder="https://…/v1 or http://host.docker.internal:11434/v1" /></Field>}
-              <Field label="API key (stored encrypted, never shown)"><input type="password" autoComplete="off" className={inputCls} value={nw.api_key} onChange={(e) => setNw({ ...nw, api_key: e.target.value })} placeholder={nw.kind === "openai_compatible" ? "optional for local servers" : "sk-ant-…"} /></Field>
-              <Field label="Timeout (s)"><input type="number" className={inputCls} value={nw.timeout_s} onChange={(e) => setNw({ ...nw, timeout_s: Number(e.target.value) })} /></Field>
-              <Field label="Retries"><input type="number" className={inputCls} value={nw.max_retries} onChange={(e) => setNw({ ...nw, max_retries: Number(e.target.value) })} /></Field>
-              <Field label="Price in / out per M tokens (optional)"><div className="flex gap-1"><input type="number" className={inputCls} value={nw.price_in_per_mtok} onChange={(e) => setNw({ ...nw, price_in_per_mtok: e.target.value })} /><input type="number" className={inputCls} value={nw.price_out_per_mtok} onChange={(e) => setNw({ ...nw, price_out_per_mtok: e.target.value })} /></div></Field>
-              <Field label="Max requests / min (optional)"><input type="number" className={inputCls} value={nw.max_requests_per_minute} onChange={(e) => setNw({ ...nw, max_requests_per_minute: e.target.value })} /></Field>
-              {preset && <div className="col-span-2 text-[10px] text-cyan">{preset.note}</div>}
-              <div className="col-span-2"><Btn tone="neon" small disabled={!nw.name} onClick={() => run(() => post("/api/ai/providers", { ...nw, base_url: nw.base_url || null, api_key: nw.api_key || null, price_in_per_mtok: num(nw.price_in_per_mtok), price_out_per_mtok: num(nw.price_out_per_mtok), max_requests_per_minute: num(nw.max_requests_per_minute) }), (r) => { setNw(blank); setPreset(null); return `Provider ${r.name} added.`; })}>Add provider</Btn>
-                <span className="ml-2 text-[10px] text-dim">A Claude subscription does not include API credits; an API key from the provider's console is needed.</span></div>
-            </div>)}
-        </Panel>
+        <div className="xl:col-span-2"><AnthropicKeyGuide /></div>
+        <AnthropicProviders provs={provs} admin={admin} onChanged={() => { reload(); reloadRoutes(); reloadHealth(); reloadUsage(); reloadHist(); }}
+          onModels={(pid, ms) => setModels({ ...models, [pid]: ms })} />
+        {Object.entries(models).map(([pid, ms]) => <datalist key={pid} id={`models-${pid}`}>{ms.map((m) => <option key={m} value={m} />)}</datalist>)}
         <Panel title="Health (from the usage ledger)">
           <Table rows={health} empty="No provider has been called yet." rowKey={(x) => x.provider}
             cols={[{ k: "provider", h: "Provider" }, { k: "state", h: "State", r: (x) => <Badge tone={HEALTH[x.state] || "dim"}>{x.state}</Badge> },

@@ -31,7 +31,7 @@ Ubuntu deployment and are kept unchanged. This folder documents the Windows appl
 | 7 | Native Windows MT5 connector | ✅ | `windows-connector/` (headless, supervised by the desktop app) and the original `mt5-connector/` code it runs |
 | 8 | Process supervisor | ✅ | `desktop/core/src/supervisor.rs`: allowlisted actions, fixed plans |
 | 9 | Multi-agent orchestration | ✅ | `backend/app/orchestration` (21 agents, run log, Control Room; 26 after Parts 27-30 Phase 4, 27 after Phase 5) |
-| 10 | AI provider gateway | ✅ | `backend/app/ai` (Anthropic, OpenAI-compatible, Qwen, Ollama; routes, fallback, limits, ledger) |
+| 10 | AI provider gateway | ✅ | `backend/app/ai` (Anthropic API only since migration 0023; routes, fallback, limits, ledger) |
 | 11 | Existing and extended AI learning engine | ✅ | `backend/app/learning_engine`, `backend/app/intelligence` (signed models, walk-forward, isolated jobs) |
 | 12 | Adaptive strategy intelligence | ✅ | `backend/app/learning_engine/adaptive.py` (shadow first, approval to apply) |
 | 13 | Broker symbol discovery | ✅ | symbol catalogue (new symbols disabled until chosen) |

@@ -2,6 +2,14 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Anthropic API only; easier key management (2026-11-25).**
+* **Other connectors removed.** The engine now uses only the Anthropic API. The Qwen, OpenAI, Ollama and other
+  OpenAI-compatible connectors are gone, and migration 0023 deletes any such provider with its stored key and route
+  entries.
+* **API key.** Edit lets you replace the key or remove it. **Test** no longer needs a model: it uses the engine's
+  configured Claude model. Saving a new key tests it automatically.
+* **Guide.** AI Studio has a step-by-step guide to creating an Anthropic API key in the Claude Console and adding it.
+
 **Claude Code and the Anthropic API in the Engine Assistant (2026-11-25).**
 
 The chat now routes each request to one of three handlers:

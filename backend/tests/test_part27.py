@@ -13,7 +13,6 @@ from sqlalchemy import select
 
 from app.agents.claude_agent import AgentError, Review
 from app.ai import gateway
-from app.ai.providers import PRESETS, OpenAICompatibleProvider
 from app.analysis import regime as rg
 from app.core.config import get_settings
 from app.db.models import AnalysisResult, EconomicEvent, RiskEvaluation, Symbol, TradingSignal
@@ -332,27 +331,6 @@ def test_news_release_requests_reanalysis_of_affected_symbols_once(scan):
 
 
 # ---- providers: OpenAI preset, parameter fallback, consensus -------------------------------------------------------------
-def test_openai_preset_and_reasoning_model_parameter_fallback():
-    p = next(x for x in PRESETS if x["id"] == "openai")
-    assert p["base_url"] == "https://api.openai.com/v1" and p["key_required"] and "ChatGPT subscription" in p["note"]
-    bodies = []
-
-    def handler(req):
-        import json
-        body = json.loads(req.content)
-        bodies.append(body)
-        if "max_tokens" in body:
-            return httpx.Response(400, json={"error": {"message": "Unsupported parameter: 'max_tokens' is not supported "
-                                                                  "with this model. Use 'max_completion_tokens' instead."}})
-        return httpx.Response(200, json={"model": "m", "choices": [{"message": {"content": '{"a": 1}'},
-                                                                     "finish_reason": "stop"}],
-                                         "usage": {"prompt_tokens": 3, "completion_tokens": 2}})
-    prov = OpenAICompatibleProvider("http://fake.local/v1", "sk-x", 5, transport=httpx.MockTransport(handler))
-    out = prov.complete_json("sys", {"x": 1}, {"type": "object"}, "m", 1000)
-    assert out.data == {"a": 1} and len(bodies) == 2
-    assert "temperature" not in bodies[1] and bodies[1]["max_completion_tokens"] == 1000
-
-
 CAND = {"symbol": "EURUSD", "timeframe": "H1", "direction": "BUY", "decision": "BUY"}
 
 

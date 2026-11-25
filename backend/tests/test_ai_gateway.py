@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.agents.claude_agent import REVIEW_SCHEMA, Review
 from app.ai import gateway
-from app.ai.providers import Completion, OpenAICompatibleProvider, ProviderError
+from app.ai.providers import Completion, ProviderError
 from app.core.config import get_settings
 from app.db.models import AuditLog
 from app.db.models_ai import AIProvider, AITaskRoute, AIUsage
@@ -32,10 +32,10 @@ def keys(db_clean, monkeypatch):
     get_settings.cache_clear()
 
 
-def provider(name, kind="openai_compatible", key="sk-test-123", price=None):
+def provider(name, kind="anthropic", key="sk-test-123", price=None):
     from app.core.security import encrypt_ai_key
     with session_scope() as db:
-        p = AIProvider(name=name, kind=kind, base_url="http://fake.local/v1", api_key_enc=encrypt_ai_key(key) if key else None,
+        p = AIProvider(name=name, kind=kind, base_url=None, api_key_enc=encrypt_ai_key(key) if key else None,
                        timeout_s=10, max_retries=2, price_in_per_mtok=price, price_out_per_mtok=price)
         db.add(p)
         db.flush()
@@ -73,35 +73,15 @@ def usage():
 
 
 # ---- OpenAI-compatible adapter (real HTTP handling, mocked transport) -------------------------------------------
-def oa(handler, key="sk-x"):
-    return OpenAICompatibleProvider("http://fake.local/v1/", key, 5, transport=httpx.MockTransport(handler))
-
-
-def test_openai_compatible_adapter_parses_and_maps_errors():
-    seen = {}
-
-    def ok(req):
-        seen["auth"], seen["body"] = req.headers.get("authorization"), json.loads(req.content)
-        return httpx.Response(200, json={"model": "qwen-max-2026", "choices": [{"finish_reason": "stop", "message": {
-            "content": "```json\n" + json.dumps(REVIEW_OK) + "\n```"}}], "usage": {"prompt_tokens": 50, "completion_tokens": 9}})
-    c = oa(ok).complete_json("sys", {"a": 1}, REVIEW_SCHEMA, "qwen-max", 1000)
-    assert c.data == REVIEW_OK and c.model == "qwen-max-2026" and (c.input_tokens, c.output_tokens) == (50, 9)
-    assert seen["auth"] == "Bearer sk-x" and seen["body"]["response_format"] == {"type": "json_object"}
-    assert "JSON Schema" in seen["body"]["messages"][0]["content"] and seen["body"]["temperature"] == 0
-    oa(ok, key=None).complete_json("s", {}, {}, "llama3", 10)
-    assert seen["auth"] is None, "local servers (Ollama) need no key; none is invented"
-    cases = [(httpx.Response(429, headers={"retry-after": "7"}), "rate_limited"), (httpx.Response(503), "connection"),
-             (httpx.Response(401, text="bad key"), "api"),
-             (httpx.Response(200, json={"choices": [{"finish_reason": "length", "message": {"content": "{"}}]}), "truncated"),
-             (httpx.Response(200, json={"choices": [{"message": {"content": "not json"}}]}), "invalid_output"),
-             (httpx.Response(200, json={"choices": [{"message": {"content": "[1,2]"}}]}), "invalid_output")]
-    for resp, kind in cases:
-        with pytest.raises(ProviderError) as e:
-            oa(lambda req, r=resp: r).complete_json("s", {}, {}, "m", 10)
-        assert e.value.kind == kind
-    with pytest.raises(ProviderError) as e:
-        oa(lambda req: httpx.Response(429, headers={"retry-after": "7"})).complete_json("s", {}, {}, "m", 10)
-    assert e.value.retry_after == 7.0 and e.value.retryable
+def test_only_the_anthropic_api_is_a_provider(keys):
+    """Owner's decision: Anthropic API only. Any other kind left in the database is never called."""
+    from app.ai.providers import KINDS, PRESETS
+    assert KINDS == ("anthropic",) and [p["id"] for p in PRESETS] == ["anthropic"]
+    a, other = provider("claude"), provider("legacy-qwen", kind="openai_compatible")
+    route("candidate_review", (other, "qwen-max"), (a, "m"))
+    assert [h.name for h in gateway.chain_for("candidate_review")] == ["claude"]
+    with pytest.raises(ProviderError, match="not supported"):
+        gateway._provider(gateway.Hop("x", "openai_compatible", "m", "http://x", None, 5, 0, None, None), None)
 
 
 # ---- routing, retries, fallback, validation, ledger ------------------------------------------------------------
@@ -180,14 +160,15 @@ def test_original_behaviour_without_routes(keys, monkeypatch):
 # ---- API -------------------------------------------------------------------------------------------------------
 def test_provider_api_keys_write_only_and_audited_without_secrets(client, keys):
     login(client, "trader")
-    assert client.post("/api/ai/providers", json={"name": "q", "kind": "openai_compatible"}, headers=h(client)).status_code == 403
+    assert client.post("/api/ai/providers", json={"name": "q", "kind": "anthropic"}, headers=h(client)).status_code == 403
     login(client, "admin")
-    assert client.post("/api/ai/providers", json={"name": "q", "kind": "openai_compatible"},
-                       headers=h(client)).status_code == 422, "OpenAI-compatible needs a base URL"
-    r = client.post("/api/ai/providers", json={"name": "Qwen", "kind": "openai_compatible", "api_key": "sk-secret-777",
-                                               "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"},
-                    headers=h(client))
+    for kind in ("openai_compatible", "qwen"):
+        assert client.post("/api/ai/providers", json={"name": "q", "kind": kind},
+                           headers=h(client)).status_code == 422, "Anthropic API only"
+    r = client.post("/api/ai/providers", json={"name": "Qwen", "api_key": "sk-secret-777",
+                                               "base_url": "https://ignored.example/v1"}, headers=h(client))
     assert r.status_code == 200 and r.json()["has_key"] is True and "sk-secret-777" not in r.text
+    assert r.json()["kind"] == "anthropic" and r.json()["base_url"] is None
     pid = r.json()["id"]
     assert "sk-secret-777" not in client.get("/api/ai/providers").text
     with session_scope() as db:
@@ -240,3 +221,16 @@ def test_header_ai_status_follows_the_gateway(client, keys):
     route("candidate_review", (provider("qwen"), "qwen-max"))
     st = client.get("/api/system/status").json()["services"]["claude_api"]
     assert st["status"] == "UP" and st["detail"]["model"] == "qwen/qwen-max"
+
+
+def test_test_button_works_right_after_saving_without_typing_a_model(client, keys, monkeypatch):
+    login(client, "admin")
+    pid = client.post("/api/ai/providers", json={"name": "Claude"}, headers=h(client)).json()["id"]
+    r = client.post(f"/api/ai/providers/{pid}/test", headers=h(client)).json()
+    assert r["ok"] is False and "no API key" in r["error"]
+    assert client.patch(f"/api/ai/providers/{pid}", json={"api_key": "sk-ant-new-1"}, headers=h(client)).json()["has_key"]
+    fake = Scripted({"Claude": [{"status": "ok", "note": "fine"}]})
+    monkeypatch.setattr(gateway, "_provider", lambda hop, factory: fake.factory(hop))
+    r = client.post(f"/api/ai/providers/{pid}/test", headers=h(client)).json()
+    default = get_settings().claude_model
+    assert r["ok"] is True and fake.seen[0]["model"] == default and fake.seen[0]["key"] == "sk-ant-new-1"

@@ -47,13 +47,27 @@ Every order passes the Risk Engine; nothing (including AI) can bypass it.
 
 ## 5. AI providers
 
-**AI Studio** configures providers: Anthropic, OpenAI, other OpenAI-compatible APIs, Qwen, local Ollama. For each:
+**AI Studio** configures the AI provider. The engine uses **only the Anthropic API**: the Qwen, OpenAI, Ollama and other
+OpenAI-compatible connectors were removed. Migration 0023 deletes any such provider, with its stored key and its route
+entries.
+
+For the Anthropic API:
 * the API key is encrypted and write-only;
-* one route per task, with fallbacks;
+* one route per task, with fallbacks (for example a second key or another Claude model);
 * a per-minute limit; usage and cost are recorded in the ledger.
 
-API access is billed separately from chat subscriptions: a Claude.ai or ChatGPT subscription does not include API
-credits.
+**Getting and adding the key.** AI Studio shows these steps under *How to get an Anthropic API key and add it*.
+1. Open platform.claude.com (the Claude Console, formerly console.anthropic.com) and sign up or sign in.
+2. Add API credits under Settings → Billing.
+3. Go to Settings → API keys → **Create key**, then copy the key (`sk-ant-…`). It is shown only once.
+4. AI Studio → Anthropic API → paste the key → **Save and test**.
+
+**Changing and testing the key.**
+* **Edit** replaces the key ("leave empty to keep the current key") or removes it (**Remove key**).
+* **Test** works at any time without typing a model: it uses the engine's configured Claude model.
+* Saving a new key runs the test automatically.
+
+API access is billed separately: a Claude.ai Pro or Max subscription does not include API access.
 
 **Incidents and self-healing.** System Monitor → Incidents lists classified problems with their explanation,
 diagnosis, recommended fix, safe repair and every repair attempt. Pop-ups in the console announce new, re-opened and
@@ -88,7 +102,7 @@ subscription. Use the Anthropic API key from the Anthropic Console. API: `GET/PU
 audited as `AI_CONTROL_UPDATE`).
 
 **Consensus mode (candidate review only).** Set the route's mode to *consensus* and put two different providers first
-(for example Claude, then OpenAI). Each reviews the candidate independently; each answer is schema-checked and
+(for example two Claude models, or two Anthropic keys). Each reviews the candidate independently; each answer is schema-checked and
 boundary-checked on its own. The candidate is confirmed only if **both** confirm the engine's direction; any rejection
 rejects it; any other combination waits. If either provider gives no valid answer, the candidate stays unreviewed and
 is never auto-executed. Consensus costs two calls per candidate.

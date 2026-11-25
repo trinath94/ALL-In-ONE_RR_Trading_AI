@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.ai import gateway
 from app.ai.providers import KINDS, PRESETS, ProviderError
 from app.api.deps import current_user, require
+from app.core.config import get_settings
 from app.db.models import User
 from app.db.models_ai import AgentRun, AIProvider, AITaskRoute, AIUsage
 from app.db.session import get_db
@@ -108,7 +109,7 @@ def _provider(p: AIProvider) -> dict:
 
 class ProviderIn(BaseModel):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9 ._()-]+$")
-    kind: str
+    kind: str = "anthropic"                       # Anthropic API only
     base_url: str | None = Field(default=None, max_length=255)
     api_key: str | None = Field(default=None, max_length=512)
     enabled: bool = True
@@ -131,11 +132,8 @@ class ProviderPatch(BaseModel):
 
 
 def _check_url(kind: str, url: str | None) -> str | None:
-    if kind == "openai_compatible":
-        if not url or not url.startswith(("https://", "http://")):
-            raise HTTPException(422, "an OpenAI-compatible provider needs a base URL (https://..., or http:// for a "
-                                     "local server such as Ollama)")
-    return url.rstrip("/") if url else None
+    """The Anthropic API has no configurable endpoint here: the official SDK's own endpoint is used."""
+    return None
 
 
 def _encrypt(key: str) -> str:
@@ -294,7 +292,7 @@ def put_control(body: ControlIn, user: User = Depends(require("system.manage")),
 @router.post("/ai/providers")
 def create_provider(body: ProviderIn, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
     if body.kind not in KINDS:
-        raise HTTPException(422, f"kind must be one of {list(KINDS)}")
+        raise HTTPException(422, "only the Anthropic API is supported (kind 'anthropic')")
     if db.scalar(select(AIProvider).where(AIProvider.name == body.name)):
         raise HTTPException(409, "a provider with this name exists")
     p = AIProvider(name=body.name, kind=body.kind, base_url=_check_url(body.kind, body.base_url),
@@ -437,12 +435,16 @@ class Ping(BaseModel):
 
 
 @router.post("/ai/providers/{provider_id}/test")
-def test_provider(provider_id: int, model: str, user: User = Depends(require("system.manage")),
+def test_provider(provider_id: int, model: str | None = None, user: User = Depends(require("system.manage")),
                   db: Session = Depends(get_db)):
-    """One small schema-checked call through the gateway (task 'diagnostics'), recorded in the ledger like any call."""
+    """One small schema-checked call through the gateway (task 'diagnostics'), recorded in the ledger like any call.
+    Without a model, the engine's configured Claude model is used (so a key can be tested right after saving)."""
     p = db.get(AIProvider, provider_id)
     if p is None:
         raise HTTPException(404)
+    if not p.api_key_enc:
+        return {"ok": False, "error": "no API key is stored for this provider: Edit → API key → Save"}
+    model = (model or "").strip() or get_settings().claude_model
     hop = gateway.Hop(p.name, p.kind, model, p.base_url, None, float(p.timeout_s), 0, p.price_in_per_mtok,
                       p.price_out_per_mtok)
     try:

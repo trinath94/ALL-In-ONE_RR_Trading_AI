@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app.ai.providers import AnthropicProvider, OpenAICompatibleProvider, ProviderError
+from app.ai.providers import AnthropicProvider, ProviderError
 from app.core.config import get_settings
 from app.db.models_ai import AIProvider, AITaskRoute, AIUsage
 from app.db.session import session_scope
@@ -105,7 +105,7 @@ def _decrypt(enc: str | None) -> str | None:
 
 
 def _hop(p: AIProvider, model: str) -> Hop | None:
-    if p is None or not p.enabled:
+    if p is None or not p.enabled or p.kind != "anthropic":       # Anthropic API only
         return None
     try:
         key = _decrypt(p.api_key_enc)
@@ -148,7 +148,7 @@ def chain_for(task: str) -> list[Hop]:
             hops = []
             for item in route.chain:
                 p = db.get(AIProvider, item.get("provider_id"))
-                if p is None or not p.enabled:
+                if p is None or not p.enabled or p.kind != "anthropic":
                     continue
                 try:
                     key = _decrypt(p.api_key_enc)
@@ -221,7 +221,7 @@ def _provider(h: Hop, factory):
         return factory(h)
     if h.kind == "anthropic":
         return AnthropicProvider(h.api_key, h.timeout_s)
-    return OpenAICompatibleProvider(h.base_url or "", h.api_key, h.timeout_s)
+    raise ProviderError(f"provider kind {h.kind!r} is not supported (Anthropic API only)", "api")
 
 
 def _take_slot(h: Hop) -> bool:

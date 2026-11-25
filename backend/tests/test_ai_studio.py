@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from app.ai import gateway
-from app.ai.providers import AnthropicProvider, OpenAICompatibleProvider
+from app.ai.providers import AnthropicProvider
 from app.db.models_ai import AgentRun, AIProvider, AIUsage
 from app.db.models_intel import AIRecommendation, ModelRegistry
 from app.db.session import session_scope
@@ -30,23 +30,15 @@ def clean_rpm():
     yield
 
 
-def test_presets_name_qwen_and_ollama_without_inventing_models(client, keys):
+def test_the_only_preset_is_the_anthropic_api_without_inventing_models(client, keys):
     login(client, "viewer")
     p = {x["id"]: x for x in client.get("/api/ai/presets").json()}
-    assert p["qwen_intl"]["base_url"] == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1" and p["qwen_intl"]["key_required"]
-    assert p["qwen_cn"]["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert p["ollama"]["base_url"] == "http://host.docker.internal:11434/v1" and p["ollama"]["key_required"] is False
-    assert "does not include API credits" in p["anthropic"]["note"]
+    assert list(p) == ["anthropic"] and p["anthropic"]["key_required"]
+    assert "does not include API access" in p["anthropic"]["note"]
     assert all("models" not in x for x in p.values()), "models come from the provider, not a hard-coded list"
 
 
 def test_model_discovery_from_the_provider(client, keys, monkeypatch):
-    def handler(req):
-        assert req.url.path == "/v1/models" and req.headers.get("authorization") == "Bearer sk-x"
-        return httpx.Response(200, json={"data": [{"id": "qwen-plus"}, {"id": "qwen-max"}, {"id": "qwen-plus"}]})
-    oa = OpenAICompatibleProvider("http://fake.local/v1", "sk-x", 5, transport=httpx.MockTransport(handler))
-    assert oa.list_models() == ["qwen-max", "qwen-plus"]
-
     class Models:
         def list(self, limit):
             return type("Page", (), {"data": [type("M", (), {"id": "claude-b"})(), type("M", (), {"id": "claude-a"})()]})()
