@@ -57,11 +57,16 @@ def test_master_upgrade_flow_end_to_end_in_demo(two, keys, monkeypatch):
         orders = db.scalars(select(TradeOrder).where(TradeOrder.status == "CONFIRMED", TradeOrder.source == "AUTO")).all()
         assert {o.account_id for o in orders} == {a1, a2}
         assert all(float(o.volume) <= 0.01 for o in orders if o.account_id == a2)
+        any_tagged = False
         for o in orders:
             sig = db.get(TradingSignal, o.signal_id)
             assert sig.ai_review["decision"] == "BUY" and sig.ai_review["model_versions"] is not None
-            tagged = [e for e in sig.strategies if e.get("config_profile")]
-            assert tagged and all(e["config_profile"] == made[e["strategy"]] for e in tagged)
+            # Every strategy with a DEMO-active profile is tagged with exactly that profile; strategies without
+            # parameters have no profile (which strategies fire depends on the time of day of the aligned feed).
+            for e in sig.strategies:
+                assert e.get("config_profile") == made.get(e["strategy"]), e
+                any_tagged = any_tagged or bool(e.get("config_profile"))
+        assert any_tagged, "the profiles were applied to the executed signals"
         assert tr.get_state(db).active_mode == "DEMO"
 
     # 4. close every position through each account's connector; sync each account's history; review every trade
