@@ -134,9 +134,9 @@ def test_chat_command_and_approval_api(client, stack):
 
 
 # ---- AI budget, cache, unavailable policy ------------------------------------------------------------------------------
-def run_review(fake):
+def run_review(fake, ttl=900):
     return gateway.run("candidate_review", "s", {"c": 1}, REVIEW_SCHEMA, Review, provider_factory=fake.factory,
-                       sleep=lambda s: None)
+                       sleep=lambda s: None, cache_ttl=ttl)
 
 
 def test_identical_requests_are_answered_from_the_cache(keys):

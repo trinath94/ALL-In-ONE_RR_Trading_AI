@@ -392,7 +392,7 @@ def answer(db: Session, question: str, signal_id: int | None = None, history: li
                                    "recent_conversation": (history or [])[-6:]}, default=str))
     try:
         ai, meta = gateway.run("engine_assistant", SYSTEM, facts, ANSWER_SCHEMA, Answer, max_tokens=1500,
-                               provider_factory=provider_factory)
+                               provider_factory=provider_factory, cache_ttl=gateway.CACHE_TTL["engine_assistant"])
     except gateway.GatewayError as exc:
         out["ai_error"] = str(exc)[:200]
         return out

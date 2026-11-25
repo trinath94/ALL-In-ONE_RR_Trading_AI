@@ -279,20 +279,20 @@ def _record(task: str, h: Hop, model: str, status: str, tin: int, tout: int, lat
 
 
 def run(task: str, system: str, user: dict, schema: dict, model_cls: type[BaseModel], max_tokens: int = 16000,
-        provider_factory=None, sleep=time.sleep) -> tuple[BaseModel, dict]:
+        provider_factory=None, sleep=time.sleep, cache_ttl: int = 0) -> tuple[BaseModel, dict]:
     """Run one AI task through its route. Returns (validated output, meta)."""
     if task not in TASKS:
         raise GatewayError(f"unknown AI task {task!r}")
     hops = chain_for(task)
     if not hops:
         raise GatewayError(f"no AI provider is configured for {task}")
-    return run_hops(task, hops, system, user, schema, model_cls, max_tokens, provider_factory, sleep)
+    return run_hops(task, hops, system, user, schema, model_cls, max_tokens, provider_factory, sleep, cache_ttl)
 
 
 # ---- autonomous agent upgrade: API budget, de-duplication and result cache ------------------------------------------
-# Seconds a validated answer is reused for an identical request (same task, prompt, input and providers). 0: never.
-CACHE_TTL = {"candidate_review": 900, "engine_assistant": 120, "diagnostics": 600, "research_summary": 3600,
-             "learning_explanation": 3600, "trade_research": 3600, "strategy_discovery": 0, "config_proposal": 0}
+# Seconds a validated answer is reused for an identical request (same task, prompt, input and providers), for the call
+# sites that opt in. Everything else (provider tests, research, diagnostics, proposals) always calls the provider.
+CACHE_TTL = {"candidate_review": 900, "engine_assistant": 120}
 
 
 def budget_status() -> dict:
@@ -335,7 +335,7 @@ def _cache_key(task: str, hops: list[Hop], system: str, payload, max_tokens: int
 
 
 def run_hops(task: str, hops: list[Hop], system: str, user: dict, schema: dict, model_cls: type[BaseModel],
-             max_tokens: int = 16000, provider_factory=None, sleep=time.sleep) -> tuple[BaseModel, dict]:
+             max_tokens: int = 16000, provider_factory=None, sleep=time.sleep, cache_ttl: int = 0) -> tuple[BaseModel, dict]:
     payload = redact(user)
     validator = strict(model_cls)
     errors, previous = [], None
@@ -346,8 +346,9 @@ def run_hops(task: str, hops: list[Hop], system: str, user: dict, schema: dict, 
     if bud.get("exhausted") and hops:
         _record(task, hops[0], hops[0].model, "skipped", 0, 0, 0, 0, f"AI budget: {bud['exhausted']}", None)
         raise GatewayError(f"AI budget reached: {bud['exhausted']} (the engine continues without AI)")
-    ttl = CACHE_TTL.get(task, 0)
-    key = _cache_key(task, hops, system, payload, max_tokens) if ttl else None
+    # Opt-in per call site (``cache_ttl``): provider tests, research and diagnostics must always reach the provider.
+    ttl = int(cache_ttl or 0)
+    key = _cache_key(task, hops, system, payload, max_tokens) if ttl > 0 else None
     if key:
         try:
             from app.services.events import get_redis
@@ -438,7 +439,8 @@ class GatewayReviewer:
             return self._review_consensus(candidate)
         try:
             review, meta = run("candidate_review", SYSTEM_PROMPT, {"task": "review_candidate", "candidate": candidate},
-                               REVIEW_SCHEMA, Review, provider_factory=self.provider_factory)
+                               REVIEW_SCHEMA, Review, provider_factory=self.provider_factory,
+                               cache_ttl=CACHE_TTL["candidate_review"])
         except GatewayError as exc:
             raise AgentError(str(exc)) from exc
         review = enforce_boundaries(candidate, Review.model_validate(review.model_dump()))
