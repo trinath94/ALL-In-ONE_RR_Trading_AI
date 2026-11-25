@@ -610,7 +610,7 @@ def history(_: User = Depends(current_user), db: Session = Depends(get_db), limi
     q = select(ClosedPosition).order_by(ClosedPosition.closed_at.desc())
     if symbol:
         q = q.where(ClosedPosition.symbol == symbol)
-    return [{"ticket": c.ticket, "symbol": c.symbol, "direction": c.direction, "volume": f(c.volume),
+    return [{"id": c.id, "ticket": c.ticket, "symbol": c.symbol, "direction": c.direction, "volume": f(c.volume),
              "entry": f(c.open_price), "exit": f(c.close_price), "profit": c.profit, "commission": c.commission,
              "swap": c.swap, "r_multiple": c.r_multiple, "opened_at": c.opened_at, "closed_at": c.closed_at,
              "reason": c.close_reason, "strategies": c.strategy_codes} for c in db.scalars(q.limit(min(limit, 5000)))]

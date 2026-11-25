@@ -4,9 +4,11 @@ import { PageTitle } from "@/components/Shell";
 import { Badge, dirTone, ErrorLine, inputCls, Panel, Stat, Table, toneOf } from "@/components/ui";
 import { fmt } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
+import { TradeReview } from "@/components/Thesis";
 
 export default function History() {
   const [sym, setSym] = useState("");
+  const [rev, setRev] = useState<any>(null);
   const { data, error } = useApi<any[]>(`/api/positions/history?limit=2000${sym ? `&symbol=${encodeURIComponent(sym)}` : ""}`);
   const rows = data || [];
   const net = rows.reduce((a, r) => a + r.profit + r.commission + r.swap, 0);
@@ -31,8 +33,10 @@ export default function History() {
             { k: "entry", h: "Entry", r: (r) => fmt.px(r.entry) }, { k: "exit", h: "Exit", r: (r) => fmt.px(r.exit) },
             { k: "profit", h: "P&L", r: (r) => <span className={r.profit > 0 ? "text-neon" : "text-bear"}>{fmt.num(r.profit)}</span> },
             { k: "r_multiple", h: "R", r: (r) => fmt.num(r.r_multiple) }, { k: "reason", h: "Exit reason" },
-            { k: "strategies", h: "Strategies", sort: false, r: (r) => <span className="text-dim">{(r.strategies || []).join(", ") || "—"}</span> }]} />
+            { k: "strategies", h: "Strategies", sort: false, r: (r) => <span className="text-dim">{(r.strategies || []).join(", ") || "—"}</span> },
+            { k: "review", h: "", sort: false, r: (r) => <button type="button" className="text-cyan underline" onClick={() => setRev(rev?.id === r.id ? null : r)}>review</button> }]} />
       </Panel>
+      {rev && <Panel title={`Review #${rev.ticket} ${rev.symbol} ${rev.direction}`} className="mt-3"><TradeReview closedId={rev.id} /></Panel>}
     </div>
   );
 }

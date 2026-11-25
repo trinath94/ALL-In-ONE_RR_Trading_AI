@@ -231,6 +231,9 @@ class FailureReport(Base):
     outcome: Mapped[str] = mapped_column(String(8))
     causes: Mapped[list] = mapped_column(JSONB)            # [{cause, evidence, confidence}]
     strengths: Mapped[list] = mapped_column(JSONB, default=list)
+    # Master upgrade (migration 0019): the structured post-trade review (strategy, entry, regime, stop, exit, execution,
+    # prediction vs outcome, net of costs, mistake, improvement, normal loss vs recurring defect).
+    review: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 

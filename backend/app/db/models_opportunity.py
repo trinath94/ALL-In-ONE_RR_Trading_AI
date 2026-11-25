@@ -111,3 +111,42 @@ class SimulationRun(Base):
     bars: Mapped[int] = mapped_column(Integer, default=0)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class StrategyConfigProfile(Base):
+    """Master upgrade, adaptive configuration (migration 0019): a versioned parameter profile for one existing strategy,
+    optionally for one market regime, symbols and timeframes. The strategy's source and defaults are never changed; a
+    profile only supplies parameter values. Lifecycle: PROPOSED -> VALIDATING -> VALIDATED | REJECTED -> DEMO_ACTIVE
+    -> LIVE_ACTIVE, and RETIRED. Only validated profiles can be activated; LIVE needs an authorised user."""
+    __tablename__ = "strategy_config_profiles"
+    __table_args__ = (Index("ix_profile_strategy_status", "strategy_code", "status"),
+                      __import__("sqlalchemy").UniqueConstraint("strategy_code", "version", name="uq_profile_version"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    strategy_code: Mapped[str] = mapped_column(String(96), ForeignKey("strategies.code", ondelete="CASCADE"))
+    version: Mapped[int] = mapped_column(Integer)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("strategy_config_profiles.id", ondelete="SET NULL"))
+    params: Mapped[dict] = mapped_column(JSONB, default=dict)
+    regime: Mapped[str | None] = mapped_column(String(32))              # None: any regime
+    symbols: Mapped[list | None] = mapped_column(JSONB)                 # None: any symbol
+    timeframes: Mapped[list | None] = mapped_column(JSONB)              # None: any timeframe
+    status: Mapped[str] = mapped_column(String(16), default="PROPOSED", index=True)
+    source: Mapped[str] = mapped_column(String(16), default="USER")      # USER | AI | VARIANT
+    ai_provider: Mapped[str | None] = mapped_column(String(160))        # provider/model that proposed it (AI)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    validation: Mapped[dict] = mapped_column(JSONB, default=dict)
+    history: Mapped[list] = mapped_column(JSONB, default=list)          # [{at, from, to, by, note}]
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AutomationPolicy(Base):
+    """Administrator policy for automatic promotion (migration 0019, one row). Everything is off by default; LIVE is
+    never promoted automatically."""
+    __tablename__ = "automation_policy"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    auto_promote_profiles_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    auto_promote_experiments_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { can, PageTitle, useMe } from "@/components/Shell";
 import { Badge, Btn, ErrorLine, inputCls, Panel, Stat, Table } from "@/components/ui";
 import { api, fmt, patch, post } from "@/lib/api";
+import StrategyProfiles from "@/components/StrategyProfiles";
 import { useApi } from "@/lib/hooks";
 
 const DATA: Record<string, { tone: any; short: string }> = {
@@ -157,6 +158,7 @@ export default function Library() {
                 <div key={v.id} className="text-[11px]">{v.title} · {v.stage} · {v.evaluated ? (v.bias_passed ? <span className="text-neon">evaluated, bias checks passed</span> : <span className="text-bear">evaluated, bias checks failed</span>) : <span className="text-dim">awaiting evaluation</span>}</div>))}
               {dna.variants_tried > 1 && <div className="text-[10px] text-dim">{dna.variants_tried} variants tried: the best one needs significance below {(0.05 / dna.variants_tried).toPrecision(2)} (multiple testing).</div>}
               {manage && <Btn small tone="dim" onClick={makeVariants}>Generate parameter variants</Btn>}
+              <StrategyProfiles code={cur.code} canManage={manage} canPolicy={can(me, "system.manage")} canLive={can(me, "trade.live")} />
             </>}
           </Panel>
         )}

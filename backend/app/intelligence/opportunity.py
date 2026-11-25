@@ -297,3 +297,80 @@ def _risk_evaluation(db: Session, signal_id: int):
     from app.db.models import RiskEvaluation
     return db.scalar(select(RiskEvaluation).where(RiskEvaluation.signal_id == signal_id)
                      .order_by(RiskEvaluation.id.desc()).limit(1))
+
+
+# ---- Master upgrade 7.2: the structured pre-trade analysis ----------------------------------------------------------
+def thesis(opp: Opportunity) -> dict:
+    """The trade preparation, from the opportunity's own decision trace (recorded at analysis time, before any order):
+    why the opportunity exists, what supports and contradicts it, what invalidates it, why the entry, stop and target,
+    what could make it fail, and whether it should be rejected. Deterministic; nothing is invented: a stage that was
+    not recorded is reported as unavailable."""
+    st = {t.get("stage"): t for t in (opp.trace or [])}
+    ev = lambda name: (st.get(name) or {}).get("evidence") or {}            # noqa: E731
+    res = lambda name: (st.get(name) or {}).get("result")                   # noqa: E731
+    direction = opp.direction
+    top = ev("strategies").get("top") or []
+    support = [x for x in top if x.get("direction") == direction]
+    against = [x for x in top if direction and x.get("direction") and x.get("direction") != direction]
+    eng = ev("signal_engine")
+    cons = ev("consensus")
+    align = ev("timeframe_alignment")
+    entry = ev("entry_validation")
+    plan = ev("exit_plan")
+    fail = ev("failure_prediction")
+    patt = ev("patterns")
+    favourable, contradicting = [], []
+    if res("market_regime"):
+        favourable.append(f"regime {res('market_regime')} ({', '.join(ev('market_regime').get('tags') or []) or 'no tags'})")
+    if align.get("aligned") is True:
+        favourable.append("higher timeframes aligned")
+    elif align.get("aligned") is False:
+        contradicting.append("higher timeframes not aligned")
+    if res("consensus") and res("consensus") == direction:
+        favourable.append(f"strategy consensus {res('consensus')} (agreement {cons.get('agreement')})")
+    elif res("consensus"):
+        contradicting.append(f"strategy consensus {res('consensus')}")
+    for c in cons.get("conflicts") or []:
+        contradicting.append(f"conflict: {c}")
+    if eng.get("opposing_score"):
+        contradicting.append(f"opposing score {eng.get('opposing_score')}")
+    if against:
+        contradicting.append("opposing strategies: " + ", ".join(x["strategy"] for x in against[:5]))
+    rel = patt.get("relation_to_engine")
+    if isinstance(rel, dict):
+        if rel.get("agree"):
+            favourable.append("patterns agree: " + ", ".join(rel["agree"][:5]))
+        if rel.get("disagree"):
+            contradicting.append("patterns disagree: " + ", ".join(rel["disagree"][:5]))
+    if res("news") in ("RESTRICTED", "UNKNOWN"):
+        contradicting.append(f"news status {res('news')}")
+    if res("anomalies"):
+        contradicting.append(f"{res('anomalies')} market anomalies")
+    failed_checks = [c for c in entry.get("checks") or [] if not c.get("ok")]
+    reject = []
+    if direction not in ("BUY", "SELL"):
+        reject.append(f"no directional setup (decision {res('decision')})")
+    if entry.get("outcome") == "FAIL":
+        reject.append("entry validation failed: " + ", ".join(c["check"] for c in failed_checks if c.get("hard")))
+    if fail.get("level") == "HIGH":
+        reject.append("high failure risk")
+    if opp.state == "REJECTED":
+        reject.append(opp.state_reason or "rejected")
+    return {
+        "opportunity_id": opp.id, "direction": direction, "state": opp.state,
+        "why": (f"{len(support)} strategies signal {direction}; engine {res('signal_engine')}, score {eng.get('score')}"
+                if direction in ("BUY", "SELL") else f"no trade setup: {res('decision')}"),
+        "supporting_strategies": support,
+        "supporting_patterns": rel if rel is not None else "unavailable",
+        "favourable_conditions": favourable,
+        "contradicting_conditions": contradicting,
+        "invalidation": plan.get("invalidation") or [],
+        "entry_justification": {"outcome": entry.get("outcome", "unavailable"), "checks": entry.get("checks") or [],
+                                "reason": entry.get("reason")},
+        "stop_justification": ({"risk_distance": plan.get("risk_distance"),
+                                "management": plan.get("management")} if plan.get("available") else "unavailable"),
+        "target_justification": plan.get("targets") if plan.get("available") else "unavailable",
+        "failure_risks": {"level": fail.get("level", "unavailable"), "factors": fail.get("factors") or []},
+        "should_reject": bool(reject), "reject_reasons": reject,
+        "ai_review": res("ai_review"), "risk_engine": res("risk_engine"),
+    }

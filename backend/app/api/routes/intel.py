@@ -1207,3 +1207,174 @@ def demo_validation(hours: int = 72, _: User = Depends(current_user), db: Sessio
     """Acceptance evidence from what this installation recorded (read-only)."""
     from app.services import demo_validation as dv
     return dv.report(db, max(1, min(hours, 24 * 30)))
+
+
+# ---- Master upgrade: pre-trade analysis, adaptive configuration profiles, trade reviews, automation policy ----------
+@router.get("/opportunities/{opp_id}/thesis")
+def opportunity_thesis(opp_id: int, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The structured pre-trade analysis of one opportunity, from its decision trace."""
+    from app.db.models_opportunity import Opportunity
+    from app.intelligence.opportunity import thesis
+    o = db.get(Opportunity, opp_id)
+    if o is None:
+        raise HTTPException(404)
+    return thesis(o)
+
+
+def _profile_out(p) -> dict:
+    return {"id": p.id, "strategy": p.strategy_code, "version": p.version, "label": f"{p.strategy_code} v{p.version}",
+            "parent_id": p.parent_id, "params": p.params, "regime": p.regime, "symbols": p.symbols,
+            "timeframes": p.timeframes, "status": p.status, "source": p.source, "ai_provider": p.ai_provider,
+            "reason": p.reason, "validation": p.validation, "history": p.history, "created_at": p.created_at,
+            "activated_at": p.activated_at, "retired_at": p.retired_at}
+
+
+@router.get("/strategies/{code}/profiles")
+def strategy_profiles(code: str, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import StrategyConfigProfile
+    from app.strategies import profiles
+    rows = db.scalars(select(StrategyConfigProfile).where(StrategyConfigProfile.strategy_code == code)
+                      .order_by(StrategyConfigProfile.version.desc())).all()
+    try:
+        defaults = dict(registry.get(code).params)
+    except KeyError:
+        raise HTTPException(404, "unknown strategy") from None
+    return {"strategy": code, "defaults": defaults, "regimes": list(profiles.REGIMES),
+            "profiles": [{**_profile_out(p), "forward_demo": profiles.forward_stats(db, p) if p.status in profiles.ACTIVE
+                          else None} for p in rows]}
+
+
+class ProfileIn(BaseModel):
+    params: dict
+    regime: str | None = None
+    symbols: list[str] | None = None
+    timeframes: list[str] | None = None
+    reason: str = Field(default="", max_length=2000)
+
+
+@router.post("/strategies/{code}/profiles")
+def create_profile(code: str, body: ProfileIn, user: User = Depends(require("strategy.manage")),
+                   db: Session = Depends(get_db)):
+    """A new configuration profile (PROPOSED). It is queued for validation; nothing changes in trading until a
+    validated profile is activated."""
+    from app.strategies import profiles
+    try:
+        p = profiles.create(db, code, body.params, regime=body.regime, symbols=body.symbols, timeframes=body.timeframes,
+                            reason=body.reason, user_id=user.id)
+        profiles._note(p, "VALIDATING", user.id, "queued for validation")
+    except profiles.ProfileError as exc:
+        raise HTTPException(400, str(exc)) from None
+    audit(db, user.id, "PROFILE_CREATE", f"{code} v{p.version}", {"params": p.params, "regime": p.regime})
+    return _profile_out(p)
+
+
+@router.post("/strategies/{code}/profiles/propose")
+def propose_profile(code: str, user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
+    """Ask the active AI for one profile. The answer is untrusted: bounded parameters only, PROPOSED, then the same
+    validation as any profile."""
+    from app.ai.gateway import GatewayError
+    from app.strategies import profiles
+    try:
+        p = profiles.propose_ai(db, code, user.id)
+        profiles._note(p, "VALIDATING", user.id, "AI proposal queued for validation")
+    except profiles.ProfileError as exc:
+        raise HTTPException(409, str(exc)) from None
+    except GatewayError as exc:
+        raise HTTPException(502, f"AI provider: {exc}") from None
+    audit(db, user.id, "PROFILE_AI_PROPOSAL", f"{code} v{p.version}", {"params": p.params, "provider": p.ai_provider})
+    return _profile_out(p)
+
+
+class ProfileAction(BaseModel):
+    action: str = Field(pattern="^(validate|activate_demo|activate_live|rollback|retire)$")
+    confirm_text: str = ""
+
+
+LIVE_PROFILE_PHRASE = "ACTIVATE LIVE PROFILE"
+
+
+@router.post("/profiles/{profile_id}/action")
+def profile_action(profile_id: int, body: ProfileAction, user: User = Depends(require("strategy.manage")),
+                   db: Session = Depends(get_db)):
+    """validate (queue again) · activate_demo (VALIDATED only) · activate_live (trade.live, typed phrase, DEMO forward
+    evidence) · rollback (re-activates the validated parent, else the defaults) · retire."""
+    from app.api.deps import user_perms
+    from app.db.models_opportunity import StrategyConfigProfile
+    from app.strategies import profiles
+    p = db.get(StrategyConfigProfile, profile_id)
+    if p is None:
+        raise HTTPException(404)
+    extra = {}
+    try:
+        if body.action == "validate":
+            if p.status not in ("PROPOSED", "REJECTED", "VALIDATED"):
+                raise profiles.ProfileError(f"a {p.status} profile is not re-validated")
+            profiles._note(p, "VALIDATING", user.id, "queued for validation")
+        elif body.action == "activate_demo":
+            profiles.transition(db, p, "DEMO_ACTIVE", user.id, "activated on DEMO")
+        elif body.action == "activate_live":
+            if "trade.live" not in user_perms(user):
+                raise HTTPException(403, "LIVE activation requires trade.live permission")
+            if body.confirm_text != LIVE_PROFILE_PHRASE:
+                raise HTTPException(428, f'Type "{LIVE_PROFILE_PHRASE}" to confirm')
+            profiles.transition(db, p, "LIVE_ACTIVE", user.id, "activated on LIVE")
+        elif body.action == "rollback":
+            parent = profiles.rollback(db, p, user.id)
+            extra["reactivated"] = _profile_out(parent) if parent else None
+        else:
+            profiles.transition(db, p, "RETIRED", user.id, "retired")
+    except profiles.ProfileError as exc:
+        raise HTTPException(409, str(exc)) from None
+    audit(db, user.id, f"PROFILE_{body.action.upper()}", f"{p.strategy_code} v{p.version}", {"status": p.status})
+    return {**_profile_out(p), **extra}
+
+
+@router.get("/automation/policy")
+def get_policy(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.strategies import profiles
+    p = profiles.policy(db)
+    return {"auto_promote_profiles_demo": p.auto_promote_profiles_demo,
+            "auto_promote_experiments_demo": p.auto_promote_experiments_demo, "updated_at": p.updated_at,
+            "note": "Automatic promotion only ever reaches DEMO; LIVE always needs an authorised user."}
+
+
+class PolicyIn(BaseModel):
+    auto_promote_profiles_demo: bool | None = None
+    auto_promote_experiments_demo: bool | None = None
+
+
+@router.put("/automation/policy")
+def put_policy(body: PolicyIn, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    from datetime import datetime as _dt, timezone as _tz
+    from app.strategies import profiles
+    p = profiles.policy(db)
+    old = {"profiles": p.auto_promote_profiles_demo, "experiments": p.auto_promote_experiments_demo}
+    if body.auto_promote_profiles_demo is not None:
+        p.auto_promote_profiles_demo = body.auto_promote_profiles_demo
+    if body.auto_promote_experiments_demo is not None:
+        p.auto_promote_experiments_demo = body.auto_promote_experiments_demo
+    p.updated_by, p.updated_at = user.id, _dt.now(_tz.utc)
+    audit(db, user.id, "AUTOMATION_POLICY", "", {"old": old, "new": {"profiles": p.auto_promote_profiles_demo,
+                                                                     "experiments": p.auto_promote_experiments_demo}})
+    return get_policy(user, db)
+
+
+@router.get("/trades/{closed_id}/review")
+def trade_review(closed_id: int, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The structured post-trade review recorded by the learner (failure analysis)."""
+    from app.db.models_intel import FailureReport
+    r = db.scalar(select(FailureReport).where(FailureReport.closed_position_id == closed_id))
+    if r is None:
+        raise HTTPException(404, "not reviewed yet (the learner reviews closed trades every 15 minutes)")
+    return {"closed_position_id": closed_id, "outcome": r.outcome, "causes": r.causes, "strengths": r.strengths,
+            "review": r.review, "created_at": r.created_at}
+
+
+@router.get("/strategies/{code}/loss-significance")
+def strategy_loss_significance(code: str, mode: str = "DEMO", _: User = Depends(current_user),
+                               db: Session = Depends(get_db)):
+    """Normal losses or a recurring defect? The strategy's recent loss rate against its evidence (binomial test)."""
+    from app.learning_engine.review import loss_significance
+    if mode not in ("DEMO", "LIVE"):
+        raise HTTPException(400)
+    return loss_significance(db, mode, code)

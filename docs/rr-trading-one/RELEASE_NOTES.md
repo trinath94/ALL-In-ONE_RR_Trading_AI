@@ -2,6 +2,25 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Adaptive configuration and trade reviews (2026-11-25).**
+* **Configuration profiles** (Strategy Library → a strategy → Configuration profiles): versioned parameter profiles per
+  market regime, symbols and timeframes, created by hand or proposed by the active AI (bounded to 0.5x–2x of each
+  default; untrusted). The strategy's code and defaults never change. A profile is used only after it passes every
+  gate (out-of-sample sample size, expectancy at least the defaults', profit factor, drawdown, in-/out-of-sample
+  stability, walk-forward, doubled-spread cost test, look-ahead and leakage checks) and is activated: on DEMO by an
+  authorised user or, if the administrator allows it, automatically; on LIVE only by a user with LIVE permission,
+  with the typed phrase and DEMO forward evidence. Roll back at any time (the validated parent version returns).
+  Each signal records the configuration version it used.
+* **Pre-trade analysis** (Opportunity Lifecycle → an opportunity): why the opportunity exists, what supports and
+  contradicts it, invalidation, entry/stop/target justification, failure risks and whether it should be rejected.
+* **Post-trade review** (Trade History → review): every closed trade answers the same questions (strategy, entry,
+  regime, stop, exit, execution, prediction, net of costs, mistake, improvement). Losses are classified as normal
+  variance, a mistake with evidence, or a suspected recurring defect (binomial test of the strategy's recent loss rate
+  against its validated evidence): a loss is not assumed to be a mistake.
+* **Automation policy**: automatic DEMO activation of validated profiles and automatic DEMO shadow tests of validated
+  experiments, both off by default; LIVE is never automatic.
+Migration 0019 (additive).
+
 **Single Active AI (2026-11-25).** AI Studio → **Active AI**: one provider (Anthropic API, OpenAI, Qwen or Ollama) and
 model serve every AI task, with an optional fallback used only when enabled. Without fallback, a failed provider stops
 AI analysis: candidates stay unreviewed and are not auto-executed in With AI mode. The gateway never switches to an

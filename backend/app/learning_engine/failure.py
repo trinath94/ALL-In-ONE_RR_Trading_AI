@@ -130,8 +130,9 @@ def run(db: Session, mode: str, bridge=None, limit: int = 200) -> dict:
                            .order_by(ModelPrediction.id.desc()).limit(1))
             pred = mp.probability if mp else None
         res = analyse_trade(cp, tf, post, pred, strategy_deterioration(db, mode, cp.strategy_codes or []))
+        from app.learning_engine.review import build as build_review
         db.add(FailureReport(closed_position_id=cp.id, mode=mode, outcome=tf.outcome, causes=res["causes"],
-                             strengths=res["strengths"]))
+                             strengths=res["strengths"], review=build_review(db, cp, tf, res, pred)))
         for c in res["causes"]:
             for code in (cp.strategy_codes or ["manual"]):
                 tally[code][c["cause"]] += 1

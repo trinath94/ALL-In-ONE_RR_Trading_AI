@@ -55,6 +55,18 @@ Every order passes the Risk Engine; nothing (including AI) can bypass it.
 API access is billed separately from chat subscriptions: a Claude.ai or ChatGPT subscription does not include API
 credits.
 
+**Configuration profiles and the automation policy.** Strategy Library → a strategy → Configuration profiles:
+* **New profile** (parameters as JSON, optional regime) or **Ask AI** (the active AI proposes; bounded, untrusted).
+  Both are queued for validation; the learner validates up to two per hour on broker bars, recording every gate.
+* **Activate on DEMO** (VALIDATED only) · **Activate on LIVE…** (`trade.live`, typed `ACTIVATE LIVE PROFILE`, at
+  least 20 closed DEMO trades with the profile and a positive result) · **Roll back** (re-activates the validated
+  parent; otherwise the strategy's configuration applies) · **Retire**.
+* Policy checkboxes (`system.manage`): activate validated profiles on DEMO automatically; start the DEMO shadow test of
+  validated experiments automatically. Both off by default. Nothing is ever promoted to LIVE automatically.
+* API: `GET/POST /api/strategies/{code}/profiles`, `POST /api/strategies/{code}/profiles/propose`,
+  `POST /api/profiles/{id}/action`, `GET/PUT /api/automation/policy`, `GET /api/opportunities/{id}/thesis`,
+  `GET /api/trades/{closed_id}/review`, `GET /api/strategies/{code}/loss-significance`.
+
 **Active AI (one provider for everything).** AI Studio → Active AI: tick *Use one provider for every AI task*, choose
 the provider and model (Discover lists the provider's models), and optionally a fallback provider and model. Then:
 * only the active provider (and the fallback, if enabled) receives requests; the per-task routes and consensus are

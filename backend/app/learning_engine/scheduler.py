@@ -378,6 +378,41 @@ def job_experiments() -> dict:
     return out
 
 
+def job_config_profiles() -> dict:
+    """Master upgrade: validate queued configuration profiles (2 per run) on broker bars, then apply the
+    administrator's automatic promotion policy (DEMO only; off by default)."""
+    from app.db.models import Symbol
+    from app.db.models_opportunity import StrategyConfigProfile
+    from app.scanner.service import bars_to_df
+    from app.strategies import profiles
+    out = {"validated": 0, "rejected": 0}
+    with session_scope() as db:
+        queued = db.scalars(select(StrategyConfigProfile).where(StrategyConfigProfile.status == "VALIDATING")
+                            .order_by(StrategyConfigProfile.id).limit(2)).all()
+        if queued:
+            b = _bridge()
+            try:
+                for p in queued:
+                    sym = None
+                    if p.symbols:
+                        sym = db.scalar(select(Symbol).where(Symbol.broker_symbol == p.symbols[0]))
+                    sym = sym or db.scalar(select(Symbol).where(Symbol.scan_enabled.is_(True), Symbol.tradable.is_(True))
+                                           .order_by(Symbol.priority).limit(1))
+                    if sym is None:
+                        return {**out, "skipped": "no scanned symbol to validate on"}
+                    tf = (p.timeframes or ["H1"])[0]
+                    df = bars_to_df(b.rates(sym.broker_symbol, tf, 6000))
+                    spec = {"symbol": sym.broker_symbol, "timeframe": tf, "point": float(sym.point),
+                            "tick_size": float(sym.tick_size), "tick_value": float(sym.tick_value),
+                            "spread_points": float(df["spread"].median()) if "spread" in df else 10}
+                    v = profiles.validate(db, p, df, spec)
+                    out["validated" if v["passed"] else "rejected"] += 1
+            finally:
+                b.close()
+        out["promoted"] = profiles.auto_promote(db)
+    return out
+
+
 def job_discovery() -> dict:
     from app.ai import gateway
     if not gateway.configured("strategy_discovery"):
@@ -402,6 +437,7 @@ JOBS = [
     Job("consensus_weights", 7 * 86400, 600, job_consensus_weights, isolated=True),
     Job("adaptive_weights", 7 * 86400, 900, job_adaptive_weights, isolated=True),
     Job("discovery", 7 * 86400, 900, job_discovery, "claude_agent", isolated=True),
+    Job("config_profiles", 3600, 1800, job_config_profiles, isolated=True),
 ]
 JOB_MAP = {j.name: j for j in JOBS}
 

@@ -225,6 +225,18 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     with cyc.step("market_regime", ref):
         reg = rg.classify(df)
     cyc.note("market_regime", {f"regime_{reg.primary}": 1})
+    # Master upgrade (adaptive configuration): the best matching validated, active profile per strategy for this regime,
+    # symbol and timeframe. Without one, the existing configuration applies unchanged.
+    profiles_applied: dict = {}
+    try:
+        from app.services.trading import get_state as _gs
+        from app.strategies import profiles as prof
+        enabled, profiles_applied = prof.apply(db, enabled, _gs(db).active_mode, reg.primary, sym.broker_symbol, tf)
+        if profiles_applied:
+            cyc.note("market_regime", {"config_profiles": len(profiles_applied)})
+    except Exception as exc:  # noqa: BLE001 - a profile problem never breaks the scan; the defaults apply
+        log.warning("configuration profiles skipped for %s: %s", ref, exc)
+        profiles_applied = {}
     with cyc.step("original_strategy_analysis", ref):
         sigs, diag = registry.evaluate_all(ctx, enabled)
     outcomes = record_evaluations(diag, not_applicable)
@@ -254,6 +266,10 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
     cyc.note("multi_timeframe", {"bias_bullish": int(b > 0), "bias_bearish": int(b < 0), "bias_neutral": int(b == 0)})
     with cyc.step("signal_quality", ref):
         res = build_signal(sigs, mctx, cfg, calib)
+    if profiles_applied:                  # configuration version on each strategy entry of the signal
+        res.strategies = [{**e, "config_profile": profiles_applied[e["strategy"]]}
+                          if isinstance(e, dict) and e.get("strategy") in profiles_applied else e
+                          for e in (res.strategies or [])]
     cyc.note("signal_quality", {f"decision_{res.decision}": 1})
     adaptive_recs: list = []
     try:

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { PageTitle } from "@/components/Shell";
 import { Badge, ErrorLine, Panel, Stat, Table } from "@/components/ui";
 import { api, fmt } from "@/lib/api";
+import { Thesis } from "@/components/Thesis";
 import { useApi } from "@/lib/hooks";
 
 const STATE: Record<string, any> = {
@@ -88,6 +89,7 @@ export default function Opportunities() {
                   <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap text-[10px] text-dim">{JSON.stringify(t.evidence, null, 2)}</pre>
                 </details>))}
               {sel.signal_id && <div className="mt-2 text-[11px] text-dim">Signal #{sel.signal_id} · analysis #{sel.analysis_id}</div>}
+              <Thesis id={sel.id} />
             </>}
           </Panel>)}
       </div>
