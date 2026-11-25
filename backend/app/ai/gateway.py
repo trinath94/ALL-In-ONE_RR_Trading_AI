@@ -19,6 +19,7 @@ permission: no schema has such fields and nothing downstream accepts them from a
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -288,11 +289,78 @@ def run(task: str, system: str, user: dict, schema: dict, model_cls: type[BaseMo
     return run_hops(task, hops, system, user, schema, model_cls, max_tokens, provider_factory, sleep)
 
 
+# ---- autonomous agent upgrade: API budget, de-duplication and result cache ------------------------------------------
+# Seconds a validated answer is reused for an identical request (same task, prompt, input and providers). 0: never.
+CACHE_TTL = {"candidate_review": 900, "engine_assistant": 120, "diagnostics": 600, "research_summary": 3600,
+             "learning_explanation": 3600, "trade_research": 3600, "strategy_discovery": 0, "config_proposal": 0}
+
+
+def budget_status() -> dict:
+    """Spend today and this month (UTC) from the usage ledger against the configured limits. ``exhausted`` names the
+    limit reached; None while AI calls are allowed. Unpriced providers count tokens only."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    from sqlalchemy import func, select
+
+    from app.db.models_ai import AIControl
+    now = _dt.now(_tz.utc)
+    day, month = now.replace(hour=0, minute=0, second=0, microsecond=0), now.replace(day=1, hour=0, minute=0, second=0,
+                                                                                    microsecond=0)
+    with session_scope() as db:
+        c = db.get(AIControl, 1)
+        spend_day = float(db.scalar(select(func.coalesce(func.sum(AIUsage.cost), 0.0)).where(AIUsage.created_at >= day)) or 0)
+        spend_month = float(db.scalar(select(func.coalesce(func.sum(AIUsage.cost), 0.0))
+                                      .where(AIUsage.created_at >= month)) or 0)
+        tokens_day = int(db.scalar(select(func.coalesce(func.sum(AIUsage.input_tokens + AIUsage.output_tokens), 0))
+                                   .where(AIUsage.created_at >= day)) or 0)
+        lim = {"daily_budget_usd": c.daily_budget_usd if c else None,
+               "monthly_budget_usd": c.monthly_budget_usd if c else None,
+               "daily_token_limit": c.daily_token_limit if c else None}
+    exhausted = None
+    if lim["daily_budget_usd"] is not None and spend_day >= lim["daily_budget_usd"]:
+        exhausted = f"daily budget {lim['daily_budget_usd']} USD reached ({spend_day:.4f})"
+    elif lim["monthly_budget_usd"] is not None and spend_month >= lim["monthly_budget_usd"]:
+        exhausted = f"monthly budget {lim['monthly_budget_usd']} USD reached ({spend_month:.4f})"
+    elif lim["daily_token_limit"] is not None and tokens_day >= lim["daily_token_limit"]:
+        exhausted = f"daily token limit {lim['daily_token_limit']} reached ({tokens_day})"
+    return {"spend_today_usd": round(spend_day, 6), "spend_month_usd": round(spend_month, 6), "tokens_today": tokens_day,
+            **lim, "exhausted": exhausted}
+
+
+def _cache_key(task: str, hops: list[Hop], system: str, payload, max_tokens: int) -> str:
+    import hashlib
+    body = json.dumps({"t": task, "h": [(h.name, h.model) for h in hops], "s": system, "p": payload, "m": max_tokens},
+                      sort_keys=True, default=str)
+    return "rr:ai:cache:" + hashlib.sha256(body.encode()).hexdigest()
+
+
 def run_hops(task: str, hops: list[Hop], system: str, user: dict, schema: dict, model_cls: type[BaseModel],
              max_tokens: int = 16000, provider_factory=None, sleep=time.sleep) -> tuple[BaseModel, dict]:
     payload = redact(user)
     validator = strict(model_cls)
     errors, previous = [], None
+    try:
+        bud = budget_status()
+    except Exception:  # noqa: BLE001 - accounting problems never block the engine
+        bud = {"exhausted": None}
+    if bud.get("exhausted") and hops:
+        _record(task, hops[0], hops[0].model, "skipped", 0, 0, 0, 0, f"AI budget: {bud['exhausted']}", None)
+        raise GatewayError(f"AI budget reached: {bud['exhausted']} (the engine continues without AI)")
+    ttl = CACHE_TTL.get(task, 0)
+    key = _cache_key(task, hops, system, payload, max_tokens) if ttl else None
+    if key:
+        try:
+            from app.services.events import get_redis
+            hit = get_redis().get(key)
+            if hit:
+                data = json.loads(hit)
+                out = validator.model_validate(data["out"])
+                meta = {**data["meta"], "cached": True, "input_tokens": 0, "output_tokens": 0, "attempts": 0}
+                h0 = next((h for h in hops if h.name == meta.get("provider")), hops[0])
+                _record(task, h0, meta.get("model") or h0.model, "cached", 0, 0, 0, 0, None, None)
+                return out, meta
+        except Exception:  # noqa: BLE001 - a cache problem only means a fresh call
+            log.debug("AI cache read failed", exc_info=True)
     for h in hops:
         if _cooling(h.name):
             _record(task, h, h.model, "skipped", 0, 0, 0, 0, "cooling down after failures or a rate limit", previous)
@@ -327,9 +395,16 @@ def run_hops(task: str, hops: list[Hop], system: str, user: dict, schema: dict, 
             _record(task, h, comp.model, "ok", comp.input_tokens, comp.output_tokens, comp.latency_ms, attempts, None,
                     previous)
             _note_success(h.name)
-            return out, {"provider": h.name, "model": comp.model, "input_tokens": comp.input_tokens,
-                         "output_tokens": comp.output_tokens, "latency_ms": comp.latency_ms, "attempts": attempts,
-                         "fallback_from": previous}
+            meta = {"provider": h.name, "model": comp.model, "input_tokens": comp.input_tokens,
+                    "output_tokens": comp.output_tokens, "latency_ms": comp.latency_ms, "attempts": attempts,
+                    "fallback_from": previous}
+            if key:
+                try:
+                    from app.services.events import get_redis
+                    get_redis().set(key, json.dumps({"out": out.model_dump(), "meta": meta}, default=str), ex=ttl)
+                except Exception:  # noqa: BLE001
+                    log.debug("AI cache write failed", exc_info=True)
+            return out, meta
         if last is not None:
             status = "rate_limited" if last.kind in ("rate_limited", "local_limit") else "error"
             _record(task, h, h.model, status, 0, 0, (time.perf_counter() - t0) * 1000 if attempts else 0, attempts,

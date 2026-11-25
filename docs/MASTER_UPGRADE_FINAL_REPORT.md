@@ -138,4 +138,4 @@ accounts do not trade at the same time (LIVE accounts trade only while the exist
 | Configuration profiles | Strategy Library → strategy → Configuration profiles |
 | Pre-trade analysis / trade review | Opportunity Lifecycle → opportunity · Trade History → review |
 | Incidents, repairs, auto-repair switch | System Monitor → Incidents (pop-ups appear on every page) |
-| Database version | `docker exec rr-trading-one-postgres-1 psql -U rr -d rr_trading -Atc "select version_num from alembic_version"` (expect `0020`) |
+| Database version | `docker exec rr-trading-one-postgres-1 psql -U rr -d rr_trading -Atc "select version_num from alembic_version"` (expect `0021`) |

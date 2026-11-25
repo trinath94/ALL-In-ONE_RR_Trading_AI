@@ -2,6 +2,24 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Engine Assistant commands, AI budget, continue without AI (2026-11-25).**
+* **Commands in the Engine Assistant**: "Audit my entire trading engine", "Find and repair all errors", "Is the engine
+  ready for autonomous trading?", "Inspect all connected broker accounts", "Check all available trading symbols",
+  "Find missing features", "Test the engine using the DEMO account", "Prepare the engine for LIVE trading",
+  "Complete the upgrade and hand control back". The agent inspects the whole engine (database and migrations,
+  services, MT5 connectors and accounts, broker symbols, AI and budget, risk configuration, trading controls,
+  strategies against the baseline, data quality, scanner, learner, incidents, DEMO validation, LIVE readiness) and
+  lists every finding with evidence, impact and the fix: a safe action it can run, your step, or a repair proposal for
+  the developer. Safe actions run only after an administrator clicks **Approve plan**; each is verified and recorded.
+  The agent never edits code, runs migrations, enables LIVE, changes risk limits or trading controls, starts or stops
+  the trading worker, or places orders (owner's decision).
+* **AI API budget** (AI Studio → Active AI): daily and monthly USD and a daily token limit; at the limit AI calls are
+  skipped and the engine keeps running. Identical AI requests are answered from a short cache.
+* **If AI is unavailable**: pause auto-execution (default, unchanged) or continue without AI, so the engine keeps
+  trading on its own validated signals through the Risk Engine when the provider is down, rate-limited, out of budget
+  or not configured. A signal the AI rejected is never executed.
+Migration 0021 (additive).
+
 **Engine Assistant (2026-11-25).** "Ask the engine" (bottom right of every console page) and **Ask why** on a signal
 (Signal Centre). It reads the engine's own records and walks a signal through the trading worker's gates in order:
 decision, validity, trading worker, auto trading, AI review (or engine-only), kill switch, risk lock, paused entries,

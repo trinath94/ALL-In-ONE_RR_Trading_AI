@@ -184,3 +184,21 @@ class Incident(Base):
     resolved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     resolution: Mapped[str] = mapped_column(Text, default="")
     acknowledged_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class AgentTask(Base):
+    """Engine Assistant command (migration 0021): the command, its findings with evidence, the execution plan of safe
+    catalogue actions with each step's result and verification, and the completion report. Steps run only after the
+    user approves the plan in chat; code-level findings are recorded as repair proposals, never applied."""
+    __tablename__ = "agent_tasks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    command: Mapped[str] = mapped_column(Text)
+    workflow: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="PLANNED")   # PLANNED AWAITING_APPROVAL RUNNING DONE FAILED CANCELLED
+    findings: Mapped[list] = mapped_column(JSONB, default=list)
+    plan: Mapped[list] = mapped_column(JSONB, default=list)             # [{action, label, target, status, result, verified}]
+    report: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

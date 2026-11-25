@@ -412,7 +412,7 @@ def assistant_ask(body: AskIn, user: User = Depends(current_user), db: Session =
     from app.services import assistant
     rate_limit(f"assistant:{user.id}", 30, 60)
     hist = [{"role": str(h.get("role", ""))[:10], "text": str(h.get("text", ""))[:500]} for h in body.history][-6:]
-    return assistant.answer(db, body.question, body.signal_id, hist)
+    return assistant.answer(db, body.question, body.signal_id, hist, user_id=user.id)
 
 
 @router.get("/assistant/signals/{signal_id}")
@@ -431,3 +431,51 @@ def assistant_overview(_: User = Depends(current_user), db: Session = Depends(ge
     from app.services import assistant
     ov = assistant.overview(db)
     return {"overview": ov, "next_steps": assistant.next_steps(ov)}
+
+
+# ---- Engine Assistant tasks (safe operator agent) ------------------------------------------------------------------
+@router.get("/agent/tasks")
+def agent_tasks(limit: int = 30, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import AgentTask
+    from app.services.assistant import task_out
+    return [task_out(t) for t in db.scalars(select(AgentTask).order_by(AgentTask.id.desc()).limit(min(limit, 200)))]
+
+
+@router.get("/agent/tasks/{task_id}")
+def agent_task(task_id: int, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import AgentTask
+    from app.services.assistant import task_out
+    t = db.get(AgentTask, task_id)
+    if t is None:
+        raise HTTPException(404)
+    return task_out(t)
+
+
+@router.post("/agent/tasks/{task_id}/approve")
+def agent_approve(task_id: int, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """Run the task's plan of safe catalogue actions (each verified and recorded). Never code, LIVE, risk limits,
+    trading controls or orders."""
+    from app.db.models_opportunity import AgentTask
+    from app.services import agent
+    from app.services.assistant import task_out
+    from app.services.events import audit
+    t = db.get(AgentTask, task_id)
+    if t is None:
+        raise HTTPException(404)
+    try:
+        agent.approve(db, t, user.id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    audit(db, user.id, "AGENT_TASK_APPROVED", t.command[:200], {"task": t.id, "steps": len(t.plan or [])})
+    return {**task_out(t), "answer": agent.describe(t)}
+
+
+@router.post("/agent/tasks/{task_id}/cancel")
+def agent_cancel(task_id: int, _: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    from app.db.models_opportunity import AgentTask
+    from app.services import agent
+    from app.services.assistant import task_out
+    t = db.get(AgentTask, task_id)
+    if t is None:
+        raise HTTPException(404)
+    return task_out(agent.cancel(db, t))

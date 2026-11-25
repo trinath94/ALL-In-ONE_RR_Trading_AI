@@ -107,7 +107,13 @@ def diagnose_signal(db: Session, sig: TradingSignal) -> dict:
     else:
         d = review.get("decision")
         ai = _ai_status(db)
-        if d in ("BUY", "SELL") and d == sig.decision:
+        if d == "SKIPPED" and review.get("mode") == "AI_UNAVAILABLE":
+            pol = tr.ai_unavailable_policy(db)
+            add("ai", "AI review", pol == "engine_only",
+                f"AI was unavailable ({str(review.get('error') or '')[:150]}); policy {pol}",
+                "The policy is now pause: only AI-confirmed candidates are executed. Restore the AI provider (AI "
+                "Studio) or set 'If AI is unavailable: continue without AI' in AI Studio → Active AI.")
+        elif d in ("BUY", "SELL") and d == sig.decision:
             add("ai", "AI review", True, f"confirmed {d}")
         elif not ai["configured"]:
             add("ai", "AI review", False, "no AI provider is configured: candidates stay unreviewed",
@@ -320,9 +326,40 @@ SYSTEM = ("You are the Engine Assistant of a trading platform. Answer the operat
           "limits to force a trade, enabling LIVE trading, or placing manual orders to bypass the Risk Engine.")
 
 
+def task_out(t) -> dict:
+    return {"id": t.id, "workflow": t.workflow, "status": t.status, "command": t.command, "findings": t.findings,
+            "plan": t.plan, "report": t.report, "created_at": t.created_at, "finished_at": t.finished_at}
+
+
 def answer(db: Session, question: str, signal_id: int | None = None, history: list[dict] | None = None,
-           use_ai: bool = True, provider_factory=None) -> dict:
+           use_ai: bool = True, provider_factory=None, user_id: int | None = None) -> dict:
     q = (question or "").strip()[:1000]
+    from app.services import agent
+    if not signal_id and agent.is_command(q):
+        # Autonomous agent upgrade: a command becomes an inspected, planned task; safe actions wait for approval.
+        t = agent.start(db, q, user_id)
+        text = agent.describe(t)
+        out = {"answer": text, "source": "engine", "intent": "command", "task": task_out(t),
+               "next_steps": [f["fix"] for f in (t.findings or []) if f["fix_kind"] == "user"][:8]}
+        from app.ai import gateway
+        if use_ai and gateway.configured("engine_assistant"):
+            from pydantic import BaseModel
+
+            class Answer(BaseModel):
+                answer: str
+                next_steps: list[str]
+            facts = json.loads(json.dumps({"command": q, "workflow": t.workflow, "findings": t.findings,
+                                           "plan": t.plan, "summary": (t.report or {}).get("summary")}, default=str))
+            try:
+                ai, meta = gateway.run("engine_assistant", SYSTEM + " Summarise the findings of this engine inspection "
+                                       "for the operator, most important first, and say what the plan would do; the "
+                                       "plan runs only if the operator approves it.", facts, ANSWER_SCHEMA, Answer,
+                                       max_tokens=1500, provider_factory=provider_factory)
+                out.update(answer=ai.answer + "\n\n" + text, source="ai",
+                           ai={"provider": meta["provider"], "model": meta["model"]})
+            except gateway.GatewayError as exc:
+                out["ai_error"] = str(exc)[:200]
+        return out
     m = SIGNAL_RE.search(q)
     sid = signal_id or (int(m.group(1)) if m else None)
     intent = "signal" if sid else "why" if WHY_RE.search(q) else "next" if NEXT_RE.search(q) else "status"

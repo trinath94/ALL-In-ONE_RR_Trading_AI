@@ -41,7 +41,24 @@ def engine_only_review() -> dict:
             "note": "AI review switched off by the operator (Run without AI); the Risk Engine decides at execution"}
 
 
-def auto_execution_block(st: TradingState, sig) -> str | None:
+def ai_unavailable_policy(db: Session) -> str:
+    """Autonomous agent upgrade: "pause" (default) or "engine_only" when no AI answer is available in With AI mode."""
+    from app.db.models_ai import AIControl
+    c = db.get(AIControl, 1)
+    return (c.ai_unavailable_policy if c is not None else None) or "pause"
+
+
+def unavailable_review(db: Session, error: str) -> dict:
+    """The review recorded when no AI answer exists (no provider, provider failure, budget reached). With the
+    engine_only policy the engine's own validated signal continues to the Risk Engine; a rejection by the AI is never
+    this case."""
+    if ai_unavailable_policy(db) == "engine_only":
+        return {"decision": "SKIPPED", "mode": "AI_UNAVAILABLE", "error": error[:500],
+                "note": "AI unavailable; engine-only policy: the Risk Engine decides"}
+    return {"decision": "UNREVIEWED", "error": error[:500]}
+
+
+def auto_execution_block(st: TradingState, sig, policy: str = "pause") -> str | None:
     """Why a NEW signal would not be auto-executed now, or None if it is eligible (the Risk Engine still decides).
     One rule for the trading worker and the console's explanation.
 
@@ -61,6 +78,9 @@ def auto_execution_block(st: TradingState, sig) -> str | None:
         if d == "SKIPPED" and review.get("mode") == "ENGINE_ONLY":
             return None
         return "produced while the AI mode was on; engine-only mode executes only signals produced without AI"
+    if d == "SKIPPED" and review.get("mode") == "AI_UNAVAILABLE":
+        return None if policy == "engine_only" else \
+            "AI was unavailable and the policy is now pause: only AI-confirmed candidates are executed"
     if d == "SKIPPED":
         return "produced without AI review; the AI mode executes only AI-confirmed candidates"
     if d not in ("BUY", "SELL"):

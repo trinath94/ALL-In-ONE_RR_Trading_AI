@@ -61,9 +61,48 @@ export default function ActiveAI({ providers, canManage, onSaved }: { providers:
         </>}
         {canManage && <div className="col-span-full"><Btn small busy={busy} onClick={() => save(f)}>Save</Btn></div>}
       </div>}
+      {c && <Budget c={c} canManage={canManage} onSaved={() => { reload(); onSaved(); }} />}
       {c?.claude_pro && <div className="mt-3 rounded border border-line px-2 py-1.5 text-[11px]">
         <div className="flex items-center gap-2"><span>{c.claude_pro.label}</span><Badge tone="dim">not available</Badge></div>
         <div className="mt-0.5 text-dim">{c.claude_pro.reason}</div></div>}
     </Panel>
+  );
+}
+
+/** AI API budget (blank = no limit) and what the engine does when no AI answer is available. At the limit AI calls are
+ *  skipped; the engine keeps running. */
+function Budget({ c, canManage, onSaved }: { c: any; canManage: boolean; onSaved: () => void }) {
+  const b = c.budget || {};
+  const [f, setF] = useState<any>({ daily: b.daily_budget_usd ?? "", monthly: b.monthly_budget_usd ?? "", tokens: b.daily_token_limit ?? "",
+    policy: c.ai_unavailable_policy || "pause" });
+  const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const num = (v: any) => (v === "" || v == null ? null : Number(v));
+  async function save() {
+    setErr(null); setMsg(null);
+    try {
+      await put("/api/ai/budget", { daily_budget_usd: num(f.daily), monthly_budget_usd: num(f.monthly),
+        daily_token_limit: num(f.tokens), ai_unavailable_policy: f.policy });
+      setMsg("Budget and policy saved."); onSaved();
+    } catch (e: any) { setErr(e.message); }
+  }
+  return (
+    <div className="mt-3 rounded border border-line p-2 text-[11px]">
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <span className="text-[10px] uppercase text-dim">API budget</span>
+        <span>today {Number(b.spend_today_usd ?? 0).toFixed(4)} USD · {b.tokens_today ?? 0} tokens · month {Number(b.spend_month_usd ?? 0).toFixed(4)} USD</span>
+        {b.exhausted ? <Badge tone="bear">{b.exhausted}</Badge> : <Badge tone="neon">within budget</Badge>}
+      </div>
+      <ErrorLine error={err} />{msg && <div className="text-neon">{msg}</div>}
+      <div className="grid gap-2 md:grid-cols-4">
+        <Field label="Daily budget (USD)"><input className={inputCls} disabled={!canManage} value={f.daily} placeholder="no limit" onChange={(e) => setF({ ...f, daily: e.target.value })} /></Field>
+        <Field label="Monthly budget (USD)"><input className={inputCls} disabled={!canManage} value={f.monthly} placeholder="no limit" onChange={(e) => setF({ ...f, monthly: e.target.value })} /></Field>
+        <Field label="Daily token limit"><input className={inputCls} disabled={!canManage} value={f.tokens} placeholder="no limit" onChange={(e) => setF({ ...f, tokens: e.target.value })} /></Field>
+        <Field label="If AI is unavailable (With AI mode)"><select className={inputCls} disabled={!canManage} value={f.policy} onChange={(e) => setF({ ...f, policy: e.target.value })}>
+          <option value="pause">pause auto-execution (default)</option><option value="engine_only">continue without AI (Risk Engine decides)</option></select></Field>
+      </div>
+      <div className="mt-1 text-dim">Spend is counted only for providers with a price set (Providers → Edit). Identical requests are answered from a short cache; a signal the AI rejected is never executed by this policy.</div>
+      {canManage && <div className="mt-2"><Btn small onClick={save}>Save budget and policy</Btn></div>}
+    </div>
   );
 }

@@ -186,7 +186,53 @@ def _control(db: Session) -> dict:
             "fallback_enabled": bool(c.fallback_enabled), "fallback_provider_id": c.fallback_provider_id,
             "fallback_provider": name(c.fallback_provider_id), "fallback_model": c.fallback_model or "",
             "effective_chain": [{"provider": h.name, "model": h.model} for h in hops] if hops is not None else None,
-            "updated_at": c.updated_at, "claude_pro": CLAUDE_PRO}
+            "updated_at": c.updated_at, "claude_pro": CLAUDE_PRO,
+            "ai_unavailable_policy": getattr(c, "ai_unavailable_policy", None) or "pause",
+            "budget": {**_budget(), "daily_budget_usd": getattr(c, "daily_budget_usd", None),
+                       "monthly_budget_usd": getattr(c, "monthly_budget_usd", None),
+                       "daily_token_limit": getattr(c, "daily_token_limit", None)}}
+
+
+def _budget() -> dict:
+    try:
+        return gateway.budget_status()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:200]}
+
+
+class BudgetIn(BaseModel):
+    daily_budget_usd: float | None = Field(default=None, ge=0)
+    monthly_budget_usd: float | None = Field(default=None, ge=0)
+    daily_token_limit: int | None = Field(default=None, ge=0)
+    ai_unavailable_policy: Literal["pause", "engine_only"] | None = None
+
+
+@router.put("/ai/budget")
+def put_budget(body: BudgetIn, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """The AI API budget (null = no limit; at the limit AI calls are skipped and the engine continues) and what the
+    engine does when no AI answer is available in With AI mode: pause (default) or continue engine-only. In LIVE,
+    choosing engine_only also needs trade.live."""
+    from app.api.deps import user_perms
+    from app.db.models_ai import AIControl
+    from app.services.trading import get_state
+    c = db.get(AIControl, 1)
+    if c is None:
+        c = AIControl(id=1, single_active=False, active_model="", fallback_enabled=False, fallback_model="")
+        db.add(c)
+    if body.ai_unavailable_policy == "engine_only" and get_state(db).active_mode == "LIVE" \
+            and "trade.live" not in user_perms(user):
+        raise HTTPException(403, "continuing without AI in LIVE requires trade.live permission")
+    old = {"daily": c.daily_budget_usd, "monthly": c.monthly_budget_usd, "tokens": c.daily_token_limit,
+           "policy": c.ai_unavailable_policy}
+    fields = body.model_dump(exclude_unset=True)
+    for k, v in fields.items():
+        if k == "ai_unavailable_policy" and v is None:
+            continue
+        setattr(c, k, v)
+    c.updated_by, c.updated_at = user.id, datetime.now(UTC)
+    db.flush()
+    audit(db, user.id, "AI_BUDGET_UPDATE", "", {"old": old, "new": fields})
+    return _control(db)
 
 
 @router.get("/ai/control")

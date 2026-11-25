@@ -107,7 +107,7 @@ def auto_execute_factory(bridge: BridgeClient, bridges: AccountBridges | None = 
                 return
             # Phase 15 rules plus the operator's AI mode: in AI mode only candidates the AI review confirmed in the same
             # direction; in engine-only mode the engine's own BUY/SELL produced without AI. Never retroactively.
-            why = tr.auto_execution_block(state, sig)
+            why = tr.auto_execution_block(state, sig, tr.ai_unavailable_policy(db))
             if why is not None:
                 if state.auto_trading and sig.decision in ("BUY", "SELL"):
                     log.info("signal %s not auto-executed: %s", signal_id, why)

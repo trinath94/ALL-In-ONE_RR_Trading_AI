@@ -601,8 +601,10 @@ def claude_review(db: Session, agent: ClaudeAgent, sig: TradingSignal, item: dic
             cycle.add("signal_quality", ref=f"signal:{sig.id}", error=f"AI review: {str(exc)[:200]}")
         notify(db, "CLAUDE_ERROR", "Claude review failed", str(exc))
         agent_activity("claude_agent", "error", str(exc))
-        # Without a review the candidate is not auto-executed (conservative)
-        sig.ai_review = {"decision": "UNREVIEWED", "error": str(exc)}
+        # Without a review the candidate is not auto-executed (conservative), unless the administrator's policy for an
+        # unavailable AI is engine_only (autonomous agent upgrade).
+        from app.services.trading import unavailable_review
+        sig.ai_review = unavailable_review(db, str(exc))
         _review_to_opportunity(db, sig, sig.ai_review, None)
         return
     conv.response, conv.input_tokens, conv.output_tokens = review.model_dump(), meta["input_tokens"], meta["output_tokens"]
@@ -829,7 +831,8 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
                     extra = _review_extra(db, sig, sym, ar, mode)
                 claude_review(db, agent, sig, item, extra, cycle)
             else:
-                sig.ai_review = {"decision": "UNREVIEWED", "error": "no AI provider is configured for candidate review"}
+                from app.services.trading import unavailable_review
+                sig.ai_review = unavailable_review(db, "no AI provider is configured for candidate review")
                 _review_to_opportunity(db, sig, sig.ai_review, None)
         auto_execute(r["signal_id"])
     sched.publish_status(rds, report)

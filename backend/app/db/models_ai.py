@@ -63,6 +63,15 @@ class AIControl(Base):
     fallback_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     fallback_provider_id: Mapped[int | None] = mapped_column(ForeignKey("ai_providers.id", ondelete="SET NULL"))
     fallback_model: Mapped[str] = mapped_column(String(96), default="", server_default="")
+    # Autonomous agent upgrade (migration 0021): API budget (None = no limit). When a limit is reached, AI calls are
+    # skipped and the engine keeps working; the usage ledger is the source of the spend.
+    daily_budget_usd: Mapped[float | None] = mapped_column(Float)
+    monthly_budget_usd: Mapped[float | None] = mapped_column(Float)
+    daily_token_limit: Mapped[int | None] = mapped_column(Integer)
+    # What the engine does in With AI mode when no AI answer is available (provider down, budget exhausted, no
+    # provider): "pause" (default: candidates stay unreviewed, nothing is auto-executed) or "engine_only" (the
+    # engine's own validated signals continue through the Risk Engine).
+    ai_unavailable_policy: Mapped[str] = mapped_column(String(16), default="pause", server_default="pause")
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

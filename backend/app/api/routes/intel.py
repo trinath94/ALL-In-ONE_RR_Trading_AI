@@ -891,7 +891,8 @@ def worker_status(_: User = Depends(current_user), db: Session = Depends(get_db)
                              .where(TradingSignal.status == "NEW", TradingSignal.expires_at > now)
                              .order_by(TradingSignal.id.desc()).limit(50)):
         review = (s.ai_review or {}).get("decision")
-        why = (tr.auto_execution_block(st, s) or "eligible: the Risk Engine decides when the worker picks it up")
+        why = (tr.auto_execution_block(st, s, tr.ai_unavailable_policy(db))
+               or "eligible: the Risk Engine decides when the worker picks it up")
         cands.append({"id": s.id, "symbol": sym, "timeframe": s.timeframe, "decision": s.decision, "grade": s.grade,
                       "review": review, "created_at": s.created_at, "expires_at": s.expires_at, "status": why})
     runs = db.scalars(select(AgentRun).where(AgentRun.agent_id == "trade_execution").order_by(AgentRun.id.desc()).limit(20))

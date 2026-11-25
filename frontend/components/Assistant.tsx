@@ -2,9 +2,12 @@
 import { MessageCircle, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { post } from "@/lib/api";
+import { can, useMe } from "./Shell";
 
 type Msg = { role: "you" | "engine"; text: string; data?: any };
-const QUICK = ["Engine status", "Why was the last signal not executed?", "What should I do next?"];
+const QUICK = ["Engine status", "Why was the last signal not executed?", "What should I do next?",
+  "Audit my entire trading engine", "Find and repair all errors", "Is the engine ready for autonomous trading?",
+  "Check all available trading symbols", "Hand control back to the engine"];
 
 /** Ask the engine from any page (or with a signal id from the Signal Centre). */
 export function askAssistant(question: string, signalId?: number) {
@@ -14,6 +17,8 @@ export function askAssistant(question: string, signalId?: number) {
 /** Engine Assistant: a chat panel that explains what the engine is doing, where a valid signal stopped on its way to
  *  execution, and what to do next. Read-only: it never changes anything. */
 export function AssistantPanel() {
+  const me = useMe();
+  const admin = can(me, "system.manage");
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [q, setQ] = useState("");
@@ -29,6 +34,16 @@ export function AssistantPanel() {
       setMsgs((m) => [...m, { role: "engine", text: r.answer, data: r }]);
     } catch (e: any) {
       setMsgs((m) => [...m, { role: "engine", text: `Could not ask the engine: ${e.message}` }]);
+    } finally { setBusy(false); }
+  }
+  async function decide(taskId: number, what: "approve" | "cancel") {
+    setBusy(true);
+    try {
+      const r = await post<any>(`/api/agent/tasks/${taskId}/${what}`);
+      setMsgs((m) => [...m.map((x) => x.data?.task?.id === taskId ? { ...x, data: { ...x.data, task: { ...x.data.task, status: r.status } } } : x),
+        { role: "engine", text: what === "approve" ? r.answer : `Task #${taskId} cancelled; nothing was changed.` }]);
+    } catch (e: any) {
+      setMsgs((m) => [...m, { role: "engine", text: `Could not ${what} the plan: ${e.message}` }]);
     } finally { setBusy(false); }
   }
   useEffect(() => {
@@ -55,6 +70,11 @@ export function AssistantPanel() {
           <div key={i} className={m.role === "you" ? "ml-8 rounded bg-cyan/10 px-2 py-1.5" : "mr-4 rounded border border-line px-2 py-1.5"}>
             <div className="whitespace-pre-wrap">{m.text}</div>
             {m.data?.diagnosis && <Checks d={m.data.diagnosis} />}
+            {m.data?.task?.status === "AWAITING_APPROVAL" && <div className="mt-1 flex items-center gap-2 border-t border-line pt-1 text-[11px]">
+              {admin ? <>
+                <button type="button" disabled={busy} className="rounded border border-neon/60 px-2 py-0.5 text-neon" onClick={() => decide(m.data.task.id, "approve")}>Approve plan ({m.data.task.plan.length} safe action{m.data.task.plan.length === 1 ? "" : "s"})</button>
+                <button type="button" disabled={busy} className="text-dim underline" onClick={() => decide(m.data.task.id, "cancel")}>Cancel</button>
+              </> : <span className="text-dim">An administrator approves this plan.</span>}</div>}
             {m.data && <div className="mt-1 text-[10px] text-dim">{m.data.source === "ai" ? `answered by ${m.data.ai.provider}/${m.data.ai.model} from the engine's facts` : "answered by the engine"}</div>}
           </div>
         ))}

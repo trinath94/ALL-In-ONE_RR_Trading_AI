@@ -264,6 +264,8 @@ def after_review(db: Session, opp: Opportunity, review: dict, meta: dict | None)
         transition(db, opp, "WAITING_FOR_CONFIRMATION", "AI review: wait for confirmation")
     elif d == "SKIPPED" and review.get("mode") == "ENGINE_ONLY" and opp.direction in ("BUY", "SELL"):
         transition(db, opp, "QUALIFIED", "engine-only mode (AI review off); Risk Engine decides at execution")
+    elif d == "SKIPPED" and review.get("mode") == "AI_UNAVAILABLE" and opp.direction in ("BUY", "SELL"):
+        transition(db, opp, "QUALIFIED", "AI unavailable, engine-only policy; Risk Engine decides at execution")
 
 
 def sync(db: Session, limit: int = 500) -> int:
