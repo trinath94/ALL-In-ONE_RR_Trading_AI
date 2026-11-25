@@ -62,7 +62,7 @@ def now() -> datetime:
 def policy(db: Session) -> AutomationPolicy:
     p = db.get(AutomationPolicy, 1)
     if p is None:
-        p = AutomationPolicy(id=1, auto_promote_profiles_demo=False, auto_promote_experiments_demo=False)
+        p = AutomationPolicy(id=1, auto_promote_profiles_demo=False, auto_promote_experiments_demo=False, auto_repair=True)
         db.add(p)
         db.flush()
     return p

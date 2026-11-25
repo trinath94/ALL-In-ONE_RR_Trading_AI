@@ -55,6 +55,15 @@ Every order passes the Risk Engine; nothing (including AI) can bypass it.
 API access is billed separately from chat subscriptions: a Claude.ai or ChatGPT subscription does not include API
 credits.
 
+**Incidents and self-healing.** System Monitor → Incidents lists classified problems with their explanation,
+diagnosis, recommended fix, safe repair and every repair attempt. Pop-ups in the console announce new, re-opened and
+escalated incidents. Actions: Acknowledge (`trade.control`), Run safe repair, Ask AI to diagnose, Mark resolved
+(`system.manage`). The *auto-repair* switch turns automatic repairs off; the catalogue only contains actions that
+cannot change trading (journal reconciliation without resubmission, symbol re-discovery, stuck-job recovery, history
+pruning, connection re-check). Never automated: identity mismatch, kill switch, risk lock, unknown pending orders,
+broker rejections. API: `GET /api/incidents`, `GET /api/incidents/summary`, `POST /api/incidents/{id}/ack|resolve|
+repair|diagnose`, `POST /api/client-errors`.
+
 **Configuration profiles and the automation policy.** Strategy Library → a strategy → Configuration profiles:
 * **New profile** (parameters as JSON, optional regime) or **Ask AI** (the active AI proposes; bounded, untrusted).
   Both are queued for validation; the learner validates up to two per hour on broker bars, recording every gate.

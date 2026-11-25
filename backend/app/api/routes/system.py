@@ -243,3 +243,156 @@ async def ws(websocket: WebSocket):
 def _ai_configured() -> bool:
     from app.ai import gateway
     return gateway.configured("candidate_review") or gateway.configured("strategy_discovery")
+
+
+# ---- Master upgrade: incidents (error detection, explanation, self-healing) ----------------------------------------
+from pydantic import BaseModel as _BM, Field as _F  # noqa: E402
+
+
+def _incident_out(i) -> dict:
+    from app.services import incidents
+    return {"id": i.id, "category": i.category, "severity": i.severity, "component": i.component, "title": i.title,
+            "message": i.message, "explanation": i.explanation, "diagnosis": i.diagnosis,
+            "recommended_fix": i.recommended_fix, "repair": i.repair,
+            "repair_label": incidents.REPAIRS[i.repair][1] if i.repair in incidents.REPAIRS else None,
+            "auto_repair_allowed": bool(i.repair) and i.category not in incidents.NEVER_AUTO,
+            "status": i.status, "occurrences": i.occurrences, "reopened": i.reopened, "data": i.data,
+            "attempts": i.attempts, "ai_diagnosis": i.ai_diagnosis, "first_seen": i.first_seen,
+            "last_seen": i.last_seen, "resolved_at": i.resolved_at, "resolution": i.resolution}
+
+
+@router.get("/incidents")
+def list_incidents(status: str | None = None, category: str | None = None, limit: int = 200,
+                   _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Classified, de-duplicated incidents, newest activity first. ``status=open`` for open and acknowledged."""
+    from app.db.models_opportunity import Incident
+    q = select(Incident)
+    if status == "open":
+        q = q.where(Incident.status.in_(["OPEN", "ACKNOWLEDGED"]))
+    elif status:
+        q = q.where(Incident.status == status.upper())
+    if category:
+        q = q.where(Incident.category == category)
+    return [_incident_out(i) for i in db.scalars(q.order_by(Incident.last_seen.desc()).limit(min(limit, 1000)))]
+
+
+@router.get("/incidents/summary")
+def incidents_summary(days: int = 30, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.services import incidents
+    return {"open_by_severity": incidents.open_count(db), "stats": incidents.stats(db, days),
+            "auto_repair": incidents.auto_repair_enabled(db),
+            "catalogue": [{"action": k, "label": v[1]} for k, v in incidents.REPAIRS.items()],
+            "never_automated": sorted(incidents.NEVER_AUTO)}
+
+
+def _get_incident(db, incident_id: int):
+    from app.db.models_opportunity import Incident
+    i = db.get(Incident, incident_id)
+    if i is None:
+        raise HTTPException(404)
+    return i
+
+
+@router.post("/incidents/{incident_id}/ack")
+def ack_incident(incident_id: int, user: User = Depends(require("trade.control")), db: Session = Depends(get_db)):
+    i = _get_incident(db, incident_id)
+    if i.status == "OPEN":
+        i.status, i.acknowledged_by = "ACKNOWLEDGED", user.id
+    return _incident_out(i)
+
+
+class ResolveIn(_BM):
+    resolution: str = _F(default="", max_length=1000)
+
+
+@router.post("/incidents/{incident_id}/resolve")
+def resolve_incident(incident_id: int, body: ResolveIn, user: User = Depends(require("system.manage")),
+                     db: Session = Depends(get_db)):
+    from app.services import incidents
+    from app.services.events import audit
+    i = _get_incident(db, incident_id)
+    incidents.resolve(db, i, user.id, body.resolution or "resolved by an operator")
+    audit(db, user.id, "INCIDENT_RESOLVED", i.title, {"id": i.id, "category": i.category})
+    return _incident_out(i)
+
+
+@router.post("/incidents/{incident_id}/repair")
+def repair_incident(incident_id: int, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """Run the incident's safe catalogue repair now (same verification and record as the automatic one)."""
+    from app.services import incidents
+    from app.services.events import audit
+    i = _get_incident(db, incident_id)
+    ctx: dict = {}
+    bridge = None
+    if i.repair == "reconcile_journal":
+        try:
+            from app.execution.bridge import BridgeClient
+            bridge = BridgeClient()
+            ctx["bridge"] = bridge
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        rec = incidents.attempt(db, i, ctx, user.id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    finally:
+        if bridge is not None:
+            bridge.close()
+    audit(db, user.id, "INCIDENT_REPAIR", i.title, {"id": i.id, "attempt": rec})
+    return {**_incident_out(i), "attempt": rec}
+
+
+DIAG_SCHEMA = {"type": "object", "additionalProperties": False,
+               "required": ["explanation", "likely_causes", "recommended_steps"],
+               "properties": {"explanation": {"type": "string", "maxLength": 1500},
+                              "likely_causes": {"type": "array", "items": {"type": "string", "maxLength": 300},
+                                                "maxItems": 6},
+                              "recommended_steps": {"type": "array", "items": {"type": "string", "maxLength": 300},
+                                                    "maxItems": 8}}}
+
+
+@router.post("/incidents/{incident_id}/diagnose")
+def diagnose_incident(incident_id: int, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """Diagnostic assistance from the active AI (task 'diagnostics'). Advice only: displayed, never executed."""
+    from pydantic import BaseModel
+    from app.ai import gateway
+
+    class Diagnosis(BaseModel):
+        explanation: str
+        likely_causes: list[str]
+        recommended_steps: list[str]
+    if not gateway.configured("diagnostics"):
+        raise HTTPException(409, "no AI provider is configured (AI Studio)")
+    i = _get_incident(db, incident_id)
+    payload = {"title": i.title, "category": i.category, "component": i.component, "message": i.message,
+               "occurrences": i.occurrences, "explanation": i.explanation, "data": i.data,
+               "repairs_tried": [{k: a.get(k) for k in ("action", "ok", "verified", "detail")} for a in i.attempts or []]}
+    system = ("You assist the operator of a trading platform with one operational incident. Explain it plainly, list "
+              "likely causes and safe manual steps. Never suggest commands that place, change or close orders, change "
+              "risk limits, enable LIVE trading or disable safety controls. Your answer is shown to a person only.")
+    try:
+        out, meta = gateway.run("diagnostics", system, payload, DIAG_SCHEMA, Diagnosis, max_tokens=1500)
+    except gateway.GatewayError as exc:
+        raise HTTPException(502, f"AI provider: {exc}") from None
+    i.ai_diagnosis = {**out.model_dump(), "provider": meta["provider"], "model": meta["model"],
+                      "at": datetime.now(timezone.utc).isoformat(), "note": "AI advice: untrusted, not executed"}
+    return _incident_out(i)
+
+
+class ClientErrorIn(_BM):
+    message: str = _F(max_length=1000)
+    page: str = _F(default="", max_length=200)
+    stack: str = _F(default="", max_length=4000)
+    digest: str = _F(default="", max_length=100)
+
+
+@router.post("/client-errors")
+def client_error(body: ClientErrorIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Console (browser) errors caught by the error boundary become incidents (rate-limited per user)."""
+    from app.api.deps import rate_limit
+    from app.services import incidents
+    rate_limit(f"clienterr:{user.id}", 30, 60)
+    page = body.page.split("?")[0]
+    i = incidents.record(db, "console", "warning", f"{page}: {body.message}",
+                         {"page": page, "stack": body.stack[:2000], "digest": body.digest}, category="frontend_error")
+    return {"incident_id": i.id if i else None}

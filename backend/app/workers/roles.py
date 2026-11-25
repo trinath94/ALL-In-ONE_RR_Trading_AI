@@ -135,10 +135,26 @@ def _noop_execute(_signal_id: int) -> None:
 
 
 # ---- monitor ----------------------------------------------------------------------------------------------------
+def incident_cycle(bridge, clock: dict, every: float = 60.0) -> dict | None:
+    """Master upgrade (error detection, self-healing): detectors, auto-resolution and safe repairs, once a minute."""
+    if time.time() - clock.get("incidents", 0.0) < every:
+        return None
+    clock["incidents"] = time.time()
+    try:
+        from app.services import incidents
+        with session_scope() as db:
+            found = incidents.run_detectors(db)
+            healed = incidents.heal(db, {"bridge": bridge})
+        return {"detected": len(found), **healed}
+    except Exception:  # noqa: BLE001 - monitoring must not break the monitor
+        log.warning("incident detectors failed", exc_info=True)
+        return None
+
 def monitor_cycle(bridge: BridgeClient, last_ok: list[bool], clock: dict, bridges=None) -> bool:
     """One monitor iteration. Mirrors the non-scanning part of the original worker loop. ``bridges``
     (multi-account): the other execution accounts are maintained through their own connectors."""
     ok = legacy.heartbeat(bridge, last_ok)
+    incident_cycle(bridge if ok else None, clock)       # also while MT5 is unreachable: that is a problem to detect
     if not ok:
         return False
     with session_scope() as db:

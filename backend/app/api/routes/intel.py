@@ -1334,13 +1334,15 @@ def get_policy(_: User = Depends(current_user), db: Session = Depends(get_db)):
     from app.strategies import profiles
     p = profiles.policy(db)
     return {"auto_promote_profiles_demo": p.auto_promote_profiles_demo,
-            "auto_promote_experiments_demo": p.auto_promote_experiments_demo, "updated_at": p.updated_at,
+            "auto_promote_experiments_demo": p.auto_promote_experiments_demo, "auto_repair": p.auto_repair,
+            "updated_at": p.updated_at,
             "note": "Automatic promotion only ever reaches DEMO; LIVE always needs an authorised user."}
 
 
 class PolicyIn(BaseModel):
     auto_promote_profiles_demo: bool | None = None
     auto_promote_experiments_demo: bool | None = None
+    auto_repair: bool | None = None
 
 
 @router.put("/automation/policy")
@@ -1348,14 +1350,18 @@ def put_policy(body: PolicyIn, user: User = Depends(require("system.manage")), d
     from datetime import datetime as _dt, timezone as _tz
     from app.strategies import profiles
     p = profiles.policy(db)
-    old = {"profiles": p.auto_promote_profiles_demo, "experiments": p.auto_promote_experiments_demo}
+    old = {"profiles": p.auto_promote_profiles_demo, "experiments": p.auto_promote_experiments_demo,
+           "auto_repair": p.auto_repair}
+    if body.auto_repair is not None:
+        p.auto_repair = body.auto_repair
     if body.auto_promote_profiles_demo is not None:
         p.auto_promote_profiles_demo = body.auto_promote_profiles_demo
     if body.auto_promote_experiments_demo is not None:
         p.auto_promote_experiments_demo = body.auto_promote_experiments_demo
     p.updated_by, p.updated_at = user.id, _dt.now(_tz.utc)
     audit(db, user.id, "AUTOMATION_POLICY", "", {"old": old, "new": {"profiles": p.auto_promote_profiles_demo,
-                                                                     "experiments": p.auto_promote_experiments_demo}})
+                                                                     "experiments": p.auto_promote_experiments_demo,
+                                                                     "auto_repair": p.auto_repair}})
     return get_policy(user, db)
 
 

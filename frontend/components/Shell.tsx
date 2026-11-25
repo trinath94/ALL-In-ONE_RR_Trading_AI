@@ -1,4 +1,5 @@
 "use client";
+import { IncidentPopups } from "./Incidents";
 import clsx from "clsx";
 import {
   Activity, Bell, BookOpen, Bot, BrainCircuit, CandlestickChart, Cpu, FlaskConical, Gauge, Globe, History, LayoutDashboard,
@@ -134,6 +135,7 @@ export default function Shell({ children }: { children: ReactNode }) {
             <div className="mt-4 px-3 text-[9px] leading-relaxed text-dim">Trading involves substantial risk. Signals are not guarantees.</div>
           </nav>
           <main className="min-w-0 flex-1 p-3 md:p-4">{children}</main>
+          <IncidentPopups />
         </div>
       </div>
     </MeCtx.Provider>

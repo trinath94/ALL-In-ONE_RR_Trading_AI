@@ -3,6 +3,7 @@ import { can, PageTitle, useMe } from "@/components/Shell";
 import { Badge, ErrorLine, Panel, Stat, Table } from "@/components/ui";
 import { fmt } from "@/lib/api";
 import { useApi, useLive } from "@/lib/hooks";
+import { IncidentsPanel } from "@/components/Incidents";
 
 const TONE: Record<string, any> = { OK: "neon", WARN: "warn", CRITICAL: "bear", UNKNOWN: "dim", NO_REPORT: "dim" };
 
@@ -42,6 +43,7 @@ function Reliability() {
             : <div className="text-[11px] text-dim">None: no strategy has 30+ paper/live trades with a profit factor below 0.8.</div>}
         </Panel>
       </div>
+      <IncidentsPanel />
       <Panel title="Market data quality (latest analysis per symbol and timeframe)" className="mt-3">
         <Table rows={dq} empty="No analyses yet." rowKey={(d) => `${d.symbol}|${d.timeframe}`}
           cols={[{ k: "symbol", h: "Symbol" }, { k: "timeframe", h: "TF" },

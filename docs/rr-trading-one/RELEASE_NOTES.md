@@ -2,6 +2,25 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Error detection, pop-up alerts and self-healing (2026-11-25).**
+* **Incidents** (System Monitor → Incidents): every warning, error and critical event the services already report
+  (connector, execution, worker, risk, monitor), unhandled API errors, console errors and new detectors (MT5 bridge
+  down, learner jobs stuck, memory/CPU pressure, low disk, AI providers cooling down, data sources failing, API 5xx
+  rate) become classified incidents, de-duplicated (one incident with a count, re-opened if it comes back), each with
+  an explanation, a diagnosis and the recommended fix.
+* **Pop-up alerts** in the console for new, re-opened and escalated incidents (warning and above); critical ones stay
+  until dismissed. Acknowledge from the pop-up.
+* **Safe self-healing** (on by default, switch in the Incidents panel): reconcile the execution journal (never
+  resubmits), re-discover the symbol catalogue, mark jobs stuck beyond twice their timeout as interrupted, prune
+  history beyond retention, re-check the MT5 connection. Every repair is verified and recorded; three failures
+  escalate to a critical notification. Incidents also close by themselves when their condition clears (for example
+  MT5 reconnected, or an administrator reset the kill switch). Self-healing never changes the kill switch, risk lock,
+  orders, positions, accounts or LIVE, and never restarts the trading worker.
+* **Diagnostic assistance**: Ask AI to diagnose (the active AI explains causes and manual steps; advice only, never
+  executed).
+* **Console error boundary**: a failing page shows a message and reports itself; other pages keep working.
+Migration 0020 (additive).
+
 **Adaptive configuration and trade reviews (2026-11-25).**
 * **Configuration profiles** (Strategy Library → a strategy → Configuration profiles): versioned parameter profiles per
   market regime, symbols and timeframes, created by hand or proposed by the active AI (bounded to 0.5x–2x of each

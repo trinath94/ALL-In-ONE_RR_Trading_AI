@@ -148,5 +148,39 @@ class AutomationPolicy(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     auto_promote_profiles_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     auto_promote_experiments_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Master upgrade, self-healing (migration 0020): safe, verified, recorded repairs from the repair catalogue. Never
+    # touches trading controls (kill switch, risk lock, LIVE), orders or positions.
+    auto_repair: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Incident(Base):
+    """Master upgrade, error detection (migration 0020): one classified problem, de-duplicated by fingerprint. Every
+    occurrence increments ``occurrences``; a resolved incident that happens again is re-opened. Lifecycle: OPEN ->
+    ACKNOWLEDGED -> RESOLVED (by a person) | AUTO_RESOLVED (the condition cleared or a verified repair)."""
+    __tablename__ = "incidents"
+    __table_args__ = (Index("ix_incident_status_seen", "status", "last_seen"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(40), unique=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    severity: Mapped[str] = mapped_column(String(10))                    # info | warning | error | critical
+    component: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(Text)
+    explanation: Mapped[str] = mapped_column(Text, default="")
+    diagnosis: Mapped[str] = mapped_column(Text, default="")
+    recommended_fix: Mapped[str] = mapped_column(Text, default="")
+    repair: Mapped[str | None] = mapped_column(String(40))              # catalogue action, if any
+    status: Mapped[str] = mapped_column(String(16), default="OPEN")
+    occurrences: Mapped[int] = mapped_column(Integer, default=1)
+    reopened: Mapped[int] = mapped_column(Integer, default=0)
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    attempts: Mapped[list] = mapped_column(JSONB, default=list)         # [{at, action, ok, verified, detail}]
+    ai_diagnosis: Mapped[dict | None] = mapped_column(JSONB)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    resolution: Mapped[str] = mapped_column(Text, default="")
+    acknowledged_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

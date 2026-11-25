@@ -39,6 +39,14 @@ def audit(db, user_id: int | None, action: str, target: str = "", detail: dict |
 def system_event(db, component: str, level: str, message: str, data: dict | None = None) -> None:
     db.add(SystemEvent(component=component, level=level, message=message, data=data or {}))
     publish("system_event", {"component": component, "level": level, "message": message})
+    if level in ("warning", "error", "critical"):
+        # Master upgrade (error detection): classified, de-duplicated incident. Never breaks the caller.
+        try:
+            from app.services import incidents
+            with db.begin_nested():
+                incidents.record(db, component, level, message, data)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("incident not recorded: %s", exc)
 
 
 def agent_activity(module: str, status: str, message: str, data: dict | None = None) -> None:

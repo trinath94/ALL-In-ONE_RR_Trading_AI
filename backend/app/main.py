@@ -40,6 +40,15 @@ async def security_headers(request: Request, call_next):
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception):
     log.exception("unhandled error on %s", request.url.path)
+    try:                                   # master upgrade: unhandled errors become (de-duplicated) incidents
+        from app.db.session import session_scope
+        from app.services import incidents
+        route = getattr(request.scope.get("route"), "path", request.url.path)
+        with session_scope() as db:
+            incidents.record(db, "api", "error", f"{request.method} {route}: {type(exc).__name__}: {str(exc)[:300]}",
+                             {"path": route, "method": request.method})
+    except Exception:  # noqa: BLE001 - reporting must never hide the original error response
+        log.warning("incident for the unhandled error not recorded", exc_info=True)
     return JSONResponse({"detail": "Internal server error"}, status_code=500)
 
 
