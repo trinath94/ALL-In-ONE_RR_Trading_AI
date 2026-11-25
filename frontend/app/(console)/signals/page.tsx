@@ -6,6 +6,7 @@ import { Badge, Btn, Confirm, dirTone, ErrorLine, gradeTone, Panel, Table } from
 import { api, fmt, post } from "@/lib/api";
 import { useApi, useLive } from "@/lib/hooks";
 import { FusionDetail } from "@/components/Fusion";
+import { askAssistant } from "@/components/Assistant";
 
 export default function Signals() {
   const me = useMe();
@@ -46,8 +47,10 @@ export default function Signals() {
         </Panel>
         {sel && (
           <Panel title={`${sel.symbol} ${sel.timeframe} · ${sel.decision} ${sel.grade}`}
-            right={can(me, "trade.manual") && (sel.decision === "BUY" || sel.decision === "SELL") && sel.status === "NEW" &&
-              <Btn tone={sel.decision === "BUY" ? "neon" : "bear"} onClick={() => setConfirm(true)}>Execute via Risk Engine</Btn>}>
+            right={<div className="flex gap-1">
+              <Btn tone="dim" onClick={() => askAssistant(`Why was signal #${sel.id} ${sel.status === "EXECUTED" ? "executed" : "not executed"}?`, sel.id)}>Ask why</Btn>
+              {can(me, "trade.manual") && (sel.decision === "BUY" || sel.decision === "SELL") && sel.status === "NEW" &&
+              <Btn tone={sel.decision === "BUY" ? "neon" : "bear"} onClick={() => setConfirm(true)}>Execute via Risk Engine</Btn>}</div>}>
             <TradingChart symbol={sel.symbol} timeframe={tf} onTimeframe={setTf} height={320}
               levels={{ entry: sel.entry, stop_loss: sel.stop_loss, tp1: sel.tp1, tp2: sel.tp2, tp3: sel.tp3, direction: sel.decision }} />
             <div className="mt-3 grid grid-cols-3 gap-2 text-[11px] sm:grid-cols-6">

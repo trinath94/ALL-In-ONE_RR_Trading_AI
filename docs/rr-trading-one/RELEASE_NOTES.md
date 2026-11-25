@@ -2,6 +2,15 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Engine Assistant (2026-11-25).** "Ask the engine" (bottom right of every console page) and **Ask why** on a signal
+(Signal Centre). It reads the engine's own records and walks a signal through the trading worker's gates in order:
+decision, validity, trading worker, auto trading, AI review (or engine-only), kill switch, risk lock, paused entries,
+execution accounts; then per account eligibility, reconciliation, the Risk Engine's decision and reasons, and the order
+and broker result. It says where the signal stopped and the next step (the page or desktop action). Questions about
+the engine's state get the current status and what blocks automatic trading. Read-only: it never changes anything. With
+an AI provider (task `engine_assistant`, or Single Active AI) the AI phrases the answer from these facts only; without
+one, the engine answers by itself.
+
 **Error detection, pop-up alerts and self-healing (2026-11-25).**
 * **Incidents** (System Monitor → Incidents): every warning, error and critical event the services already report
   (connector, execution, worker, risk, monitor), unhandled API errors, console errors and new detectors (MT5 bridge

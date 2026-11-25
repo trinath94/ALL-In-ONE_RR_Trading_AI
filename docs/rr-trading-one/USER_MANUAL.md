@@ -78,6 +78,12 @@ switch in the Live Trading Control Center:
 
 Manual orders are placed from the console.
 
+**Ask the engine.** The *Ask the engine* button (bottom right of every page) opens the Engine Assistant. Ask "Engine
+status", "Why was the last signal not executed?", "Why was signal #42 not executed?" or "What should I do next?". In the
+Signal Centre, **Ask why** on a signal does the same for that signal. The answer lists each check the trading worker
+applies (✔ passed, ✖ stopped here), each account's result (eligible, reconciled, Risk Engine decision, order) and the
+next step. The assistant only reads; it never changes a setting or places an order.
+
 **To stop:**
 * **Auto trading OFF** stops new entries.
 * **Stop Trading Worker** stops execution.

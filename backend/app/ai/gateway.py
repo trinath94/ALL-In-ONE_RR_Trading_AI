@@ -41,10 +41,11 @@ TASKS = {
     "research_summary": "Research summarisation",
     "diagnostics": "Operational diagnostics and provider tests",
     "config_proposal": "Strategy configuration proposals (validated before any use)",
+    "engine_assistant": "Engine Assistant chat (explains engine state; read-only)",
 }
 # Tasks the engine calls (Phase 14: all of them).
 WIRED_TASKS = ("candidate_review", "strategy_discovery", "trade_research", "learning_explanation", "research_summary",
-               "diagnostics", "config_proposal")
+               "diagnostics", "config_proposal", "engine_assistant")
 # Parts 27-30 Phase 4: tasks whose route may use mode "consensus" (two providers answer independently).
 CONSENSUS_TASKS = ("candidate_review",)
 ENV_PROVIDER = "anthropic (RR_ANTHROPIC_API_KEY)"

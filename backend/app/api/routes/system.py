@@ -396,3 +396,38 @@ def client_error(body: ClientErrorIn, user: User = Depends(current_user), db: Se
     i = incidents.record(db, "console", "warning", f"{page}: {body.message}",
                          {"page": page, "stack": body.stack[:2000], "digest": body.digest}, category="frontend_error")
     return {"incident_id": i.id if i else None}
+
+
+# ---- Engine Assistant (chat; read-only) -----------------------------------------------------------------------------
+class AskIn(_BM):
+    question: str = _F(min_length=1, max_length=1000)
+    signal_id: int | None = None
+    history: list[dict] = _F(default_factory=list, max_length=12)
+
+
+@router.post("/assistant/ask")
+def assistant_ask(body: AskIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Ask the Engine Assistant. It reads the engine's records, explains, and names the next step; it never acts."""
+    from app.api.deps import rate_limit
+    from app.services import assistant
+    rate_limit(f"assistant:{user.id}", 30, 60)
+    hist = [{"role": str(h.get("role", ""))[:10], "text": str(h.get("text", ""))[:500]} for h in body.history][-6:]
+    return assistant.answer(db, body.question, body.signal_id, hist)
+
+
+@router.get("/assistant/signals/{signal_id}")
+def assistant_signal(signal_id: int, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Where a signal stopped on its way to execution, gate by gate, per account, with the next step."""
+    from app.db.models import TradingSignal
+    from app.services import assistant
+    sig = db.get(TradingSignal, signal_id)
+    if sig is None:
+        raise HTTPException(404)
+    return assistant.diagnose_signal(db, sig)
+
+
+@router.get("/assistant/overview")
+def assistant_overview(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.services import assistant
+    ov = assistant.overview(db)
+    return {"overview": ov, "next_steps": assistant.next_steps(ov)}
