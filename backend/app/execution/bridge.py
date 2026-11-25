@@ -67,6 +67,21 @@ class BridgeConfig:
             raise BridgeError("RR_BRIDGE_SCOPE=read requires RR_BRIDGE_MODE=relay")
         return cls(s.bridge_url.rstrip("/"), s.bridge_shared_secret, s.bridge_ca_bundle, s.bridge_timeout_seconds)
 
+    @classmethod
+    def for_account(cls, login: int, server: str) -> "BridgeConfig":
+        """Multi-account: the connector of one specific account. Only in relay mode, where each MT5 terminal has its
+        own RR MT5 Connector agent; the direct mode has a single connector (the active account's)."""
+        s = get_settings()
+        if s.bridge_mode != "relay":
+            raise BridgeError("trading several accounts needs RR_BRIDGE_MODE=relay (one connector per MT5 terminal)")
+        if s.bridge_scope != "full":
+            raise BridgeError("this process has a read-only bridge scope")
+        from app.execution import relay
+        agent = relay.resolve_agent("full", (login, server))
+        if agent is None:
+            raise BridgeError(f"no RR MT5 Connector is registered for account {login}@{server}")
+        return cls("http://rr-mt5-agent", agent.secret, None, s.bridge_timeout_seconds, relay_agent_id=agent.id)
+
 
 class BridgeClient:
     def __init__(self, cfg: BridgeConfig | None = None, transport: httpx.BaseTransport | None = None):
@@ -155,3 +170,38 @@ class BridgeClient:
         if not command.get("execution_id"):
             raise BridgeError("execution_id is required for every trading command")
         return self._request("POST", "/executions", command, retries=2)
+
+
+class AccountBridges:
+    """One bridge per execution account, created on first use and cached. The active account uses the process's
+    existing bridge, so single-account installations make no new connection. ``factory(account)`` builds a client
+    for another account (default: its own relay agent); a failure means the account is skipped this cycle."""
+
+    def __init__(self, default: "BridgeClient", factory=None):
+        self.default = default
+        self._factory = factory or (lambda a: BridgeClient(BridgeConfig.for_account(a.login, a.server)))
+        self._cache: dict[int, BridgeClient] = {}
+        self.errors: dict[int, str] = {}
+
+    def get(self, account) -> "BridgeClient | None":
+        if account.is_active:
+            return self.default
+        if account.id in self._cache:
+            return self._cache[account.id]
+        try:
+            b = self._factory(account)
+        except BridgeError as exc:
+            self.errors[account.id] = str(exc)
+            return None
+        self.errors.pop(account.id, None)
+        self._cache[account.id] = b
+        return b
+
+    def drop(self, account_id: int) -> None:
+        b = self._cache.pop(account_id, None)
+        if b is not None and b is not self.default:
+            b.close()
+
+    def close(self) -> None:
+        for k in list(self._cache):
+            self.drop(k)

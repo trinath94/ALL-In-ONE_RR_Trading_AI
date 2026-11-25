@@ -52,14 +52,41 @@ LIVE_REQUEST_MAX_AGE_S = 60
 EXIT_OK, EXIT_USAGE, EXIT_NOT_REGISTERED, EXIT_ALREADY_RUNNING, EXIT_ERROR = 0, 2, 3, 4, 1
 
 
+_INSTANCE_RE = __import__("re").compile(r"^[a-z0-9-]{1,32}$")   # same rule as the desktop's MT5 profile ids
+
+
+def instance() -> str | None:
+    """Multi-account: the name of an additional connector instance (one per MT5 terminal), from ``RRMT5_INSTANCE``.
+    None for the primary instance, which keeps its original folder and vault entry."""
+    v = (os.environ.get("RRMT5_INSTANCE") or "").strip().lower()
+    if not v:
+        return None
+    if not _INSTANCE_RE.match(v):
+        raise ValueError("RRMT5_INSTANCE must be 1-32 characters: lowercase letters, digits and '-'")
+    return v
+
+
+def vault_service() -> str:
+    """Each instance keeps its device key and bridge credentials under its own vault entry, so two terminals' connectors
+    never overwrite each other's registration."""
+    inst = instance()
+    return VAULT_SERVICE if inst is None else f"{VAULT_SERVICE} [{inst}]"
+
+
 def home() -> Path:
-    """Data folder of RR Trading One's connector instance (``RRMT5_HOME`` overrides, e.g. for tests)."""
+    """Data folder of RR Trading One's connector instance (``RRMT5_HOME`` overrides, e.g. for tests). An additional
+    instance (``RRMT5_INSTANCE``) lives in ``connector/instances/<name>``."""
+    inst = instance()
     if os.environ.get("RRMT5_HOME"):
         base = Path(os.environ["RRMT5_HOME"])
     elif os.environ.get("LOCALAPPDATA"):
         base = Path(os.environ["LOCALAPPDATA"]) / "RR Trading One" / "connector"
+        if inst:
+            base = base / "instances" / inst
     else:
         base = Path.home() / ".rr-trading-one-connector"
+        if inst:
+            base = base / "instances" / inst
     base.mkdir(parents=True, exist_ok=True)
     os.environ["RRMT5_HOME"] = str(base)   # paths.* (journal, config, logs) follow this instance's folder
     return base
@@ -150,7 +177,7 @@ def _open_store():
     from rr_connector import paths
     from rr_connector.store import Store
     from rr_connector.vault import Vault
-    vault = Vault(service=VAULT_SERVICE)
+    vault = Vault(service=vault_service())
     return Store(paths.config_db(), vault), vault
 
 

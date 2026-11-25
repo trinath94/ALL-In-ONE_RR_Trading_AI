@@ -61,6 +61,22 @@ boundary-checked on its own. The candidate is confirmed only if **both** confirm
 rejects it; any other combination waits. If either provider gives no valid answer, the candidate stays unreviewed and
 is never auto-executed. Consensus costs two calls per candidate.
 
+**Trading several accounts at once.** MetaTrader 5 logs one terminal in to one account, so each account needs its own
+MT5 terminal installation (a separate folder, logged in to that account).
+1. In the desktop window, MT5 Manager: add one profile per terminal. For each profile: **Use**, **Link**, **Start**.
+   Each profile runs its own connector (the first profile keeps the original one).
+2. In the console, Settings → Trading accounts: add and **Verify** each account; open **Settings** and **Enable
+   trading**. A LIVE account also needs its LIVE approval and is traded only while LIVE is the active mode.
+3. Settings → **Execution accounts** shows each account: traded now (or why not), reconciled, connector online,
+   equity and open positions.
+
+How it trades: every signal is evaluated separately for each execution account (its symbols and strategies, its own
+risk limits and equity, its own idempotency key) and sent through that account's connector. An account is reconciled
+at start through its own connector before its first entry, and again after a disconnection. The kill switch blocks new
+entries on every account and applies the position policy on each. A tripped risk limit on any account locks new
+entries on all accounts (conservative); its position policy is applied to that account. **Stop All** stops every
+connector.
+
 **Per-account settings (multi-account foundation).** Settings → Trading accounts → **Settings** on an account:
 * **Name**, and **Enable trading / Make research-only**. Enabling needs a verified account; for a LIVE account also
   `trade.live` and the LIVE approval. Disabling is always allowed.

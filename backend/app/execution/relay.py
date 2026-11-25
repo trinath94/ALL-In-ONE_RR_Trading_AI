@@ -119,13 +119,28 @@ class ReadCredentialMissing(Exception):
     """The selected agent has no read-only credential (registered before it existed): re-register it."""
 
 
-def resolve_agent(scope: str = "full") -> ResolvedAgent | None:
+def agent_for_account(db, login: int, server: str):
+    """Multi-account: the enabled agent that reports exactly this login and server, or None. No fallback to another
+    agent: an account is traded only through the connector logged in to it."""
+    from sqlalchemy import select
+    from app.db.models_agent import MT5Agent
+    agents = db.scalars(select(MT5Agent).where(MT5Agent.enabled.is_(True), MT5Agent.revoked_at.is_(None),
+                                               MT5Agent.account_login == login)
+                        .order_by(MT5Agent.last_seen_at.desc().nullslast())).all()
+    for a in agents:
+        if (a.account_server or "") == server:
+            return a
+    return None
+
+
+def resolve_agent(scope: str = "full", account: tuple[int, str] | None = None) -> ResolvedAgent | None:
     """The agent to talk to and the secret to sign with. ``scope="read"`` uses only the read-only secret and never
-    touches the trading secret (fails closed if the agent has none)."""
+    touches the trading secret (fails closed if the agent has none). ``account=(login, server)``: only the agent of
+    that account (multi-account)."""
     from app.core.security import decrypt_read_secret, decrypt_secret
     from app.db.session import session_scope
     with session_scope() as db:
-        a = select_agent(db)
+        a = agent_for_account(db, *account) if account is not None else select_agent(db)
         if a is None:
             return None
         if scope == "read":

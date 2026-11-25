@@ -130,11 +130,15 @@ def open_position(db: Session, bridge: BridgeClient, *, symbol: str, direction: 
                   signal: TradingSignal | None = None, order_type: str = "MARKET", price: float | None = None,
                   requested_volume: float | None = None, size_multiplier: float = 1.0,
                   strategy_codes: list[str] | None = None, expires_at: datetime | None = None,
-                  confirm_live: bool = False) -> TradeOrder:
+                  confirm_live: bool = False, account: TradingAccount | None = None) -> TradeOrder:
+    """``account``: the execution account to trade (multi-account); default the active account. ``bridge`` must be
+    that account's connector, which also re-verifies login and server on the command itself."""
     state = tr.get_state(db)
-    account = tr.active_account(db)
+    account = account or tr.active_account(db)
     if account is None:
         raise ExecutionBlocked("No active trading account for the current mode")
+    if not account.is_active and not account.trading_enabled:
+        raise ExecutionBlocked(f"Account {account.login} is research-only (trading not enabled)")
     if account.mode != state.active_mode:
         raise ExecutionBlocked("Active account mode does not match trading mode")
     if account.mode == "LIVE" and (not account.live_approved_by or not account.verified):
@@ -143,7 +147,7 @@ def open_position(db: Session, bridge: BridgeClient, *, symbol: str, direction: 
         raise ExecutionBlocked("Explicit LIVE confirmation required for manual orders")
     if source == "AUTO" and not state.auto_trading:
         raise ExecutionBlocked("Auto trading is OFF")
-    if not state.startup_checks_passed:
+    if not tr.is_reconciled(db, account):
         raise ExecutionBlocked("Startup reconciliation has not passed; new entries blocked")
 
     # Idempotency first: the same signal can never produce two orders.
@@ -191,11 +195,11 @@ def open_position(db: Session, bridge: BridgeClient, *, symbol: str, direction: 
                    f"{direction} {symbol}: " + ("approved " + str(decision.volume) + " lots" if decision.approved
                                                 else "; ".join(decision.reasons[:3])))
     if decision.lock_trading and not state.risk_lock:
-        trip_risk_lock(db, bridge, decision.lock_reason)
+        trip_risk_lock(db, bridge, decision.lock_reason, account)
     if not decision.approved:
         idem = db.get(ExecutionIdempotency, eid)
         db.delete(idem)  # rejected before sending — release so a later re-evaluation is possible
-        if signal:
+        if signal and signal.status == "NEW":   # multi-account: never overwrite another account's execution
             signal.status = "REJECTED"
         notify(db, "RISK_REJECTION", f"Risk Engine rejected {direction} {symbol}", "; ".join(decision.reasons),
                {"risk_evaluation_id": ev.id})
@@ -226,10 +230,10 @@ def open_position(db: Session, bridge: BridgeClient, *, symbol: str, direction: 
 
 def manage(db: Session, bridge: BridgeClient, *, action: str, position_ticket: int, dedupe_key: str,
            user_id: int | None = None, stop_loss: float | None = None, take_profit: float | None = None,
-           volume: float | None = None, source: str = "SYSTEM") -> TradeOrder:
+           volume: float | None = None, source: str = "SYSTEM", account: TradingAccount | None = None) -> TradeOrder:
     """Protective / management commands (modify SL/TP, partial or full close). These reduce risk,
     so they are allowed during kill switch / risk lock, but still journalled and idempotent."""
-    account = tr.active_account(db)
+    account = account or tr.active_account(db)
     if account is None:
         raise ExecutionBlocked("No active account")
     pos = db.scalar(select(OpenPosition).where(OpenPosition.account_id == account.id,
@@ -269,10 +273,14 @@ def manage(db: Session, bridge: BridgeClient, *, action: str, position_ticket: i
     return order
 
 
-def reconcile_unknown(db: Session, bridge: BridgeClient) -> dict:
-    """Resolve every SENT/UNKNOWN order via the connector journal. Never resubmits with a new id."""
+def reconcile_unknown(db: Session, bridge: BridgeClient, account: TradingAccount | None = None) -> dict:
+    """Resolve every SENT/UNKNOWN order via the connector journal. Never resubmits with a new id. With ``account``
+    (multi-account), only that account's orders, through that account's connector."""
     resolved = 0
-    pending = db.scalars(select(TradeOrder).where(TradeOrder.status.in_(["SENT", "UNKNOWN", "PENDING"]))).all()
+    q = select(TradeOrder).where(TradeOrder.status.in_(["SENT", "UNKNOWN", "PENDING"]))
+    if account is not None:
+        q = q.where(TradeOrder.account_id == account.id)
+    pending = db.scalars(q).all()
     for o in pending:
         try:
             res = bridge.execution(o.execution_id)
@@ -297,19 +305,22 @@ def reconcile_unknown(db: Session, bridge: BridgeClient) -> dict:
     return {"checked": len(pending), "resolved": resolved}
 
 
-def trip_risk_lock(db: Session, bridge: BridgeClient | None, reason: str) -> None:
+def trip_risk_lock(db: Session, bridge: BridgeClient | None, reason: str, account: TradingAccount | None = None) -> None:
+    """A tripped limit locks new entries on every account (conservative); the position policy is applied to the
+    account whose limit tripped, through its connector."""
     state = tr.get_state(db)
     state.risk_lock, state.risk_lock_reason = True, reason
     system_event(db, "risk", "critical", f"Risk lock: {reason}")
     notify(db, "DAILY_LOSS_LIMIT" if "daily" in reason else "DRAWDOWN_WARNING", "Trading locked by Risk Engine", reason)
     if bridge is not None:
-        apply_position_policy(db, bridge, reason)
+        apply_position_policy(db, bridge, reason, account=account)
 
 
 def apply_position_policy(db: Session, bridge: BridgeClient, reason: str, policy: str | None = None,
-                          user_id: int | None = None) -> list[dict]:
-    """Apply the configured existing-position policy (PROTECT / REDUCE / CLOSE_ALL)."""
-    account = tr.active_account(db)
+                          user_id: int | None = None, account: TradingAccount | None = None) -> list[dict]:
+    """Apply the configured existing-position policy (PROTECT / REDUCE / CLOSE_ALL) to one account (default the active
+    account) through its connector."""
+    account = account or tr.active_account(db)
     if account is None:
         return []
     tr.sync_positions(db, bridge, account)
@@ -336,15 +347,15 @@ def apply_position_policy(db: Session, bridge: BridgeClient, reason: str, policy
         key = f"{account.id}:policy:{pol}:{a['ticket']}:{a['action']}:{stamp}"
         try:
             if a["action"] == "CLOSE":
-                manage(db, bridge, action="CLOSE", position_ticket=a["ticket"], dedupe_key=key, user_id=user_id)
+                manage(db, bridge, account=account, action="CLOSE", position_ticket=a["ticket"], dedupe_key=key, user_id=user_id)
             elif a["action"] == "PARTIAL_CLOSE":
                 spec = tr.spec_for(db.scalar(select(Symbol).where(Symbol.broker_symbol == a["symbol"])))
                 vol = risk.floor_to_step(a["volume"], spec.volume_step)
                 if vol >= spec.volume_min:
-                    manage(db, bridge, action="PARTIAL_CLOSE", position_ticket=a["ticket"], dedupe_key=key, volume=vol,
+                    manage(db, bridge, account=account, action="PARTIAL_CLOSE", position_ticket=a["ticket"], dedupe_key=key, volume=vol,
                            user_id=user_id)
             elif a["action"] == "MODIFY":
-                manage(db, bridge, action="MODIFY_SLTP", position_ticket=a["ticket"], dedupe_key=key,
+                manage(db, bridge, account=account, action="MODIFY_SLTP", position_ticket=a["ticket"], dedupe_key=key,
                        stop_loss=a["stop_loss"], user_id=user_id)
             else:
                 notify(db, "EXECUTION_FAILURE", "Manual attention required", a.get("detail", ""), a)

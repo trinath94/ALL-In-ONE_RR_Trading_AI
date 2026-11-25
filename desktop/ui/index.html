@@ -76,10 +76,12 @@
           <button id="mt5-live-cancel" type="button">Cancel</button></div>
       </div>
       <p class="muted" id="mt5-note">The connector runs natively in your Windows session and attaches only to the terminal and
-        account of the selected profile. It never asks for or stores your trading password.</p>
+        account of the selected profile. It never asks for or stores your trading password.
+        To trade several accounts at once, add one profile per MT5 terminal installation (each logged in to its own
+        account), then for each: <b>Use</b>, <b>Link</b>, <b>Start</b>. Each profile runs its own connector.</p>
       <dl class="kv" id="mt5-status"></dl>
       <h3>Profiles</h3>
-      <table class="tbl"><thead><tr><th></th><th>Name</th><th>Server</th><th>Account</th><th>Terminal</th><th></th></tr></thead>
+      <table class="tbl"><thead><tr><th></th><th>Connector</th><th>Name</th><th>Server</th><th>Account</th><th>Terminal</th><th></th></tr></thead>
         <tbody id="mt5-profiles"></tbody></table>
       <form id="mt5-form" class="form" autocomplete="off">
         <label>Name <input id="f-name" maxlength="64" required></label>

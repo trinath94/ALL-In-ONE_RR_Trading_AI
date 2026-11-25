@@ -47,7 +47,7 @@ function renderProfiles(o) {
   body.replaceChildren();
   if (!o.profiles.length) {
     const tr = el("tr"), td = el("td", "No profiles yet. Add one below: choose the terminal and enter the account it is for.", "muted");
-    td.colSpan = 6;
+    td.colSpan = 7;
     tr.append(td);
     body.append(tr);
   }
@@ -65,7 +65,11 @@ function renderProfiles(o) {
       try { await invoke("mt5_delete_profile", { profileId: p.profile_id }); await refreshMt5(); } catch (e) { mt5Out(String(e)); }
     });
     const login = String(p.expected_login);
-    tr.append(el("td").appendChild(use).parentNode, el("td", p.name), el("td", `${p.server}:${p.port}`),
+    // Multi-account: each profile runs its own connector (one MT5 terminal, one account).
+    const inst = (o.instances || []).find((x) => x[0] === p.profile_id);
+    const ist = inst ? inst[1] : null;
+    const state = el("td", ist ? (ist.running ? `running (${ist.state})` : "stopped") : "—", ist && ist.running ? "ok" : "muted");
+    tr.append(el("td").appendChild(use).parentNode, state, el("td", p.name), el("td", `${p.server}:${p.port}`),
       el("td", "•".repeat(Math.max(0, login.length - 3)) + login.slice(-3)), el("td", p.terminal_exe), el("td").appendChild(del).parentNode);
     body.append(tr);
   }

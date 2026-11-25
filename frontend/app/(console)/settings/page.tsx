@@ -5,6 +5,7 @@ import { Badge, Btn, Confirm, ErrorLine, Field, inputCls, Panel, Table } from "@
 import { api, fmt, patch, post } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
 import AccountSettings from "@/components/AccountSettings";
+import ExecutionAccounts from "@/components/ExecutionAccounts";
 
 export default function Settings() {
   const me = useMe();
@@ -47,6 +48,7 @@ export default function Settings() {
             <div><Btn tone="neon" onClick={() => run(() => post("/api/accounts", { ...a, login: Number(a.login), password: a.password || null }), "Account added — verify it next")}>Add account</Btn></div>
           </div>}
         </Panel>
+        <div className="xl:col-span-2"><ExecutionAccounts /></div>
         {sel && <div className="xl:col-span-2"><AccountSettings account={sel} symbols={syms} canManage={admin}
           canRisk={can(me, "risk.manage")} onSaved={reload} /></div>}
         <Panel title="Symbols" right={admin && <Btn small onClick={() => run(async () => { const r = await post("/api/symbols/discover"); setMsg(`Discovered ${r.discovered} symbols from MT5`); })}>Discover from MT5</Btn>}>

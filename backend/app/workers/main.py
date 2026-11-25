@@ -14,10 +14,10 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.db.models import OpenPosition, Symbol, TradingSignal
+from app.db.models import OpenPosition, Symbol, TradingAccount, TradingSignal
 from app.db.session import session_scope
 from app.execution import manager as em
-from app.execution.bridge import BridgeClient, BridgeError, BridgeUnavailable
+from app.execution.bridge import AccountBridges, BridgeClient, BridgeError, BridgeUnavailable
 from app.news.service import refresh as refresh_news
 from app.risk import engine as risk
 from app.scanner.service import expire_signals, scan_once
@@ -29,17 +29,21 @@ UTC = timezone.utc
 LOCK_KEY = "rr:worker:lock"
 
 
-def startup_checks(bridge: BridgeClient) -> tuple[bool, list[str]]:
+def startup_checks(bridge: BridgeClient, account_id: int | None = None) -> tuple[bool, list[str]]:
     """Part 19: reconnect, verify identity, load real positions/orders, reconcile app state and
-    journal, verify SL/TP protection. New entries stay blocked until every check passes."""
+    journal, verify SL/TP protection. New entries stay blocked until every check passes.
+    Multi-account: ``account_id`` reconciles that execution account through its own connector (default: the active
+    account, unchanged)."""
     report: list[str] = []
     with session_scope() as db:
         state = tr.get_state(db)
-        state.startup_checks_passed = False
-        account = tr.active_account(db)
+        account = db.get(TradingAccount, account_id) if account_id is not None else tr.active_account(db)
         if account is None:
+            if account_id is None:
+                state.startup_checks_passed = False
             report.append("FAIL: no active account configured for mode " + state.active_mode)
             return False, report
+        tr.set_reconciled(db, account, False)
         try:
             h = bridge.health()
             report.append(f"MT5 connected={h.get('connected')} identity_ok={h.get('identity_ok')}")
@@ -67,26 +71,34 @@ def startup_checks(bridge: BridgeClient) -> tuple[bool, list[str]]:
             return False, report + [f"FAIL: {exc}"]
         except BridgeError as exc:
             return False, report + [f"FAIL: bridge {exc}"]
-        rec = em.reconcile_unknown(db, bridge)
+        rec = em.reconcile_unknown(db, bridge, None if account.is_active else account)
         report.append(f"execution journal reconciled: {rec}")
-        unresolved = db.scalar(select(em.TradeOrder.id).where(em.TradeOrder.status.in_(["SENT", "UNKNOWN"])).limit(1))
+        uq = select(em.TradeOrder.id).where(em.TradeOrder.status.in_(["SENT", "UNKNOWN"]))
+        if not account.is_active:
+            uq = uq.where(em.TradeOrder.account_id == account.id)
+        unresolved = db.scalar(uq.limit(1))
         if unresolved:
             return False, report + ["FAIL: unresolved executions remain; entries blocked until resolved"]
         unprotected = db.scalars(select(OpenPosition).where(OpenPosition.account_id == account.id,
                                                             OpenPosition.stop_loss.is_(None))).all()
         if unprotected:
             report.append(f"{len(unprotected)} positions without SL -> applying PROTECT")
-            em.apply_position_policy(db, bridge, "startup: unprotected positions", "PROTECT")
+            em.apply_position_policy(db, bridge, "startup: unprotected positions", "PROTECT", account=account)
             still = db.scalars(select(OpenPosition).where(OpenPosition.account_id == account.id,
                                                           OpenPosition.stop_loss.is_(None))).all()
             if still:
                 return False, report + ["FAIL: could not protect all positions"]
-        state.startup_checks_passed = True
-        system_event(db, "worker", "info", "Startup checks passed", {"report": report})
+        tr.set_reconciled(db, account, True)
+        system_event(db, "worker", "info", "Startup checks passed", {"report": report, "account": account.login})
     return True, report
 
 
-def auto_execute_factory(bridge: BridgeClient):
+def auto_execute_factory(bridge: BridgeClient, bridges: AccountBridges | None = None):
+    """Multi-account: one signal is evaluated for every execution account (the active account first, then every other
+    account enabled for trading in the active mode). Each account passes its own eligibility, Risk Engine (its own
+    limits and equity) and idempotency key, through its own connector."""
+    bridges = bridges or AccountBridges(bridge, factory=lambda a: None)
+
     def run(signal_id: int) -> None:
         with session_scope() as db:
             state = tr.get_state(db)
@@ -101,32 +113,36 @@ def auto_execute_factory(bridge: BridgeClient):
                     log.info("signal %s not auto-executed: %s", signal_id, why)
                 return
             sym = db.get(Symbol, sig.symbol_id)
-            account = tr.active_account(db)
-            if account is None:
-                return
             codes = sorted({s["strategy"] for s in sig.strategies})
-            blocked = tr.account_block(account, sym.broker_symbol, codes)
-            if blocked is not None:
-                log.info("signal %s not auto-executed on account %s: %s", signal_id, account.login, blocked)
-                return
-            try:
-                em.open_position(db, bridge, symbol=sym.broker_symbol, direction=sig.decision,
-                                 stop_loss=float(sig.stop_loss), take_profit=float(sig.tp2) if sig.tp2 else None,
-                                 source="AUTO", dedupe_key=f"{account.id}:signal:{sig.id}:OPEN", signal=sig,
-                                 strategy_codes=sorted({s["strategy"] for s in sig.strategies}),
-                                 expires_at=sig.expires_at)
-            except em.ExecutionBlocked as exc:
-                log.info("auto-execution blocked for signal %s: %s", signal_id, exc.reason)
-            except BridgeError as exc:
-                log.warning("auto-execution bridge error: %s", exc)
+            for account in tr.execution_accounts(db):
+                blocked = tr.account_block(account, sym.broker_symbol, codes)
+                if blocked is not None:
+                    log.info("signal %s not auto-executed on account %s: %s", signal_id, account.login, blocked)
+                    continue
+                b = bridges.get(account)
+                if b is None:
+                    log.info("signal %s: no connector for account %s (%s)", signal_id, account.login,
+                             bridges.errors.get(account.id, "not connected"))
+                    continue
+                try:
+                    em.open_position(db, b, symbol=sym.broker_symbol, direction=sig.decision,
+                                     stop_loss=float(sig.stop_loss), take_profit=float(sig.tp2) if sig.tp2 else None,
+                                     source="AUTO", dedupe_key=f"{account.id}:signal:{sig.id}:OPEN", signal=sig,
+                                     strategy_codes=codes, expires_at=sig.expires_at, account=account)
+                except em.ExecutionBlocked as exc:
+                    log.info("auto-execution blocked for signal %s on account %s: %s", signal_id, account.login,
+                             exc.reason)
+                except BridgeError as exc:
+                    log.warning("auto-execution bridge error on account %s: %s", account.login, exc)
     return run
 
 
-def manage_positions(bridge: BridgeClient) -> None:
+def manage_positions(bridge: BridgeClient, account_id: int | None = None) -> None:
     """Break-even, partial profit, trailing stops; plus Claude-independent invalidation is
-    left to explicit stops. All changes go through idempotent journalled commands."""
+    left to explicit stops. All changes go through idempotent journalled commands. ``account_id``: one execution
+    account through its own connector (default: the active account)."""
     with session_scope() as db:
-        account = tr.active_account(db)
+        account = db.get(TradingAccount, account_id) if account_id is not None else tr.active_account(db)
         if account is None:
             return
         params = tr.account_risk_params(db, account)
@@ -157,7 +173,7 @@ def manage_positions(bridge: BridgeClient) -> None:
             for act in exits:
                 key = f"{account.id}:exit:{p.ticket}"
                 try:
-                    em.manage(db, bridge, action="CLOSE", position_ticket=p.ticket, dedupe_key=key)
+                    em.manage(db, bridge, action="CLOSE", position_ticket=p.ticket, dedupe_key=key, account=account)
                     agent_activity("execution", "approved", f"{p.symbol} #{p.ticket}: {act['reason']}")
                     from app.notifications.service import notify
                     notify(db, "TRADE_CLOSED", f"{p.symbol} #{p.ticket} closed", act["reason"])
@@ -168,7 +184,8 @@ def manage_positions(bridge: BridgeClient) -> None:
             for act in risk.manage_position(view, params, a, spec):
                 key = f"{account.id}:manage:{p.ticket}:{act['action']}:{act.get('stop_loss', act.get('volume'))}"
                 try:
-                    em.manage(db, bridge, action="MODIFY_SLTP" if act["action"] == "MODIFY" else act["action"],
+                    em.manage(db, bridge, account=account,
+                              action="MODIFY_SLTP" if act["action"] == "MODIFY" else act["action"],
                               position_ticket=p.ticket, dedupe_key=key, stop_loss=act.get("stop_loss"),
                               volume=act.get("volume"))
                     agent_activity("execution", "approved", f"{p.symbol} #{p.ticket}: {act.get('reason')}")
@@ -222,6 +239,70 @@ def _exit_actions(db, bridge: BridgeClient, p, view, params) -> list[dict]:
                              engine_view=view_now)
 
 
+def other_accounts_cycle(bridges: AccountBridges) -> dict:
+    """Multi-account: maintain every execution account other than the active one (the active account keeps its
+    original path). Per account, through its own connector: health, startup reconciliation, account and position sync,
+    journal reconciliation, the kill switch's position policy, and position management. One account's failure never
+    affects another; a disconnected account is reconciled again before its next entry."""
+    out: dict = {}
+    with session_scope() as db:
+        st = tr.get_state(db)
+        ids = [a.id for a in tr.execution_accounts(db) if not a.is_active]
+        if not st.kill_switch:          # the kill switch was reset: the policy applies again on the next one
+            for a in db.scalars(select(TradingAccount).where(TradingAccount.emergency_applied.is_(True))):
+                a.emergency_applied = False
+    for aid in ids:
+        with session_scope() as db:
+            acct = db.get(TradingAccount, aid)
+            login = acct.login
+            bridge = bridges.get(acct)
+        if bridge is None:
+            out[login] = "no connector"
+            continue
+        try:
+            h = bridge.health()
+            if not h.get("connected") or not h.get("identity_ok"):
+                with session_scope() as db:
+                    tr.set_reconciled(db, db.get(TradingAccount, aid), False)
+                out[login] = "disconnected"
+                continue
+            with session_scope() as db:
+                ok = tr.is_reconciled(db, db.get(TradingAccount, aid))
+            if not ok:
+                good, report = startup_checks(bridge, aid)
+                log.info("startup checks for account %s: %s %s", login, good, report)
+                if not good:
+                    out[login] = "reconciliation failed"
+                    continue
+            with session_scope() as db:
+                acct = db.get(TradingAccount, aid)
+                tr.sync_account(db, bridge, acct)
+                tr.sync_positions(db, bridge, acct)
+                em.reconcile_unknown(db, bridge, acct)
+                st = tr.get_state(db)
+                if st.kill_switch and not acct.emergency_applied:
+                    reason = st.kill_reason or "kill switch"
+                    em.apply_position_policy(db, bridge, reason, account=acct)
+                    from app.execution.reconcile import cancel_engine_pending
+                    cancel_engine_pending(db, bridge, acct, reason, None)
+                    acct.emergency_applied = True
+            manage_positions(bridge, aid)
+            out[login] = "ok"
+        except tr.IdentityError as exc:
+            with session_scope() as db:
+                em.kill_switch(db, None, None, f"Account {login} identity changed: {exc}")
+            out[login] = "identity changed"
+        except BridgeError as exc:
+            with session_scope() as db:
+                tr.set_reconciled(db, db.get(TradingAccount, aid), False)
+            bridges.drop(aid)
+            out[login] = f"bridge error: {exc}"
+        except Exception:  # noqa: BLE001 - one account's failure must not stop the others
+            log.exception("account %s cycle failed", login)
+            out[login] = "error"
+    return out
+
+
 def heartbeat(bridge: BridgeClient, last_ok: list[bool]) -> bool:
     try:
         h = bridge.health()
@@ -257,7 +338,8 @@ def main() -> None:
     if s.anthropic_api_key:
         from app.agents.claude_agent import ClaudeAgent
         agent = ClaudeAgent()
-    auto = auto_execute_factory(bridge)
+    bridges = AccountBridges(bridge)
+    auto = auto_execute_factory(bridge, bridges)
     last_ok = [True]
     last_scan = last_news = 0.0
     while not stop["flag"]:
@@ -278,6 +360,7 @@ def main() -> None:
                     em.reconcile_unknown(db, bridge)
                     expire_signals(db)
                 manage_positions(bridge)
+                other_accounts_cycle(bridges)
                 if time.time() - last_news > 3600:
                     with session_scope() as db:
                         refresh_news(db)

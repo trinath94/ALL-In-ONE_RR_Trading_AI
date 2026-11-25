@@ -2,6 +2,14 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Multi-account execution (2026-11-25).** The engine trades every execution account of the active mode at once: the
+active account and every other account enabled for trading (verified; a LIVE account also approved, and only while
+LIVE is the active mode). Each signal is evaluated separately for every account: its symbols and strategies, its own
+Risk Engine limits and equity, its own idempotency key, through its own MT5 connector. Each account is reconciled at
+start through its own connector before its first entry; the kill switch blocks entries everywhere and applies the
+position policy on every account. In the desktop window each MT5 profile now runs its own connector (one terminal, one
+account). Settings → Execution accounts shows what is traded now. Migration 0017 (additive).
+
 **Multi-account foundation (2026-11-25).** Every trading account now has its own name, a trading switch (execution
 account or research-only), eligible symbols and strategies, and its own risk limits over its mode's template
 (Settings → Trading accounts → Settings). Without per-account values nothing changes. Enabling a LIVE account needs

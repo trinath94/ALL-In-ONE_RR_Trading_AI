@@ -135,8 +135,9 @@ def _noop_execute(_signal_id: int) -> None:
 
 
 # ---- monitor ----------------------------------------------------------------------------------------------------
-def monitor_cycle(bridge: BridgeClient, last_ok: list[bool], clock: dict) -> bool:
-    """One monitor iteration. Mirrors the non-scanning part of the original worker loop."""
+def monitor_cycle(bridge: BridgeClient, last_ok: list[bool], clock: dict, bridges=None) -> bool:
+    """One monitor iteration. Mirrors the non-scanning part of the original worker loop. ``bridges``
+    (multi-account): the other execution accounts are maintained through their own connectors."""
     ok = legacy.heartbeat(bridge, last_ok)
     if not ok:
         return False
@@ -174,6 +175,8 @@ def monitor_cycle(bridge: BridgeClient, last_ok: list[bool], clock: dict) -> boo
                 raise
             orch.record("trade_management", "manage_open_positions", started_at=started,
                         duration_ms=(time.perf_counter() - t0) * 1000, input_refs={"open_positions": n_open})
+        if bridges is not None:
+            legacy.other_accounts_cycle(bridges)
         refresh_symbol_catalogue(bridge)
         if time.time() - clock.get("news", 0.0) > 3600:
             with session_scope() as db:
@@ -310,6 +313,7 @@ def run(role: str) -> int:
         last_ok, clock, last_scan, last_agent_check, agent_key = [True], {}, 0.0, 0.0, None
         agent = None
         auto = None
+        bridges = None
         from app.services.resources import Reporter
         usage = Reporter(role)       # Phase 20: this container's CPU and memory against its limits
         while not stop["flag"]:
@@ -323,7 +327,9 @@ def run(role: str) -> int:
                     if s.bridge_mode == "relay" and current_agent_key() != agent_key:
                         log.info("registered MT5 connector or its credentials changed; reconnecting")
                         bridge.close()
-                        bridge, auto = None, None
+                        if bridges is not None:
+                            bridges.close()
+                        bridge, auto, bridges = None, None, None
                 if bridge is None:
                     bridge = connect_bridge()
                     if bridge is None:
@@ -333,9 +339,11 @@ def run(role: str) -> int:
                         continue
                     last_agent_check = time.time()
                     agent_key = current_agent_key()
-                    auto = legacy.auto_execute_factory(bridge) if role == "trading" else None
+                    from app.execution.bridge import AccountBridges
+                    bridges = AccountBridges(bridge)
+                    auto = legacy.auto_execute_factory(bridge, bridges) if role == "trading" else None
                 if role == "monitor":
-                    monitor_cycle(bridge, last_ok, clock)
+                    monitor_cycle(bridge, last_ok, clock, bridges)
                     time.sleep(s.bridge_heartbeat_seconds)
                 elif role == "analysis":
                     if time.time() - last_scan > s.scan_interval_seconds:
@@ -354,6 +362,8 @@ def run(role: str) -> int:
                 time.sleep(2)
     finally:
         release(role, r)
+        if bridges is not None:
+            bridges.close()
         if bridge is not None:
             bridge.close()
         agent_activity(f"{role}_role", "waiting", f"{role} role stopped")

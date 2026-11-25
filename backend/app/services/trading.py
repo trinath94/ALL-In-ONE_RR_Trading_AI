@@ -99,6 +99,35 @@ def trading_accounts(db: Session, mode: str | None = None) -> list[TradingAccoun
     return list(db.scalars(q.order_by(TradingAccount.id)))
 
 
+def is_reconciled(db: Session, account: TradingAccount) -> bool:
+    """Startup reconciliation passed for this account. The active account keeps the original global flag."""
+    return bool(get_state(db).startup_checks_passed) if account.is_active else bool(account.reconciled)
+
+
+def set_reconciled(db: Session, account: TradingAccount, ok: bool) -> None:
+    account.reconciled = ok
+    if account.is_active:
+        get_state(db).startup_checks_passed = ok
+
+
+def execution_accounts(db: Session) -> list[TradingAccount]:
+    """The accounts the engine trades now: the active account first, then every other account enabled for trading in
+    the active mode. A LIVE account is included only while LIVE is the active mode (the existing LIVE switch) and only
+    if it is verified and approved."""
+    st = get_state(db)
+    out: list[TradingAccount] = []
+    act = active_account(db)
+    if act is not None:
+        out.append(act)
+    for a in trading_accounts(db, st.active_mode):
+        if act is not None and a.id == act.id:
+            continue
+        if not a.verified or (a.mode == "LIVE" and not a.live_approved_by):
+            continue
+        out.append(a)
+    return out
+
+
 def account_block(account: TradingAccount, symbol: str, strategy_codes) -> str | None:
     """Why this account would not auto-trade this setup, or None. Research-only accounts, symbols and strategies
     outside the account's lists are refused; the Risk Engine still decides everything else."""
@@ -245,6 +274,7 @@ def activate_account(db: Session, a: TradingAccount) -> None:
     and requires the startup checks to pass again."""
     for o in db.scalars(select(TradingAccount).where(TradingAccount.mode == a.mode)):
         o.is_active = o.id == a.id
+        o.reconciled = False          # every account of the mode is reconciled again under the new arrangement
     a.trading_enabled = True          # the account the engine trades is an execution account
     st = get_state(db)
     if st.active_mode == a.mode:

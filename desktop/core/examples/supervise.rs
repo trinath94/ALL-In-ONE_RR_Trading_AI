@@ -28,7 +28,7 @@ fn main() {
     if setup.secrets_created {
         eprintln!("created stack secrets in {}", paths.secrets_dir().display());
     }
-    let native = setup.connector.as_ref().map(|c| LocalConnector { ctl: c.ctl(&runner), profile: c.profile.clone() });
+    let native = setup.connector.as_ref().map(|c| LocalConnector { ctl: c.ctl(&runner), profile: c.profile.clone(), others: c.other_ctls(&runner) });
     let sup = Supervisor {
         cfg: setup.config,
         runner: &runner,

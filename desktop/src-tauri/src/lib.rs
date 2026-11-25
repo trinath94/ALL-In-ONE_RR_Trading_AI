@@ -142,7 +142,7 @@ async fn with_supervisor<T: Send + 'static>(
     let res = tauri::async_runtime::spawn_blocking(move || {
         let runner = SystemRunner;
         let setup = local::prepare(&paths, &settings, &runner)?;
-        let native = setup.connector.as_ref().map(|c| LocalConnector { ctl: c.ctl(&runner), profile: c.profile.clone() });
+        let native = setup.connector.as_ref().map(|c| LocalConnector { ctl: c.ctl(&runner), profile: c.profile.clone(), others: c.other_ctls(&runner) });
         let sup = Supervisor {
             cfg: setup.config,
             runner: &runner,
@@ -313,6 +313,8 @@ struct Mt5Overview {
     profiles: Vec<Mt5Profile>,
     active: Option<String>,
     status: Option<ConnectorStatus>,
+    /// Multi-account: every profile's connector instance (profile id, status).
+    instances: Vec<(String, ConnectorStatus)>,
 }
 
 fn profiles_path(state: &AppState) -> Result<std::path::PathBuf, String> {
@@ -334,6 +336,7 @@ fn mt5_overview(state: State<'_, AppState>) -> Result<Mt5Overview, String> {
         unavailable_reason: setup.is_none().then(|| "the RR MT5 Connector build was not found next to the application".into()),
         active: profiles.active.clone(),
         profiles: profiles.profiles,
+        instances: setup.as_ref().map(|s| s.statuses()).unwrap_or_default(),
         status: setup.map(|s| conn::read_status(&s.home)),
     })
 }

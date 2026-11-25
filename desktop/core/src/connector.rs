@@ -306,6 +306,8 @@ impl std::fmt::Display for StartError {
 pub struct ConnectorCtl<'a> {
     pub launch: Launch,
     pub home: PathBuf,
+    /// Multi-account: the connector instance of an additional MT5 profile (`RRMT5_INSTANCE`); None = the primary.
+    pub instance: Option<String>,
     /// Engine address the connector dials (LOCAL mode: the loopback gateway).
     pub engine_url: String,
     pub runner: &'a dyn Runner,
@@ -317,6 +319,9 @@ impl ConnectorCtl<'_> {
         a.extend(args.iter().map(|s| s.to_string()));
         let mut env = self.launch.env.clone();
         env.push(("RRMT5_HOME".into(), self.home.to_string_lossy().into_owned()));
+        if let Some(i) = &self.instance {
+            env.push(("RRMT5_INSTANCE".into(), i.clone()));
+        }
         CommandSpec { program: self.launch.program.clone(), args: a, env, timeout, stdout_file: None, stdin }
     }
 
@@ -502,15 +507,57 @@ impl ConnectorCtl<'_> {
 #[derive(Debug, Clone)]
 pub struct ConnectorSetup {
     pub launch: Launch,
+    /// The selected profile's instance folder.
     pub home: PathBuf,
     pub engine_url: String,
     /// The explicitly selected profile, if any.
     pub profile: Option<Mt5Profile>,
+    /// The selected profile's instance name (None: the primary instance).
+    pub instance: Option<String>,
+    /// The primary instance folder; additional instances live in `<base>/instances/<profile id>`.
+    pub base: PathBuf,
+    /// Every saved profile, to see and stop every instance.
+    pub all_profiles: Vec<Mt5Profile>,
+}
+
+/// Multi-account: one connector instance per MT5 profile (one terminal, one account). The first profile keeps the
+/// original folder and vault entry (existing installations are unchanged); every other profile has its own.
+pub fn instance_for(profiles: &[Mt5Profile], profile_id: &str) -> Option<String> {
+    match profiles.first() {
+        Some(first) if first.profile_id == profile_id => None,
+        _ => Some(profile_id.to_string()),
+    }
+}
+
+pub fn instance_home(base: &Path, instance: Option<&str>) -> PathBuf {
+    match instance {
+        None => base.to_path_buf(),
+        Some(i) => base.join("instances").join(i),
+    }
 }
 
 impl ConnectorSetup {
     pub fn ctl<'a>(&self, runner: &'a dyn Runner) -> ConnectorCtl<'a> {
-        ConnectorCtl { launch: self.launch.clone(), home: self.home.clone(), engine_url: self.engine_url.clone(), runner }
+        ConnectorCtl { launch: self.launch.clone(), home: self.home.clone(), instance: self.instance.clone(),
+                       engine_url: self.engine_url.clone(), runner }
+    }
+
+    /// The connector of every saved profile other than the selected one.
+    pub fn other_ctls<'a>(&self, runner: &'a dyn Runner) -> Vec<ConnectorCtl<'a>> {
+        let sel = self.profile.as_ref().map(|p| p.profile_id.clone());
+        self.all_profiles.iter().filter(|p| Some(&p.profile_id) != sel.as_ref()).map(|p| {
+            let instance = instance_for(&self.all_profiles, &p.profile_id);
+            ConnectorCtl { launch: self.launch.clone(), home: instance_home(&self.base, instance.as_deref()), instance,
+                           engine_url: self.engine_url.clone(), runner }
+        }).collect()
+    }
+
+    /// Status of each saved profile's connector instance.
+    pub fn statuses(&self) -> Vec<(String, ConnectorStatus)> {
+        self.all_profiles.iter().map(|p| {
+            let inst = instance_for(&self.all_profiles, &p.profile_id);
+            (p.profile_id.clone(), read_status(&instance_home(&self.base, inst.as_deref())))
+        }).collect()
     }
 }
 
@@ -529,6 +576,8 @@ pub fn link(sup: &crate::supervisor::Supervisor<'_>, n: &LocalConnector<'_>) -> 
 pub struct LocalConnector<'a> {
     pub ctl: ConnectorCtl<'a>,
     pub profile: Option<Mt5Profile>,
+    /// Multi-account: the other profiles' connectors. Stop (Stop All) stops them too; start stays per profile.
+    pub others: Vec<ConnectorCtl<'a>>,
 }
 
 impl crate::supervisor::NativeConnector for LocalConnector<'_> {
@@ -546,10 +595,21 @@ impl crate::supervisor::NativeConnector for LocalConnector<'_> {
 
     fn stop(&self) -> (crate::supervisor::Outcome, String) {
         use crate::supervisor::Outcome;
-        match self.ctl.stop() {
-            Ok(m) => (Outcome::Ok, m),
-            Err(e) => (Outcome::Failed, e),
+        let mut failed = false;
+        let mut msgs = vec![];
+        for (i, c) in std::iter::once(&self.ctl).chain(self.others.iter()).enumerate() {
+            if i > 0 && !c.status().running {
+                continue;
+            }
+            match c.stop() {
+                Ok(m) => msgs.push(if i == 0 { m } else { format!("{}: {m}", c.instance.as_deref().unwrap_or("primary")) }),
+                Err(e) => {
+                    failed = true;
+                    msgs.push(e)
+                }
+            }
         }
+        (if failed { Outcome::Failed } else { Outcome::Ok }, msgs.join("; "))
     }
 
     fn health(&self) -> (crate::supervisor::Outcome, String) {
@@ -590,6 +650,36 @@ mod tests {
             assert!(b.validate().is_err(), "{b:?}");
         }
         assert_eq!(profile().masked_login(), "•••••567");
+    }
+
+    #[test]
+    fn each_profile_has_its_own_connector_instance() {
+        let a = profile();
+        let b = Mt5Profile { profile_id: "demo-2".into(), expected_login: 51234568, ..profile() };
+        let c = Mt5Profile { profile_id: "live-1".into(), expected_login: 7001, ..profile() };
+        let all = vec![a.clone(), b.clone(), c.clone()];
+        assert_eq!(instance_for(&all, "demo-1"), None, "the first profile keeps the original instance");
+        assert_eq!(instance_for(&all, "demo-2").as_deref(), Some("demo-2"));
+        let base = PathBuf::from("/x/connector");
+        assert_eq!(instance_home(&base, None), base);
+        assert_eq!(instance_home(&base, Some("live-1")), base.join("instances").join("live-1"));
+        let setup = ConnectorSetup { launch: Launch { program: "py".into(), prefix: vec![], env: vec![] },
+            home: instance_home(&base, Some("demo-2")), engine_url: "http://127.0.0.1:47810".into(), profile: Some(b),
+            instance: Some("demo-2".into()), base: base.clone(), all_profiles: all };
+        let runner = crate::runner::SystemRunner;
+        let ctl = setup.ctl(&runner);
+        let spec = ctl.spec(&["--status"], Duration::ZERO, None);
+        assert!(spec.env.contains(&("RRMT5_INSTANCE".into(), "demo-2".into())));
+        assert!(spec.env.contains(&("RRMT5_HOME".into(), base.join("instances").join("demo-2").to_string_lossy().into_owned())));
+        let others = setup.other_ctls(&runner);
+        assert_eq!(others.len(), 2);
+        assert_eq!(others[0].home, base, "demo-1 (primary) is stopped by Stop All too");
+        assert_eq!(others[0].instance, None);
+        assert_eq!(others[1].home, base.join("instances").join("live-1"));
+        let primary = ConnectorSetup { profile: Some(a), instance: None, home: base.clone(), ..setup };
+        let spec = primary.ctl(&runner).spec(&["--status"], Duration::ZERO, None);
+        assert!(!spec.env.iter().any(|(k, _)| k == "RRMT5_INSTANCE"), "existing installations are unchanged");
+        assert_eq!(primary.statuses().len(), 3);
     }
 
     #[test]
@@ -692,7 +782,7 @@ os.remove(os.path.join(home, "stop.request")); st("STOPPED", "", {"id": p["profi
         std::fs::write(script, FAKE).unwrap();
         let py = crate::runner::which("python3", &[]).expect("python3");
         ConnectorCtl { launch: Launch { program: py, prefix: vec![script.to_string_lossy().into_owned()], env: extra_env },
-            home: home.to_path_buf(), engine_url: "http://127.0.0.1:47810".into(), runner: &crate::runner::SystemRunner }
+            home: home.to_path_buf(), instance: None, engine_url: "http://127.0.0.1:47810".into(), runner: &crate::runner::SystemRunner }
     }
 
     #[cfg(unix)]
@@ -733,7 +823,7 @@ os.remove(os.path.join(home, "stop.request")); st("STOPPED", "", {"id": p["profi
         };
         let sup = crate::supervisor::Supervisor { cfg, runner: &crate::runner::SystemRunner, secrets: &secrets,
             probe: Box::new(|_| unreachable!()), connector: None };
-        let lc = LocalConnector { ctl, profile: Some(profile()) };
+        let lc = LocalConnector { ctl, profile: Some(profile()), others: vec![] };
         let err = link(&sup, &lc).unwrap_err();
         assert!(err.contains("stop the MT5 connector"), "{err}");
         lc.ctl.stop().unwrap();
@@ -746,7 +836,7 @@ os.remove(os.path.join(home, "stop.request")); st("STOPPED", "", {"id": p["profi
         let ctl = fake_ctl(&t.path().join("home"), &t.path().join("fake.py"), vec![("FAKE_NOT_REGISTERED".into(), "1".into())]);
         assert!(matches!(ctl.start(&profile()).unwrap_err(), StartError::NotLinked(_)));
         use crate::supervisor::{NativeConnector, Outcome};
-        let lc = LocalConnector { ctl, profile: Some(profile()) };
+        let lc = LocalConnector { ctl, profile: Some(profile()), others: vec![] };
         assert_eq!(lc.start().0, Outcome::Skipped, "an unlinked connector is incomplete setup, not a failure");
     }
 

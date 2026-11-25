@@ -127,6 +127,10 @@ class TradingAccount(TimestampMixin, Base):
     risk_overrides: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     allowed_symbols: Mapped[list | None] = mapped_column(JSONB)     # broker symbols; None = every scanned symbol
     allowed_strategies: Mapped[list | None] = mapped_column(JSONB)  # strategy codes; None = every enabled strategy
+    # Multi-account execution (migration 0017). For the active account the global trading_state flag stays the source
+    # of truth for reconciliation; these hold the state of every other execution account.
+    reconciled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    emergency_applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 # 7. Symbols — discovered from MT5, never hardcoded

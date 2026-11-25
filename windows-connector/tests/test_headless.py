@@ -240,3 +240,32 @@ def test_pc_live_lock_refuses_a_demo_account_and_ignores_a_leftover_request(kr, 
     (home / headless.STOP_FILE).touch()
     t.join(timeout=15)
     assert box["rc"] == headless.EXIT_OK
+
+
+# ---- Multi-account: one connector instance per MT5 terminal -------------------------------------------------------
+def test_each_instance_has_its_own_folder_and_vault_entry(kr, monkeypatch, tmp_path):
+    from rr_connector.vault import Vault
+    monkeypatch.delenv("RRMT5_HOME", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.delenv("RRMT5_INSTANCE", raising=False)
+    primary_home, primary_vault = headless.home(), headless.vault_service()
+    assert primary_home == tmp_path / "RR Trading One" / "connector" and primary_vault == headless.VAULT_SERVICE
+    monkeypatch.delenv("RRMT5_HOME", raising=False)                 # home() exports it for the paths module
+    monkeypatch.setenv("RRMT5_INSTANCE", "demo-2")
+    second_home, second_vault = headless.home(), headless.vault_service()
+    assert second_home == tmp_path / "RR Trading One" / "connector" / "instances" / "demo-2"
+    assert second_vault == headless.VAULT_SERVICE + " [demo-2]"
+    a, b = Vault(kr, service=primary_vault), Vault(kr, service=second_vault)
+    a.set("bridge-secret", "first")
+    b.set("bridge-secret", "second")
+    assert a.get("bridge-secret") == "first" and b.get("bridge-secret") == "second"
+
+
+def test_instance_names_are_validated(monkeypatch):
+    import pytest
+    for bad in ("../x", "Demo 2", "a" * 40, "a.b"):
+        monkeypatch.setenv("RRMT5_INSTANCE", bad)
+        with pytest.raises(ValueError):
+            headless.instance()
+    monkeypatch.setenv("RRMT5_INSTANCE", "Live-1")
+    assert headless.instance() == "live-1"

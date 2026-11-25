@@ -162,6 +162,8 @@ def switch_mode(body: ModeIn, request: Request, user: User = Depends(require("tr
     leaving = tr.active_account(db)
     left = db.scalar(select(func.count(OpenPosition.id)).where(OpenPosition.account_id == leaving.id)) if leaving else 0
     st.active_mode, st.auto_trading, st.startup_checks_passed, st.updated_by = body.mode, False, False, user.id
+    for a in db.scalars(select(TradingAccount)):          # multi-account: every account reconciles again
+        a.reconciled = False
     audit(db, user.id, "MODE_SWITCH", body.mode, {"open_positions_left_on_previous_account": left}, ip=client_ip(request))
     publish("control", {"mode": body.mode})
     out = state_out(db)
@@ -218,7 +220,8 @@ def account_out(a: TradingAccount) -> dict:
             # multi-account foundation
             "label": a.label or "", "trading_enabled": bool(a.trading_enabled),
             "own_risk_limits": sorted((a.risk_overrides or {}).keys()),
-            "allowed_symbols": a.allowed_symbols, "allowed_strategies": a.allowed_strategies}
+            "allowed_symbols": a.allowed_symbols, "allowed_strategies": a.allowed_strategies,
+            "reconciled": bool(a.reconciled), "emergency_applied": bool(a.emergency_applied)}
 
 
 class AccountIn(BaseModel):
@@ -361,6 +364,35 @@ def account_settings(account_id: int, body: AccountSettingsIn, request: Request,
               ip=client_ip(request))
         publish("account", {"account_id": a.id, "settings": sorted(changes)})
     return account_out(a)
+
+
+@router.get("/accounts/status")
+def accounts_status(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Multi-account overview: which accounts the engine trades now, each account's reconciliation, connector,
+    latest equity and open positions. Read-only."""
+    from app.core.config import get_settings
+    from app.execution import relay
+    st = tr.get_state(db)
+    trading = {a.id for a in tr.execution_accounts(db)}
+    relay_mode = get_settings().bridge_mode == "relay"
+    out = []
+    for a in db.scalars(select(TradingAccount).order_by(TradingAccount.id)):
+        snap = db.scalar(select(AccountSnapshot).where(AccountSnapshot.account_id == a.id)
+                         .order_by(AccountSnapshot.id.desc()).limit(1))
+        n_open = db.scalar(select(func.count(OpenPosition.id)).where(OpenPosition.account_id == a.id)) or 0
+        agent = relay.agent_for_account(db, a.login, a.server) if relay_mode else None
+        why = (None if a.id in trading else
+               "research only" if not a.trading_enabled else
+               f"{a.mode} is not the active mode" if a.mode != st.active_mode else
+               "not verified" if not a.verified else
+               "LIVE approval missing" if a.mode == "LIVE" and not a.live_approved_by else "not traded")
+        out.append({**account_out(a), "trading_now": a.id in trading, "not_trading_reason": why,
+                    "reconciled_now": tr.is_reconciled(db, a),
+                    "connector": ({"agent_id": agent.id, "name": agent.name, "online": relay.is_online(agent.id)}
+                                  if agent is not None else None),
+                    "equity": f(snap.equity) if snap else None, "balance": f(snap.balance) if snap else None,
+                    "snapshot_at": snap.created_at if snap else None, "open_positions": n_open})
+    return {"active_mode": st.active_mode, "bridge_mode": get_settings().bridge_mode, "accounts": out}
 
 
 @router.get("/accounts/{account_id}/risk")

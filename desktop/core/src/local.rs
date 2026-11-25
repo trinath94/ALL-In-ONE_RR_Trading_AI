@@ -110,10 +110,14 @@ pub fn profiles_file(paths: &AppPaths) -> PathBuf {
 pub fn connector_setup(paths: &AppPaths, settings: &Settings) -> Result<Option<ConnectorSetup>, String> {
     let env = |k: &str| std::env::var(k).ok();
     let Some(launch) = connector::find_launch(&paths.install_dir, env) else { return Ok(None) };
-    let home = connector::connector_home(paths.windows_layout, env).ok_or("cannot locate the user's local app-data folder")?;
+    let base = connector::connector_home(paths.windows_layout, env).ok_or("cannot locate the user's local app-data folder")?;
     let profiles = Profiles::load(&profiles_file(paths))?;
     let engine_url = settings.endpoint().map_err(|e| e.to_string())?.base_url;
-    Ok(Some(ConnectorSetup { launch, home, engine_url, profile: profiles.active_profile().cloned() }))
+    let profile = profiles.active_profile().cloned();
+    // Multi-account: the selected profile's own connector instance (the first profile keeps the original folder).
+    let instance = profile.as_ref().and_then(|p| connector::instance_for(&profiles.profiles, &p.profile_id));
+    let home = connector::instance_home(&base, instance.as_deref());
+    Ok(Some(ConnectorSetup { launch, home, engine_url, profile, instance, base, all_profiles: profiles.profiles }))
 }
 
 fn probe(port: u16) -> crate::health::ProbeResult {
