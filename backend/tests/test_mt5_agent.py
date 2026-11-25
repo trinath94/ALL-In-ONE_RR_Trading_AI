@@ -84,7 +84,7 @@ def engine(db_clean, monkeypatch):
         bc = BrokerConnection(broker_name="Fake", server="Demo-Server", terminal_id=term.id)
         db.add(bc)
         db.flush()
-        db.add(TradingAccount(broker_connection_id=bc.id, login=1001, server="Demo-Server", mode="DEMO", is_active=True))
+        db.add(TradingAccount(broker_connection_id=bc.id, login=1001, server="Demo-Server", mode="DEMO", is_active=True, trading_enabled=True))
     yield f"http://127.0.0.1:{port}"
     server.should_exit = True
     th.join(timeout=5)

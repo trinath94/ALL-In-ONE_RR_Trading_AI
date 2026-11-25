@@ -51,7 +51,7 @@ def live_terminal(db_clean, tmp_path):
         db.add(bc)
         db.flush()
         db.add(TradingAccount(broker_connection_id=bc.id, login=1001, server="Demo-Server", mode="DEMO",
-                              is_active=True, verified=True))
+                              is_active=True, trading_enabled=True, verified=True))
         for mode in ("DEMO", "LIVE"):
             rc = db.scalar(select(RiskConfig).where(RiskConfig.account_mode == mode))
             rc.params = {**rc.params, "news_unknown_blocks": False}   # the test has no news feed
@@ -179,7 +179,7 @@ def test_mode_switch_refused_while_executions_are_unresolved(client, live_termin
                           volume=0.1, status="UNKNOWN"))
         admin_id = db.scalar(select(User.id).where(User.username == "admin"))
         db.add(TradingAccount(broker_connection_id=acct.broker_connection_id, login=2002, server="Live-Server",
-                              mode="LIVE", is_active=True, verified=True, live_approved_by=admin_id))
+                              mode="LIVE", is_active=True, trading_enabled=True, verified=True, live_approved_by=admin_id))
     r = client.post("/api/control/mode", json={"mode": "LIVE", "confirm_text": "ENABLE LIVE TRADING"}, headers=h(client))
     assert r.status_code == 409 and "unresolved" in r.text
     assert state(client)["mode"] == "DEMO"

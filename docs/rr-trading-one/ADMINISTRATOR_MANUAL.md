@@ -61,6 +61,17 @@ boundary-checked on its own. The candidate is confirmed only if **both** confirm
 rejects it; any other combination waits. If either provider gives no valid answer, the candidate stays unreviewed and
 is never auto-executed. Consensus costs two calls per candidate.
 
+**Per-account settings (multi-account foundation).** Settings → Trading accounts → **Settings** on an account:
+* **Name**, and **Enable trading / Make research-only**. Enabling needs a verified account; for a LIVE account also
+  `trade.live` and the LIVE approval. Disabling is always allowed.
+* **Symbols** and **strategies** the account may trade automatically (blank = all scanned symbols / all enabled
+  strategies).
+* **Risk limits** for this account (`risk.manage`). Blank fields use the mode template from the Risk Centre. The
+  values are validated like the templates; the LIVE readiness checklist compares a LIVE account's own limits with the
+  DEMO template.
+* API: `PUT /api/accounts/{id}/settings`, `GET/PUT /api/accounts/{id}/risk`; audited as `ACCOUNT_SETTINGS` and
+  `ACCOUNT_RISK_UPDATE`.
+
 **Engine with or without AI.** The Live Trading Control Center has an **Engine** switch: *With AI* (default) or
 *Without AI*. Without AI, candidate review is skipped (no provider call, no cost) and the engine's own BUY/SELL signals
 are auto-executed when auto trading is on; the Risk Engine and every risk limit apply unchanged. The switch needs

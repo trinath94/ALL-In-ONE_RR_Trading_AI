@@ -2,6 +2,13 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Multi-account foundation (2026-11-25).** Every trading account now has its own name, a trading switch (execution
+account or research-only), eligible symbols and strategies, and its own risk limits over its mode's template
+(Settings → Trading accounts → Settings). Without per-account values nothing changes. Enabling a LIVE account needs
+`trade.live` and its LIVE approval; LIVE stays locked. Migration 0016 (additive): the active account of each mode
+becomes its execution account. The engine still trades the active account; trading several accounts at once is the
+next step.
+
 **Engine with or without AI (2026-11-23).** A switch in the Live Trading Control Center runs the engine *With AI*
 (default, unchanged: only AI-confirmed candidates are auto-executed) or *Without AI* (no AI review or cost; the
 engine's own BUY/SELL signals are auto-executed). The Risk Engine and all risk limits apply in both. LIVE engine-only

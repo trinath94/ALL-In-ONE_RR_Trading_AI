@@ -53,7 +53,7 @@ def stack(db_clean, tmp_path):
         bc = BrokerConnection(broker_name="Fake", server="Demo-Server", terminal_id=term.id)
         db.add(bc)
         db.flush()
-        db.add(TradingAccount(broker_connection_id=bc.id, login=1001, server="Demo-Server", mode="DEMO", is_active=True))
+        db.add(TradingAccount(broker_connection_id=bc.id, login=1001, server="Demo-Server", mode="DEMO", is_active=True, trading_enabled=True))
         db.flush()
         tr.discover_symbols(db, bridge, bc.id)
         rc = db.scalar(select(RiskConfig).where(RiskConfig.account_mode == "DEMO"))

@@ -98,7 +98,7 @@ def test_probability_is_only_ever_a_calibrated_estimate():
 def test_history_and_exposure_are_reported(db_clean):
     demo, _ = accounts()
     with session_scope() as db:
-        db.get(TradingAccount, demo).is_active = True
+        db.get(TradingAccount, demo).is_active = db.get(TradingAccount, demo).trading_enabled = True
         from app.db.models_intel import PerformanceSnapshot
         now = datetime.now(UTC)
         db.add(PerformanceSnapshot(mode="DEMO", dimension="strategy", key="A", sample_size=64,

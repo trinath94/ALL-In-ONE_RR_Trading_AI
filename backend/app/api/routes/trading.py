@@ -214,7 +214,11 @@ def close_all(body: ConfirmIn, user: User = Depends(require("trade.control")), d
 def account_out(a: TradingAccount) -> dict:
     return {"id": a.id, "login": a.login, "server": a.server, "mode": a.mode, "currency": a.currency,
             "verified": a.verified, "verified_at": a.verified_at, "live_approved": bool(a.live_approved_by),
-            "is_active": a.is_active, "broker_connection_id": a.broker_connection_id}
+            "is_active": a.is_active, "broker_connection_id": a.broker_connection_id,
+            # multi-account foundation
+            "label": a.label or "", "trading_enabled": bool(a.trading_enabled),
+            "own_risk_limits": sorted((a.risk_overrides or {}).keys()),
+            "allowed_symbols": a.allowed_symbols, "allowed_strategies": a.allowed_strategies}
 
 
 class AccountIn(BaseModel):
@@ -300,6 +304,96 @@ def activate(account_id: int, user: User = Depends(require("system.manage")), db
     tr.activate_account(db, a)
     audit(db, user.id, "ACCOUNT_ACTIVATED", f"{a.login}@{a.server}", {"mode": a.mode})
     return account_out(a)
+
+
+class AccountSettingsIn(BaseModel):
+    label: str | None = Field(default=None, max_length=64)
+    trading_enabled: bool | None = None
+    # [] is refused (use trading_enabled=false for a research-only account); null = every symbol / strategy
+    allowed_symbols: list[str] | None = None
+    allowed_strategies: list[str] | None = None
+    clear_allowed_symbols: bool = False
+    clear_allowed_strategies: bool = False
+
+
+@router.put("/accounts/{account_id}/settings")
+def account_settings(account_id: int, body: AccountSettingsIn, request: Request,
+                     user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """Name, trading switch and eligible symbols and strategies of one account. Enabling trading needs a verified
+    account; for a LIVE account also trade.live and the administrator's LIVE approval. Disabling is always allowed."""
+    from app.db.models import Strategy
+    a = db.get(TradingAccount, account_id)
+    if not a:
+        raise HTTPException(404)
+    changes: dict = {}
+    if body.label is not None:
+        changes["label"] = body.label.strip()
+    if body.trading_enabled is True and not a.trading_enabled:
+        if not a.verified:
+            raise HTTPException(409, "Verify the account against its MT5 terminal before enabling trading")
+        if a.mode == "LIVE":
+            from app.api.deps import user_perms
+            if "trade.live" not in user_perms(user):
+                raise HTTPException(403, "Enabling a LIVE account for trading requires trade.live permission")
+            if not a.live_approved_by:
+                raise HTTPException(409, "Approve the LIVE account first (typed APPROVE <login>)")
+    if body.trading_enabled is not None:
+        changes["trading_enabled"] = body.trading_enabled
+    for field, clear, model, col in (("allowed_symbols", body.clear_allowed_symbols, Symbol, Symbol.broker_symbol),
+                                     ("allowed_strategies", body.clear_allowed_strategies, Strategy, Strategy.code)):
+        val = getattr(body, field)
+        if clear:
+            changes[field] = None
+        elif val is not None:
+            vals = sorted({v.strip() for v in val if v and v.strip()})
+            if not vals:
+                raise HTTPException(400, f"{field} cannot be empty; disable trading for a research-only account")
+            known = set(db.scalars(select(col).where(col.in_(vals))))
+            unknown = [v for v in vals if v not in known]
+            if unknown:
+                raise HTTPException(400, f"unknown {field.split('_')[1]}: {', '.join(unknown[:10])}")
+            changes[field] = vals
+    old = {k: getattr(a, k) for k in changes}
+    for k, v in changes.items():
+        setattr(a, k, v)
+    if changes:
+        audit(db, user.id, "ACCOUNT_SETTINGS", f"{a.login}@{a.server}", {"old": old, "new": changes},
+              ip=client_ip(request))
+        publish("account", {"account_id": a.id, "settings": sorted(changes)})
+    return account_out(a)
+
+
+@router.get("/accounts/{account_id}/risk")
+def account_risk(account_id: int, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The account's risk limits: its mode's template, the account's own values, and what applies."""
+    a = db.get(TradingAccount, account_id)
+    if not a:
+        raise HTTPException(404)
+    return {"account_id": a.id, "mode": a.mode, "template": tr.risk_params(db, a.mode).__dict__,
+            "overrides": dict(a.risk_overrides or {}), "effective": tr.account_risk_params(db, a).__dict__}
+
+
+@router.put("/accounts/{account_id}/risk")
+def put_account_risk(account_id: int, body: dict, request: Request, user: User = Depends(require("risk.manage")),
+                     db: Session = Depends(get_db)):
+    """Replace the account's own risk values (``{}`` = use the mode template). The result is validated like the mode
+    templates; every change is audited. A LIVE account's limits are also checked by the LIVE readiness checklist."""
+    from app.risk.engine import RiskParams
+    a = db.get(TradingAccount, account_id)
+    if not a:
+        raise HTTPException(404)
+    unknown = set(body) - set(RiskParams().__dict__)
+    if unknown:
+        raise HTTPException(400, f"unknown parameters {sorted(unknown)}")
+    eff = RiskParams.from_dict({**tr.risk_params(db, a.mode).__dict__, **body})
+    errs = eff.validate()
+    if errs:
+        raise HTTPException(400, "; ".join(errs))
+    old = dict(a.risk_overrides or {})
+    a.risk_overrides = {k: getattr(eff, k) for k in body}
+    audit(db, user.id, "ACCOUNT_RISK_UPDATE", f"{a.login}@{a.server}", {"old": old, "new": a.risk_overrides},
+          ip=client_ip(request))
+    return account_risk(a.id, user, db)
 
 
 # ---- dashboard -----------------------------------------------------------------------------

@@ -104,6 +104,11 @@ def auto_execute_factory(bridge: BridgeClient):
             account = tr.active_account(db)
             if account is None:
                 return
+            codes = sorted({s["strategy"] for s in sig.strategies})
+            blocked = tr.account_block(account, sym.broker_symbol, codes)
+            if blocked is not None:
+                log.info("signal %s not auto-executed on account %s: %s", signal_id, account.login, blocked)
+                return
             try:
                 em.open_position(db, bridge, symbol=sym.broker_symbol, direction=sig.decision,
                                  stop_loss=float(sig.stop_loss), take_profit=float(sig.tp2) if sig.tp2 else None,
@@ -124,7 +129,7 @@ def manage_positions(bridge: BridgeClient) -> None:
         account = tr.active_account(db)
         if account is None:
             return
-        params = tr.risk_params(db, account.mode)
+        params = tr.account_risk_params(db, account)
         for p in db.scalars(select(OpenPosition).where(OpenPosition.account_id == account.id)).all():
             sym = db.scalar(select(Symbol).where(Symbol.broker_symbol == p.symbol))
             if sym is None:

@@ -4,6 +4,7 @@ import { can, PageTitle, useMe } from "@/components/Shell";
 import { Badge, Btn, Confirm, ErrorLine, Field, inputCls, Panel, Table } from "@/components/ui";
 import { api, fmt, patch, post } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
+import AccountSettings from "@/components/AccountSettings";
 
 export default function Settings() {
   const me = useMe();
@@ -13,6 +14,8 @@ export default function Settings() {
   const [a, setA] = useState({ login: "", server: "", mode: "DEMO", password: "", broker_name: "", terminal_name: "mt5-windows-1", timezone: "Etc/GMT-2" });
   const [pw, setPw] = useState({ current_password: "", new_password: "" });
   const [approve, setApprove] = useState<any>(null);
+  const [selId, setSelId] = useState<number | null>(null);
+  const sel = (accts || []).find((x) => x.id === selId);
   const [msg, setMsg] = useState<string | null>(null); const [err, setErr] = useState<string | null>(null);
   const run = async (fn: () => Promise<any>, ok = "Done") => { setErr(null); setMsg(null); try { await fn(); setMsg(ok); reload(); rsym(); } catch (e: any) { setErr(e.message); } };
   return (
@@ -21,16 +24,19 @@ export default function Settings() {
       <ErrorLine error={err} />{msg && <div className="mb-2 text-[11px] text-neon">{msg}</div>}
       <div className="grid gap-3 xl:grid-cols-2">
         <Panel title="Trading accounts">
-          <Table rows={accts} empty="No accounts configured" cols={[{ k: "login", h: "Login" }, { k: "server", h: "Server" },
+          <Table rows={accts} empty="No accounts configured" cols={[{ k: "label", h: "Name", r: (x) => x.label || "—" }, { k: "login", h: "Login" }, { k: "server", h: "Server" },
             { k: "mode", h: "Mode", r: (x) => <Badge tone={x.mode === "LIVE" ? "bear" : "cyan"}>{x.mode}</Badge> },
             { k: "verified", h: "Verified", r: (x) => x.verified ? <Badge tone="neon">{fmt.time(x.verified_at)}</Badge> : <Badge tone="warn">no</Badge> },
             { k: "live_approved", h: "Live approved", r: (x) => x.mode === "LIVE" ? (x.live_approved ? "yes" : "no") : "n/a" },
             { k: "is_active", h: "Active", r: (x) => x.is_active ? <Badge tone="neon">active</Badge> : "" },
-            { k: "act", h: "", sort: false, r: (x) => admin && <div className="flex gap-1">
+            { k: "trading_enabled", h: "Trading", r: (x) => x.trading_enabled ? <Badge tone="neon">on</Badge> : <Badge tone="dim">research</Badge> },
+            { k: "act", h: "", sort: false, r: (x) => <div className="flex gap-1">
+              <Btn small tone={selId === x.id ? "cyan" : "dim"} onClick={() => setSelId(selId === x.id ? null : x.id)}>Settings</Btn>
+              {admin && <>
               <Btn small onClick={() => run(() => post(`/api/accounts/${x.id}/verify`), "Account verified against MT5")}>Verify</Btn>
               <Btn small onClick={() => run(() => post(`/api/accounts/${x.id}/activate`), "Activated (auto trading OFF, reconciliation required)")}>Activate</Btn>
               {x.mode === "LIVE" && !x.live_approved && can(me, "trade.live") && <Btn small tone="bear" onClick={() => setApprove(x)}>Approve live</Btn>}
-              {x.mode === "LIVE" && x.live_approved && can(me, "trade.live") && <Btn small tone="warn" onClick={() => run(() => post(`/api/accounts/${x.id}/revoke-live`), "LIVE approval revoked: LIVE entries are refused until approved again")}>Revoke live</Btn>}</div> }]} />
+              {x.mode === "LIVE" && x.live_approved && can(me, "trade.live") && <Btn small tone="warn" onClick={() => run(() => post(`/api/accounts/${x.id}/revoke-live`), "LIVE approval revoked: LIVE entries are refused until approved again")}>Revoke live</Btn>}</>}</div> }]} />
           {admin && <div className="mt-3 grid grid-cols-2 gap-2">
             <Field label="MT5 login"><input className={inputCls} value={a.login} onChange={(e) => setA({ ...a, login: e.target.value })} /></Field>
             <Field label="Server"><input className={inputCls} value={a.server} onChange={(e) => setA({ ...a, server: e.target.value })} /></Field>
@@ -41,6 +47,8 @@ export default function Settings() {
             <div><Btn tone="neon" onClick={() => run(() => post("/api/accounts", { ...a, login: Number(a.login), password: a.password || null }), "Account added — verify it next")}>Add account</Btn></div>
           </div>}
         </Panel>
+        {sel && <div className="xl:col-span-2"><AccountSettings account={sel} symbols={syms} canManage={admin}
+          canRisk={can(me, "risk.manage")} onSaved={reload} /></div>}
         <Panel title="Symbols" right={admin && <Btn small onClick={() => run(async () => { const r = await post("/api/symbols/discover"); setMsg(`Discovered ${r.discovered} symbols from MT5`); })}>Discover from MT5</Btn>}>
           <Table rows={syms} empty="Run discovery after configuring an account" cols={[{ k: "symbol", h: "Symbol" }, { k: "category", h: "Class" },
             { k: "tradable", h: "Tradable", r: (s) => s.tradable ? "yes" : "no" },

@@ -80,6 +80,39 @@ def risk_params(db: Session, mode: str) -> RiskParams:
     return RiskParams.from_dict(rc.params if rc else None)
 
 
+# ---- multi-account foundation ----------------------------------------------------------------
+def account_risk_params(db: Session, account: TradingAccount | None, mode: str | None = None) -> RiskParams:
+    """The limits that apply to one account: its mode's template (DEMO or LIVE) with the account's own overrides.
+    Without overrides this is exactly the mode template, so single-account installations behave as before."""
+    base = risk_params(db, account.mode if account is not None else (mode or "DEMO"))
+    over = (account.risk_overrides or {}) if account is not None else {}
+    if not over:
+        return base
+    return RiskParams.from_dict({**base.__dict__, **{k: v for k, v in over.items() if k in base.__dict__}})
+
+
+def trading_accounts(db: Session, mode: str | None = None) -> list[TradingAccount]:
+    """Accounts enabled for automatic trading (execution accounts), optionally of one mode."""
+    q = select(TradingAccount).where(TradingAccount.trading_enabled.is_(True))
+    if mode:
+        q = q.where(TradingAccount.mode == mode)
+    return list(db.scalars(q.order_by(TradingAccount.id)))
+
+
+def account_block(account: TradingAccount, symbol: str, strategy_codes) -> str | None:
+    """Why this account would not auto-trade this setup, or None. Research-only accounts, symbols and strategies
+    outside the account's lists are refused; the Risk Engine still decides everything else."""
+    if not account.trading_enabled:
+        return "the account is research-only (trading not enabled)"
+    if account.allowed_symbols is not None and symbol not in account.allowed_symbols:
+        return f"{symbol} is not among the account's symbols"
+    if account.allowed_strategies is not None:
+        codes = set(strategy_codes or [])
+        if not codes & set(account.allowed_strategies):
+            return "none of the signal's strategies is enabled for the account"
+    return None
+
+
 # ---- symbols --------------------------------------------------------------------------
 CRYPTO = {"BTC", "ETH", "LTC", "XRP", "SOL", "ADA", "DOGE", "BNB", "DOT"}
 METALS = {"XAU", "XAG", "XPT", "XPD"}
@@ -212,6 +245,7 @@ def activate_account(db: Session, a: TradingAccount) -> None:
     and requires the startup checks to pass again."""
     for o in db.scalars(select(TradingAccount).where(TradingAccount.mode == a.mode)):
         o.is_active = o.id == a.id
+    a.trading_enabled = True          # the account the engine trades is an execution account
     st = get_state(db)
     if st.active_mode == a.mode:
         st.auto_trading, st.startup_checks_passed = False, False

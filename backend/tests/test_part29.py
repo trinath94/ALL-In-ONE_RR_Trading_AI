@@ -274,7 +274,7 @@ def approved_live_account():
         demo = db.scalar(select(TradingAccount).where(TradingAccount.mode == "DEMO"))
         admin_id = db.scalar(select(User.id).where(User.username == "admin"))
         db.add(TradingAccount(broker_connection_id=demo.broker_connection_id, login=2002, server="Live-Server",
-                              mode="LIVE", is_active=True, verified=True, live_approved_by=admin_id))
+                              mode="LIVE", is_active=True, trading_enabled=True, verified=True, live_approved_by=admin_id))
 
 
 def test_readiness_requires_a_demo_track_record_and_gates_the_switch(client, stack):

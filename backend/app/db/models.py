@@ -119,6 +119,14 @@ class TradingAccount(TimestampMixin, Base):
     live_approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     live_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)  # the account currently traded
+    # Multi-account foundation (migration 0016). Every field defaults to today's behaviour.
+    label: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    # the account may be traded automatically (an execution account); off = research-only
+    trading_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # this account's own risk limits, applied over its mode's template (DEMO or LIVE); {} = the template
+    risk_overrides: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    allowed_symbols: Mapped[list | None] = mapped_column(JSONB)     # broker symbols; None = every scanned symbol
+    allowed_strategies: Mapped[list | None] = mapped_column(JSONB)  # strategy codes; None = every enabled strategy
 
 
 # 7. Symbols — discovered from MT5, never hardcoded

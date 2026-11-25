@@ -44,7 +44,8 @@ def report(db: Session) -> dict:
         acct is not None and acct.verified and acct.live_approved_by is not None,
         "no active LIVE account" if acct is None else
         f"account {acct.login}: verified={acct.verified}, approved={'yes' if acct.live_approved_by else 'no'}")
-    live, demo = tr.risk_params(db, "LIVE"), tr.risk_params(db, "DEMO")
+    # the LIVE account's own limits (its overrides over the LIVE template) against the DEMO template
+    live, demo = tr.account_risk_params(db, acct, "LIVE"), tr.risk_params(db, "DEMO")
     errs = live.validate()
     looser = [k for k in TIGHTER if getattr(live, k) > getattr(demo, k)]
     add("live_risk_config", "LIVE risk configuration valid and no looser than DEMO", not errs and not looser,

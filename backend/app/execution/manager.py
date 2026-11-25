@@ -169,7 +169,7 @@ def open_position(db: Session, bridge: BridgeClient, *, symbol: str, direction: 
     entry = float(tick["ask"] if direction == "BUY" else tick["bid"]) if order_type == "MARKET" else float(price or 0)
     spread_pts = round((float(tick["ask"]) - float(tick["bid"])) / spec.point, 1)   # avoid float noise (30.0000001 > 30)
     margin = bridge.margin(symbol, direction, 1.0, entry).get("margin")
-    params = tr.risk_params(db, account.mode)
+    params = tr.account_risk_params(db, account)
     from app.intelligence import anomaly as anomaly_intel
     from app.intelligence import portfolio as portfolio_intel
     control = risk.ControlState(state.kill_switch, state.risk_lock, state.pause_new_entries,
@@ -313,7 +313,7 @@ def apply_position_policy(db: Session, bridge: BridgeClient, reason: str, policy
     if account is None:
         return []
     tr.sync_positions(db, bridge, account)
-    params = tr.risk_params(db, account.mode)
+    params = tr.account_risk_params(db, account)
     pol = policy or params.existing_position_policy
     views = [risk.PositionView(p.ticket, p.symbol, p.direction, float(p.volume), float(p.open_price),
                                float(p.current_price or p.open_price), float(p.stop_loss) if p.stop_loss else None,

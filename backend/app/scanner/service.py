@@ -321,7 +321,7 @@ def _opportunity(db: Session, sym, tf, df, reg, sigs, outcomes, news, mctx, res,
     cyc.note("entry_validation", {f"entry_{entry['outcome']}": 1})
     with cyc.step("exit_optimisation", ref):
         acct = tr.active_account(db)
-        plan = opx.exit_plan(res, tr.risk_params(db, acct.mode if acct else "DEMO"))
+        plan = opx.exit_plan(res, tr.account_risk_params(db, acct))
     with cyc.step("failure_prediction", ref):
         fail = opx.failure_prediction(res, stats, intel, news, reg.tags, mctx.htf_bias)
     cyc.note("failure_prediction", {f"failure_risk_{fail['level']}": 1})
