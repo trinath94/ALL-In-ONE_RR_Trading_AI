@@ -107,6 +107,7 @@ The round trip was verified on a scratch database: 0021 with an existing task â†
 | Desktop core | 135 passed, Clippy clean (3 test fixtures updated for the new service, unchanged in intent) |
 | Console | builds |
 | CI compose guards | all pass locally, including the new `claude-code` checks |
+| CI on `2693a63` | all green: backend (suite, image build with the SDK/CLI/git/pytest/sources check, compose guards, test matrix with condition 22), desktop (Windows install/upgrade/uninstall, installer published), frontend, security |
 
 **Real runs** (beyond the scripted SDK messages in the tests):
 1. **Real Claude Code sessions.** Run through the Claude Agent SDK and its bundled CLI, with a real model, on a
