@@ -122,10 +122,43 @@ def mask_login(login) -> str:
     return ("•" * max(0, len(s) - 3) + s[-3:]) if s else ""
 
 
-def write_atomic(path: Path, data: dict) -> None:
+REPLACE_RETRIES, REPLACE_WAIT_S = 20, 0.05
+
+
+def write_atomic(path: Path, data: dict, retries: int = REPLACE_RETRIES, wait_s: float = REPLACE_WAIT_S,
+                 sleep=time.sleep) -> None:
+    """Write ``data`` as JSON and swap it in. On Windows the swap is refused ("Access is denied", WinError 5) while
+    another process has the target open (the desktop app reading the status, Windows Defender, the search indexer),
+    so it is retried briefly; if the target stays locked, it is written in place instead (readers tolerate a partial
+    read and retry). Raises only if the file cannot be written at all."""
+    text = json.dumps(data, default=str)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, default=str), encoding="utf-8")
-    os.replace(tmp, path)
+    tmp.write_text(text, encoding="utf-8")
+    last: OSError | None = None
+    for i in range(max(1, retries)):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError as exc:          # target (or the temporary file) briefly held by another process
+            last = exc
+            sleep(wait_s * min(i + 1, 4))
+    try:
+        path.write_text(text, encoding="utf-8")
+        tmp.unlink(missing_ok=True)
+        log.info("%s was locked by another process; written in place", path.name)
+    except OSError:
+        raise last or OSError(f"cannot write {path}") from None
+
+
+def write_status(path: Path, data: dict) -> bool:
+    """The status file is informational and rewritten every poll: a write that still fails is logged and skipped,
+    never fatal (it used to stop the connector)."""
+    try:
+        write_atomic(path, data)
+        return True
+    except OSError as exc:
+        log.warning("status not written this time (%s): %s", path.name, exc)
+        return False
 
 
 class InstanceLock:
@@ -218,12 +251,12 @@ def run(profile_path: str, adapter=None, finder=None, poll_s: float = 1.0) -> in
     try:
         profile = Profile.load(profile_path)
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        write_atomic(status_path, status_document({}, None, "INVALID_PROFILE", str(exc), None))
+        write_status(status_path, status_document({}, None, "INVALID_PROFILE", str(exc), None))
         return EXIT_USAGE
     store, vault = _open_store()
     if not store.get("agent_id") or store.get("engine_url") != profile.engine_url.rstrip("/") \
             or not vault.get("bridge-secret"):
-        write_atomic(status_path, status_document({}, profile, "NOT_REGISTERED",
+        write_status(status_path, status_document({}, profile, "NOT_REGISTERED",
                                                   "Link the connector to the engine first", store))
         store.close()
         return EXIT_NOT_REGISTERED
@@ -270,11 +303,11 @@ def run(profile_path: str, adapter=None, finder=None, poll_s: float = 1.0) -> in
                     next_try = time.monotonic() + 10
                 else:
                     state, detail = snap.get("mt5") or "CONNECTED", snap.get("mt5_detail") or ""
-            write_atomic(status_path, status_document(dict(m.snapshot), profile, state, detail, store))
+            write_status(status_path, status_document(dict(m.snapshot), profile, state, detail, store))
             stopping.wait(poll_s)
     finally:
         m.stop()
-        write_atomic(status_path, status_document({}, profile, "STOPPED", "Connector stopped", store))
+        write_status(status_path, status_document({}, profile, "STOPPED", "Connector stopped", store))
         store.close()
     return EXIT_OK
 
@@ -292,7 +325,7 @@ def handle_live_request(m, req_path: Path, res_path: Path) -> dict:
         created = float(req.get("created", 0))
     except (ValueError, TypeError, AttributeError):
         out = {"ok": False, "error": "unreadable request"}
-        write_atomic(res_path, out)
+        write_status(res_path, out)
         return out
     out = {"nonce": nonce, "action": action, "at": time.time()}
     if abs(time.time() - created) > LIVE_REQUEST_MAX_AGE_S:
@@ -309,7 +342,7 @@ def handle_live_request(m, req_path: Path, res_path: Path) -> dict:
     else:
         out.update(ok=False, error="unknown action")
     out["live_authorized"] = bool(m.snapshot.get("live_authorized"))
-    write_atomic(res_path, out)
+    write_status(res_path, out)
     return out
 
 
@@ -351,4 +384,13 @@ def main(argv: list[str]) -> int:
         return EXIT_USAGE
     if argv[0] == "--register-stdin":
         return register_stdin(argv[1])
-    return run(argv[1])
+    try:
+        return run(argv[1])
+    except Exception:  # noqa: BLE001 - headless: log and exit; an unhandled error would open a blocking dialog
+        log.exception("connector stopped by an unexpected error")
+        try:
+            write_status(home() / STATUS_FILE, {"state": "ERROR", "detail": "stopped by an unexpected error; see logs",
+                                                "running": False, "at": time.time()})
+        except Exception:  # noqa: BLE001
+            pass
+        return EXIT_ERROR

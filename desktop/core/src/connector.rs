@@ -168,7 +168,21 @@ fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     }
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path)
+    // Windows refuses the swap ("Access is denied") while another process (the connector reading the file, Windows
+    // Defender, the search indexer) has the target open: retry briefly instead of failing the action.
+    let mut last = None;
+    for i in 0..20u64 {
+        match std::fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                last = Some(e);
+                std::thread::sleep(Duration::from_millis(50 * (i + 1).min(4)));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    let _ = std::fs::remove_file(&tmp);
+    Err(last.unwrap_or_else(|| std::io::Error::other("rename failed")))
 }
 
 // ---- launching ------------------------------------------------------------------------------------------------

@@ -269,3 +269,42 @@ def test_instance_names_are_validated(monkeypatch):
             headless.instance()
     monkeypatch.setenv("RRMT5_INSTANCE", "Live-1")
     assert headless.instance() == "live-1"
+
+
+# ---- Windows: the status file may be held open by another process (WinError 5) --------------------------------------
+def test_a_briefly_locked_status_file_is_retried(tmp_path, monkeypatch):
+    import os
+    real, calls = os.replace, {"n": 0}
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] <= 3:
+            raise PermissionError(13, "Access is denied")
+        return real(src, dst)
+    monkeypatch.setattr(headless.os, "replace", flaky)
+    p = tmp_path / "status.json"
+    headless.write_atomic(p, {"state": "CONNECTED"}, sleep=lambda s: None)
+    assert json.loads(p.read_text())["state"] == "CONNECTED" and calls["n"] == 4
+    assert not (tmp_path / "status.tmp").exists()
+
+
+def test_a_status_file_that_stays_locked_is_written_in_place(tmp_path, monkeypatch):
+    def locked(src, dst):
+        raise PermissionError(13, "Access is denied")
+    monkeypatch.setattr(headless.os, "replace", locked)
+    p = tmp_path / "status.json"
+    p.write_text("{}")
+    headless.write_atomic(p, {"state": "RUNNING"}, retries=3, sleep=lambda s: None)
+    assert json.loads(p.read_text())["state"] == "RUNNING" and not (tmp_path / "status.tmp").exists()
+
+
+def test_a_status_write_that_fails_completely_never_stops_the_connector(tmp_path, monkeypatch):
+    monkeypatch.setattr(headless, "write_atomic", lambda *a, **k: (_ for _ in ()).throw(PermissionError(13, "denied")))
+    assert headless.write_status(tmp_path / "status.json", {"state": "x"}) is False
+
+
+def test_an_unexpected_error_is_logged_and_exits_instead_of_a_blocking_dialog(kr, home, monkeypatch):
+    monkeypatch.setattr(headless, "run", lambda path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr("rr_connector.logsetup.setup", lambda: None)
+    assert headless.main(["--headless", "profile.json"]) == headless.EXIT_ERROR
+    assert json.loads((home / headless.STATUS_FILE).read_text())["state"] == "ERROR"
