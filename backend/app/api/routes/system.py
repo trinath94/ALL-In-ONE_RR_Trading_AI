@@ -413,6 +413,10 @@ def assistant_ask(body: AskIn, user: User = Depends(current_user), db: Session =
     from app.services import assistant
     rate_limit(f"assistant:{user.id}", 30, 60)
     from app.services import orchestrator
+    if not body.signal_id and orchestrator.route(body.question)[0] == "anthropic_improve":
+        from app.api.deps import user_perms
+        if "strategy.manage" not in user_perms(user):
+            raise HTTPException(403, "AI strategy improvement proposals need strategy.manage")
     if not body.signal_id and orchestrator.route(body.question)[0] == "claude_code" and not _code_admin(user):
         from app.services import agent
         if body.question.strip().lower().startswith("/code") or not agent.is_command(body.question):

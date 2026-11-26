@@ -135,6 +135,7 @@ class StrategyConfigProfile(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     validation: Mapped[dict] = mapped_column(JSONB, default=dict)
     history: Mapped[list] = mapped_column(JSONB, default=list)          # [{at, from, to, by, note}]
+    evidence: Mapped[dict | None] = mapped_column(JSONB)               # migration 0024: research package / trigger
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

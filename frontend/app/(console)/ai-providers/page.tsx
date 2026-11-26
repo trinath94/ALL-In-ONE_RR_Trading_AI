@@ -6,6 +6,7 @@ import { fmt, put } from "@/lib/api";
 import { useApi } from "@/lib/hooks";
 import ActiveAI from "@/components/ActiveAI";
 import { ClaudeCodeSettings } from "@/components/ClaudeCode";
+import { Autonomy } from "@/components/Autonomy";
 import { AnthropicKeyGuide, AnthropicProviders } from "@/components/AnthropicProviders";
 
 const HEALTH: Record<string, any> = { healthy: "neon", degraded: "warn", failing: "bear", "cooling down": "bear" };
@@ -40,6 +41,7 @@ export default function AIProviders() {
       <ErrorLine error={error || err} />
       {msg && <div className="mb-2 rounded border border-neon/40 bg-neon/5 px-2 py-1 text-[11px] text-neon">{msg}</div>}
       <div className="grid gap-3 xl:grid-cols-2">
+        <div className="xl:col-span-2"><Autonomy admin={admin} /></div>
         <div className="xl:col-span-2"><ActiveAI providers={provs} canManage={admin} onSaved={() => { reload(); reloadRoutes(); reloadHealth(); }} /></div>
         <div className="xl:col-span-2"><Panel title="Claude Code (development tasks)"><ClaudeCodeSettings /></Panel></div>
         <div className="xl:col-span-2"><AnthropicKeyGuide /></div>

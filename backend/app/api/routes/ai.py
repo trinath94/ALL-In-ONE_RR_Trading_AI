@@ -605,3 +605,48 @@ def model_history(days: int = 90, _: User = Depends(current_user), db: Session =
                    .order_by(AuditLog.id.desc()).limit(200))]
     return {"days": days, "models": sorted(out, key=lambda g: (g["provider"], g["requested_model"] or "")),
             "configuration_changes": changes}
+
+
+@router.get("/ai/autonomy")
+def autonomy(days: int = 1, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """What the engine did by itself versus what was sent to the Anthropic API (see app.services.autonomy)."""
+    from app.services import autonomy as au
+    rep = au.report(db, days)
+    return {**rep, "independence": au.independence(db, rep)}
+
+
+def engine_first(db: Session) -> dict:
+    from app.services.autonomy import engine_first as ef
+    return ef(db)
+
+
+class EngineFirstIn(BaseModel):
+    candidate_review: Literal["off", "selective", "all"] | None = None
+    review_daily_cap: int | None = Field(default=None, ge=0, le=1000)
+    review_confidence_below: float | None = Field(default=None, ge=0, le=1)
+    assistant_ai: bool | None = None
+    auto_improvement: bool | None = None
+    improvement_daily_cap: int | None = Field(default=None, ge=0, le=20)
+
+
+@router.put("/ai/engine-first")
+def put_engine_first(body: EngineFirstIn, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """How much the AI takes part in routine operation. Changing the candidate review while trading LIVE also needs
+    trade.live (it changes which candidates are executed)."""
+    from app.api.deps import user_perms
+    from app.db.models_ai import AIControl
+    from app.services.trading import get_state
+    c = db.get(AIControl, 1)
+    if c is None:
+        c = AIControl(id=1, single_active=False, active_model="", fallback_enabled=False, fallback_model="")
+        db.add(c)
+    fields = body.model_dump(exclude_none=True)
+    if "candidate_review" in fields and get_state(db).active_mode == "LIVE" and "trade.live" not in user_perms(user):
+        raise HTTPException(403, "changing the candidate review in LIVE requires trade.live permission")
+    old = engine_first(db)
+    for k, v in fields.items():
+        setattr(c, k, v)
+    c.updated_by, c.updated_at = user.id, datetime.now(UTC)
+    db.flush()
+    audit(db, user.id, "AI_ENGINE_FIRST_UPDATE", "", {"old": old, "new": fields})
+    return engine_first(db)

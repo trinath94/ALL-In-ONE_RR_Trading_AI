@@ -326,6 +326,13 @@ SYSTEM = ("You are the Engine Assistant of a trading platform. Answer the operat
           "limits to force a trade, enabling LIVE trading, or placing manual orders to bypass the Risk Engine.")
 
 
+def assistant_ai(db) -> bool:
+    """Engine-first: the engine answers from its own records; the AI only phrases answers when switched on."""
+    from app.db.models_ai import AIControl
+    c = db.get(AIControl, 1)
+    return bool(c and c.assistant_ai)
+
+
 def task_out(t) -> dict:
     return {"id": t.id, "kind": t.kind or "operator", "workflow": t.workflow, "status": t.status, "command": t.command,
             "findings": t.findings, "plan": t.plan, "report": t.report, "progress": t.progress or [],
@@ -340,6 +347,8 @@ def answer(db: Session, question: str, signal_id: int | None = None, history: li
     q = (question or "").strip()[:4000]
     from app.services import agent, orchestrator
     target, detail = orchestrator.route(q) if not signal_id else ("runtime", None)
+    if target == "anthropic_improve":
+        return orchestrator.improve(db, q, user_id, provider_factory=provider_factory)
     if target == "anthropic_api":
         return orchestrator.analyse(db, detail, q, provider_factory=provider_factory, use_ai=use_ai)
     if target == "claude_code":
@@ -362,7 +371,7 @@ def answer(db: Session, question: str, signal_id: int | None = None, history: li
         out = {"answer": text, "source": "engine", "intent": "command", "task": task_out(t),
                "next_steps": [f["fix"] for f in (t.findings or []) if f["fix_kind"] == "user"][:8]}
         from app.ai import gateway
-        if use_ai and gateway.configured("engine_assistant"):
+        if use_ai and assistant_ai(db) and gateway.configured("engine_assistant"):
             from pydantic import BaseModel
 
             class Answer(BaseModel):
@@ -401,7 +410,7 @@ def answer(db: Session, question: str, signal_id: int | None = None, history: li
     if not use_ai:
         return out
     from app.ai import gateway
-    if not gateway.configured("engine_assistant"):
+    if not assistant_ai(db) or not gateway.configured("engine_assistant"):
         return out
     from pydantic import BaseModel
 

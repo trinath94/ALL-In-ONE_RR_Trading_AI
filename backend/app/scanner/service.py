@@ -813,11 +813,20 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
     for r in ranked:
         with session_scope() as db:
             sig = db.get(TradingSignal, r["signal_id"])
+            from app.services.trading import wants_ai_review
+            want = (False, "engine-only mode") if ai_mode == "ENGINE_ONLY" else wants_ai_review(db, sig)
             if ai_mode == "ENGINE_ONLY":
                 # The operator runs the engine without AI: no provider call, no cost; the Risk Engine decides.
                 from app.services.trading import engine_only_review
                 sig.ai_review = engine_only_review()
                 _review_to_opportunity(db, sig, sig.ai_review, {"mode": "ENGINE_ONLY"})
+            elif not want[0]:
+                # Engine-first (owner's decision 2026-11-26): the engine decides; no AI call for this candidate.
+                from app.services.trading import engine_decided_review
+                sig.ai_review = engine_decided_review(want[1])
+                _review_to_opportunity(db, sig, sig.ai_review, {"mode": "ENGINE"})
+                cycle.add("signal_quality", ref=f"signal:{sig.id}", out={"engine_decided": 1},
+                          evidence={"ai_call": f"none ({want[1]})"})
             elif agent is not None:
                 ar = db.get(AnalysisResult, sig.analysis_id)
                 sym = db.get(Symbol, sig.symbol_id)

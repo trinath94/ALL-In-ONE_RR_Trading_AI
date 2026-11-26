@@ -87,6 +87,14 @@ class AIControl(Base):
     # which cannot run in the server container, so it is left out by default.
     claude_code_test_command: Mapped[str] = mapped_column(String(255), default=DEFAULT_TEST_COMMAND,
                                                           server_default=DEFAULT_TEST_COMMAND)
+    # Engine-first operation (migration 0024): the engine decides routinely; the AI improves it.
+    #   candidate_review: off (default) | selective (uncertain candidates only, capped per day) | all (previous behaviour)
+    candidate_review: Mapped[str] = mapped_column(String(12), default="off", server_default="off")
+    review_daily_cap: Mapped[int] = mapped_column(Integer, default=10, server_default="10")
+    review_confidence_below: Mapped[float] = mapped_column(Float, default=0.6, server_default="0.6")
+    assistant_ai: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    auto_improvement: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    improvement_daily_cap: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     # Budget alert: an incident (warning) when spend reaches this % of a daily or monthly budget.
     budget_alert_pct: Mapped[int] = mapped_column(Integer, default=80, server_default="80")
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

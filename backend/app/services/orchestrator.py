@@ -58,6 +58,11 @@ class Answer(BaseModel):
     next_steps: list[str]
 
 
+IMPROVE_RE = re.compile(r"(ask|use|let) (anthropic|claude|the ai|ai) to improve|improve (the |my |an? )?(existing |weak "
+                        r"|weakest )?strateg|propose (a |an )?(strategy|parameter|configuration) (update|improvement)",
+                        re.I)
+
+
 def route(question: str) -> tuple[str, str | None]:
     """(target, detail): target claude_code | anthropic_api | runtime; detail = the gateway task for anthropic_api."""
     q = (question or "").strip()
@@ -67,6 +72,8 @@ def route(question: str) -> tuple[str, str | None]:
     if low.startswith("/engine"):
         return "runtime", None
     forced = low.startswith("/ai")
+    if IMPROVE_RE.search(q):
+        return "anthropic_improve", "config_proposal"
     for task, pat, _ in API_KINDS:
         if re.search(pat, q, re.I):
             return "anthropic_api", task
@@ -137,3 +144,44 @@ def analyse(db: Session, task: str, question: str, provider_factory=None, use_ai
     return {**out, "source": "ai", "answer": ai.answer, "next_steps": ai.next_steps,
             "ai": {k: meta.get(k) for k in ("provider", "model", "input_tokens", "output_tokens", "cache_read_tokens",
                                             "latency_ms", "cached")}}
+
+
+def improve(db: Session, question: str, user_id: int | None, provider_factory=None) -> dict:
+    """Anthropic improvement of one strategy: the strategy named in the request, else the engine's weakest one by its
+    own loss test. The research package is a summary (defaults, validated evidence by regime, the observed weakness);
+    the proposal is saved and versioned, and the engine validates it before it can be used (rollback kept)."""
+    from app.ai import gateway
+    from app.services import agent
+    from app.strategies import profiles, registry
+    out = {"intent": "improvement", "route": "anthropic_improve", "next_steps": []}
+    low = question.lower()
+    code = next((c for c in sorted(registry.all_strategies(), key=len, reverse=True) if c.lower() in low), None)
+    context = {"requested_by": "user", "request": question[:500]}
+    if code is None:
+        weak = agent._weak_strategies(db)["weak"]
+        if not weak:
+            return {**out, "source": "engine", "answer": "No strategy was named and the engine finds none losing more "
+                    "than its evidence explains. Name the strategy to improve (its code from the Strategy Library)."}
+        code, context = weak[0]["strategy"], {**weak[0], "requested_by": "user"}
+    if not dict(registry.get(code).params):
+        return {**out, "source": "engine", "answer": f"{code} has no tunable parameters; a code-level change is a "
+                "Claude Code task (/code ...)."}
+    if not gateway.configured("config_proposal"):
+        return {**out, "source": "engine", "answer": "No Anthropic API key is configured (AI Studio → Anthropic API)."}
+    try:
+        p = profiles.propose_ai(db, code, user_id, provider_factory=provider_factory, context=context)
+    except (profiles.ProfileError, gateway.GatewayError) as exc:
+        return {**out, "source": "engine", "answer": f"The improvement proposal for {code} failed: {exc}"}
+    try:
+        from app.services.events import get_redis
+        get_redis().set("rr:learner:trigger:config_profiles", "1", ex=3600)      # validate it on the next cycle
+    except Exception:  # noqa: BLE001
+        pass
+    return {**out, "source": "ai", "profile": {"id": p.id, "strategy": code, "version": p.version, "params": p.params,
+                                               "regime": p.regime, "status": p.status},
+            "answer": f"Anthropic proposed version {p.version} of {code} (profile #{p.id}, {p.ai_provider}): "
+                      f"{p.params}{' for regime ' + p.regime if p.regime else ''}. Reason: {p.reason}\n"
+                      "Saved as PROPOSED. The engine now validates it (out-of-sample, walk-forward, doubled costs, "
+                      "stability, overfitting checks); only a validated version can be activated, and the previous "
+                      "version stays available for rollback. Strategy Library → the strategy → Configuration profiles.",
+            "next_steps": ["Strategy Library → Configuration profiles: review the validation result"]}

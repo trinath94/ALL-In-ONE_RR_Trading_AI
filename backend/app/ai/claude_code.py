@@ -347,7 +347,7 @@ def remove_worktree(task: AgentTask) -> None:
 # ---- Task lifecycle (called from the chat / API) ----------------------------------------------------------------
 CODE_RE = re.compile(r"\b(code|source|bug|patch|refactor|implement|unit tests?|write (a )?tests?|add (a )?tests?|"
                      r"migration|architecture|function|module|class|endpoint|exception|stack ?trace|traceback|"
-                     r"compile|lint|type ?check|repository|repo)\b", re.I)
+                     r"compile|lint|type ?check|repository|repo|indicator (library|engine)|strategy engine)\b", re.I)
 
 
 def is_code_request(text: str) -> bool:

@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.config import get_settings
@@ -425,6 +425,57 @@ def job_discovery() -> dict:
         return agent.research(db, summary)
 
 
+def job_improvement_research() -> dict:
+    """Engine-triggered improvement research (engine-first operation). The engine finds strategies whose recent losses
+    exceed what their validated evidence predicts (binomial test, ``review.loss_significance``) and asks the AI for one
+    configuration proposal each, with the finding as the research package. At most ``improvement_daily_cap`` per day,
+    never twice for the same strategy within 7 days, never past the AI budget. Proposals are stored and versioned; the
+    ``config_profiles`` job validates them, and only validated ones can be activated (with rollback)."""
+    from datetime import timedelta
+
+    from app.ai import gateway
+    from app.db.models_ai import AIControl
+    from app.db.models_opportunity import StrategyConfigProfile
+    from app.learning_engine import review
+    from app.strategies import profiles, registry
+    with session_scope() as db:
+        c = db.get(AIControl, 1)
+        if c is not None and not c.auto_improvement:
+            return {"skipped": "automatic improvement research is switched off"}
+        if not gateway.configured("config_proposal"):
+            return {"skipped": "no AI provider is configured"}
+        if gateway.budget_status().get("exhausted"):
+            return {"skipped": "AI budget reached"}
+        now = datetime.now(UTC)
+        cap = int(c.improvement_daily_cap) if c is not None else 2
+        today = db.scalar(select(func.count(StrategyConfigProfile.id)).where(
+            StrategyConfigProfile.source == "AI", StrategyConfigProfile.created_at >= now - timedelta(days=1),
+            StrategyConfigProfile.evidence["trigger"].astext == "engine")) or 0
+        if today >= cap:
+            return {"skipped": f"daily cap {cap} reached"}
+        recent = set(db.scalars(select(StrategyConfigProfile.strategy_code).where(
+            StrategyConfigProfile.source == "AI", StrategyConfigProfile.created_at >= now - timedelta(days=7))))
+        weak = []
+        for code, cls in registry.all_strategies().items():
+            if not dict(cls.params) or code in recent:
+                continue
+            for mode in ("DEMO", "LIVE"):
+                ls = review.loss_significance(db, mode, code)
+                if ls["verdict"] == "recurring_defect_suspected":
+                    weak.append((ls["p_value"], code, {**ls, "mode": mode}))
+                    break
+        weak.sort()
+        out = {"weak_strategies": len(weak), "proposals": [], "errors": []}
+        for _, code, ls in weak[: cap - today]:
+            try:
+                with db.begin_nested():
+                    p = profiles.propose_ai(db, code, None, context=ls)
+                out["proposals"].append({"strategy": code, "profile": p.id, "version": p.version})
+            except Exception as exc:  # noqa: BLE001 - one failure never stops the engine
+                out["errors"].append(f"{code}: {type(exc).__name__}: {str(exc)[:160]}")
+        return out
+
+
 JOBS = [
     Job("trade_sync", 300, 240, job_trade_sync, "execution", isolated=True),
     Job("failure_analysis", 900, 600, job_failure_analysis, isolated=True),
@@ -438,6 +489,7 @@ JOBS = [
     Job("adaptive_weights", 7 * 86400, 900, job_adaptive_weights, isolated=True),
     Job("discovery", 7 * 86400, 900, job_discovery, "claude_agent", isolated=True),
     Job("config_profiles", 3600, 1800, job_config_profiles, isolated=True),
+    Job("improvement_research", 86400, 1800, job_improvement_research, "claude_agent", isolated=True),
 ]
 JOB_MAP = {j.name: j for j in JOBS}
 

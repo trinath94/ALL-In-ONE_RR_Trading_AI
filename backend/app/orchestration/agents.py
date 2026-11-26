@@ -132,4 +132,5 @@ LEARNER_AGENT = {"trade_sync": "ai_learning", "drift": "ai_learning", "train_pro
                  "failure_analysis": "post_trade_learning", "performance_snapshot": "post_trade_learning",
                  "portfolio": "portfolio_risk", "fingerprints": "strategy_correlation",
                  "consensus_weights": "adaptive_optimisation", "adaptive_weights": "adaptive_optimisation", "experiments": "strategy_discovery",
-                 "discovery": "strategy_discovery", "config_profiles": "adaptive_optimisation"}
+                 "discovery": "strategy_discovery", "config_profiles": "adaptive_optimisation",
+                 "improvement_research": "adaptive_optimisation"}

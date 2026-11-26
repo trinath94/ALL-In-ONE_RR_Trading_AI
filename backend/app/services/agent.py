@@ -32,7 +32,12 @@ UTC = timezone.utc
 SEV = {"critical": 0, "error": 1, "warning": 2, "info": 3}
 
 WORKFLOWS = [  # (key, pattern, title) - first match wins
-    ("handover", r"hand ?(it )?(control )?(back|over)|handover|complete the (current )?upgrade|finish", "Handover"),
+    ("handover", r"hand ?(it )?(control )?(back|over)|handover|complete the (current |autonomous )?upgrade|finish|"
+                 r"start the internal runtime", "Handover"),
+    ("autonomy", r"token|anthropic (api )?usage|without (the )?(anthropic|ai|claude)|operate (independent|without)|"
+                 r"routine analysis|internal engine|api usage|api cost", "Engine autonomy and AI usage"),
+    ("weak_strategies", r"weak strateg|identify weak|underperform|losing strateg", "Weak strategies"),
+    ("discovery", r"discover .*strateg|new strateg|strategy candidates", "Strategy discovery"),
     ("repair", r"repair|fix|heal", "Find and repair errors"),
     ("live_prep", r"\blive\b", "Prepare for LIVE trading"),
     ("demo_test", r"demo", "Test with the DEMO account"),
@@ -43,6 +48,8 @@ WORKFLOWS = [  # (key, pattern, title) - first match wins
     ("audit", r"audit|inspect|check|error|scan|whole|entire|full", "Full engine audit"),
 ]
 COMMAND_RE = re.compile(r"\b(audit|inspect|repair|fix|heal|readiness|ready for|handover|hand control|hand it back|"
+                        r"token|operate without|can operate|internal engine|internal runtime|identify weak|"
+                        r"weak strateg|discover|"
                         r"complete the upgrade|check all|find (and|all|missing)|improve|optimi[sz]e|prepare|"
                         r"test the engine|test using)\b", re.I)
 
@@ -357,7 +364,8 @@ CHECKS = {"database": _check_database, "services": _check_services, "accounts": 
 SCOPE = {"audit": list(CHECKS), "repair": list(CHECKS), "readiness": list(CHECKS), "capabilities": list(CHECKS),
          "handover": list(CHECKS), "accounts": ["accounts", "risk"], "symbols": ["symbols"],
          "demo_test": ["services", "accounts", "symbols", "ai", "risk", "controls", "incidents"],
-         "live_prep": ["accounts", "risk", "controls", "incidents"]}
+         "live_prep": ["accounts", "risk", "controls", "incidents"], "autonomy": ["ai", "services", "runtime"],
+         "weak_strategies": ["strategies"], "discovery": ["strategies"]}
 
 
 def inspect(db: Session, scope: list[str]) -> tuple[list[dict], dict]:
@@ -499,6 +507,21 @@ def start(db: Session, command: str, user_id: int | None) -> AgentTask:
                           "the typed ENABLE LIVE TRADING switch, the PC's own LIVE lock, then auto trading in LIVE.")
     if wf == "handover":
         report.update(_handover(db))
+    if wf in ("autonomy", "handover"):
+        from app.services import autonomy
+        rep = autonomy.report(db, 1)
+        report["autonomy"] = {"internal": rep["internal"], "ai": {k: rep["ai"][k] for k in ("routine", "improvement")},
+                              "budget": rep["budget"], "policy": rep["policy"]}
+        report["independence"] = autonomy.independence(db, rep)
+        for dep in report["independence"]["routine_dependencies"]:
+            findings.append(finding("ai", "warning", "Routine operation still uses the AI", dep,
+                                    "Every scan or chat message costs tokens.", "user",
+                                    "AI Studio → Engine-first: set candidate review to Off (the engine decides) and "
+                                    "leave assistant AI phrasing off."))
+    if wf == "weak_strategies":
+        report["weak_strategies"] = _weak_strategies(db)
+    if wf == "discovery":
+        report["discovery"] = _queue_discovery(db)
     report["repair_proposals"] = [f for f in findings if f["fix_kind"] == "proposal"]
     report["user_actions"] = [f for f in findings if f["fix_kind"] == "user"]
     t = AgentTask(command=command[:2000], workflow=wf, status="AWAITING_APPROVAL" if plan else "DONE",
@@ -543,6 +566,44 @@ def cancel(db: Session, task: AgentTask) -> AgentTask:
     if task.status == "AWAITING_APPROVAL":
         task.status, task.finished_at = "CANCELLED", _now()
     return task
+
+
+def _weak_strategies(db) -> dict:
+    """The engine's own test, per strategy with enough closed trades: is the recent loss rate higher than its validated
+    evidence predicts (binomial test)? No AI call."""
+    from app.learning_engine import review
+    from app.strategies import registry
+    weak, normal, thin = [], [], 0
+    for code in registry.all_strategies():
+        for mode in ("LIVE", "DEMO"):
+            r = review.loss_significance(db, mode, code)
+            if r["verdict"] == "insufficient_evidence":
+                continue
+            (weak if r["verdict"] == "recurring_defect_suspected" else normal).append({**r, "mode": mode})
+            break
+        else:
+            thin += 1
+    weak.sort(key=lambda r: r["p_value"])
+    return {"weak": weak[:20], "within_normal_variance": len(normal), "insufficient_evidence": thin,
+            "next": ("Ask Anthropic to improve a weak strategy (\"ask Anthropic to improve <strategy>\") - the proposal "
+                     "is saved and validated by the engine before any use." if weak else
+                     "No strategy loses more than its evidence explains.")}
+
+
+def _queue_discovery(db) -> dict:
+    """Queue the learner's internal experiments run (no AI) and report the experiment pipeline."""
+    from app.db.models import StrategyExperiment
+    queued = False
+    try:
+        _redis().set("rr:learner:trigger:experiments", "1", ex=3600)
+        queued = True
+    except Exception:  # noqa: BLE001
+        pass
+    by_status = dict(db.execute(select(StrategyExperiment.status, func.count()).group_by(StrategyExperiment.status)).all())
+    return {"queued": queued, "experiments_by_status": by_status,
+            "note": "The learner generates and tests candidates from existing strategy components (in-sample, "
+                    "out-of-sample, walk-forward, bias report). Promotion follows the experiment lifecycle; LIVE "
+                    "is always manual."}
 
 
 def _handover(db) -> dict:
@@ -592,6 +653,29 @@ def describe(task: AgentTask) -> str:
                                            else "not ready: " + ", ".join(lr["failing"])))
     if r.get("note"):
         lines.append(r["note"])
+    if r.get("independence"):
+        ind, au = r["independence"], r.get("autonomy", {})
+        i = au.get("internal", {})
+        lines.append(f"Engine autonomy (24 h): {i.get('scan_cycles', 0)} scan cycles, {i.get('analyses', 0)} analyses, "
+                     f"{i.get('engine_decided_candidates', 0)} candidates decided by the engine, "
+                     f"{i.get('ai_reviewed_candidates', 0)} reviewed by the AI.")
+        lines.append(f"AI calls (24 h): routine {ind['routine_calls_last_day']}, improvement "
+                     f"{ind['improvement_calls_last_day']}. Trading without the AI: "
+                     + ("possible" if ind["can_trade_without_ai"] else "NOT possible (candidates wait for the AI)"))
+        lines.append("Still depends on the AI: " + ("; ".join(ind["routine_dependencies"]) or "nothing routine")
+                     + ". " + ind["note"])
+    if r.get("weak_strategies"):
+        w = r["weak_strategies"]
+        lines.append(f"Weak strategies: {len(w['weak'])} (within normal variance {w['within_normal_variance']}, "
+                     f"not enough trades {w['insufficient_evidence']}).")
+        for x in w["weak"][:10]:
+            lines.append(f"• {x['strategy']} ({x['mode']}): {x['detail']}")
+        lines.append(w["next"])
+    if r.get("discovery"):
+        d = r["discovery"]
+        lines.append(("Experiments run queued. " if d["queued"] else "Could not queue the run. ")
+                     + "Experiments: " + (", ".join(f"{k} {v}" for k, v in d["experiments_by_status"].items()) or "none")
+                     + ". " + d["note"])
     if r.get("handover"):
         u = r["ai_usage"]
         lines.append(f"AI usage (30 days): {u['cost_usd']} USD, {u['tokens']} tokens. {r['handover']}")

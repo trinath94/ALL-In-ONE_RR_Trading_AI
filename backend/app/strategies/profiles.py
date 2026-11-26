@@ -333,7 +333,11 @@ PROPOSAL_SYSTEM = (
     "Return only the JSON object.")
 
 
-def propose_ai(db: Session, code: str, user_id: int | None, provider_factory=None) -> StrategyConfigProfile:
+def propose_ai(db: Session, code: str, user_id: int | None, provider_factory=None,
+               context: dict | None = None) -> StrategyConfigProfile:
+    """An AI configuration proposal for one strategy, from a summarised research package (never raw data). ``context``:
+    the engine's own finding that triggered the research (stored with the proposal as its evidence). The proposal is
+    only stored: the engine validates it (out-of-sample, walk-forward, costs, overfitting gates) before any use."""
     from pydantic import BaseModel, Field
     from app.ai import gateway
     from app.db.models import Strategy, StrategyPerformance
@@ -354,12 +358,19 @@ def propose_ai(db: Session, code: str, user_id: int | None, provider_factory=Non
     cls = registry.get(code)
     user = {"strategy": code, "defaults": dict(cls.params), "suited_regimes": list(cls.regimes or []),
             "evidence_by_regime": perf, "regimes": list(REGIMES)}
+    if context:
+        user["observed_weakness"] = context
+        user["objective"] = ("Propose parameter values (and optionally a regime filter) that address the observed "
+                             "weakness; the engine will backtest, walk-forward and cost-test them before any use.")
     out, meta = gateway.run("config_proposal", PROPOSAL_SYSTEM, user, PROPOSAL_SCHEMA, Proposal, max_tokens=2000,
                             provider_factory=provider_factory)
     if out.regime is not None and out.regime not in REGIMES:
         raise ProfileError(f"AI proposed an unknown regime {out.regime!r}")
-    return create(db, code, dict(out.params), regime=out.regime, source="AI", reason=out.reason,
+    prof = create(db, code, dict(out.params), regime=out.regime, source="AI", reason=out.reason,
                   ai_provider=f"{meta['provider']}/{meta['model']}"[:160], user_id=user_id)
+    prof.evidence = {"trigger": "engine" if context else "user", "research_package": user,
+                     "tokens": {"input": meta.get("input_tokens"), "output": meta.get("output_tokens")}}
+    return prof
 
 
 # ---- automatic promotion (policy) -------------------------------------------------------------------------------------

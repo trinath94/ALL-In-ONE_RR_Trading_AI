@@ -58,6 +58,40 @@ def unavailable_review(db: Session, error: str) -> dict:
     return {"decision": "UNREVIEWED", "error": error[:500]}
 
 
+def engine_decided_review(reason: str) -> dict:
+    """Engine-first operation: the engine's own validated signal goes to the Risk Engine without an AI call."""
+    return {"decision": "SKIPPED", "mode": "ENGINE", "note": f"decided by the engine ({reason}); the Risk Engine decides"}
+
+
+def review_policy(db: Session) -> dict:
+    from app.db.models_ai import AIControl
+    c = db.get(AIControl, 1)
+    return {"candidate_review": (c.candidate_review if c else None) or "off",
+            "daily_cap": int(c.review_daily_cap) if c and c.review_daily_cap is not None else 10,
+            "confidence_below": float(c.review_confidence_below) if c and c.review_confidence_below is not None else 0.6}
+
+
+def wants_ai_review(db: Session, sig) -> tuple[bool, str]:
+    """Whether this candidate is sent to the AI for review (engine-first: by default never). Selective: only a
+    candidate the engine itself is uncertain about (calibrated confidence missing or below the threshold), and at most
+    the daily cap of reviews."""
+    pol = review_policy(db)
+    if pol["candidate_review"] == "all":
+        return True, "every candidate is reviewed"
+    if pol["candidate_review"] != "selective":
+        return False, "candidate review off"
+    conf = getattr(sig, "calibrated_confidence", None)
+    if conf is not None and float(conf) >= pol["confidence_below"]:
+        return False, f"engine confident ({float(conf):.2f} >= {pol['confidence_below']})"
+    from app.db.models import AgentConversation
+    day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    used = db.scalar(select(func.count(AgentConversation.id)).where(AgentConversation.purpose == "SIGNAL_REVIEW",
+                                                                    AgentConversation.created_at >= day)) or 0
+    if used >= pol["daily_cap"]:
+        return False, f"daily review cap {pol['daily_cap']} reached"
+    return True, "engine uncertain"
+
+
 def auto_execution_block(st: TradingState, sig, policy: str = "pause") -> str | None:
     """Why a NEW signal would not be auto-executed now, or None if it is eligible (the Risk Engine still decides).
     One rule for the trading worker and the console's explanation.
@@ -75,9 +109,11 @@ def auto_execution_block(st: TradingState, sig, policy: str = "pause") -> str | 
     review = sig.ai_review or {}
     d = review.get("decision")
     if (st.ai_mode or "AI") == "ENGINE_ONLY":
-        if d == "SKIPPED" and review.get("mode") == "ENGINE_ONLY":
+        if d == "SKIPPED" and review.get("mode") in ("ENGINE_ONLY", "ENGINE"):
             return None
         return "produced while the AI mode was on; engine-only mode executes only signals produced without AI"
+    if d == "SKIPPED" and review.get("mode") == "ENGINE":
+        return None                                  # engine-first: decided by the engine, never rejected by an AI
     if d == "SKIPPED" and review.get("mode") == "AI_UNAVAILABLE":
         return None if policy == "engine_only" else \
             "AI was unavailable and the policy is now pause: only AI-confirmed candidates are executed"
