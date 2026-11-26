@@ -10,6 +10,8 @@ Read-only. It cannot change the mode, the risk configuration or anything else.
 """
 from __future__ import annotations
 
+from app.services.system_check import not_test_trade  # noqa: E402
+
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -103,7 +105,7 @@ def report(db: Session, hours: int = 72) -> dict:
     add("protection", "Every open position has a stop", ATTENTION if unprotected else (PASS if open_n else PENDING),
         f"{open_n} open, {len(unprotected)} without a stop")
     closed = db.execute(select(func.count(ClosedPosition.id), func.coalesce(func.sum(ClosedPosition.profit), 0.0))
-                        .where(ClosedPosition.account_id.in_(demo_ids or [-1]))).one()
+                        .where(ClosedPosition.account_id.in_(demo_ids or [-1]), not_test_trade())).one()
     rd = readiness.report(db)
     demo_item = next(i for i in rd["items"] if i["key"] == "demo_acceptance")
     add("demo_record", "DEMO track record", PASS if demo_item["passed"] and float(closed[1]) >= 0 else

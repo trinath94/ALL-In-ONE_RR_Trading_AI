@@ -767,3 +767,50 @@ def live_readiness(_: User = Depends(require("trade.control")), db: Session = De
     """Parts 27-30 Phase 6: the checklist the LIVE switch requires (read-only; it cannot enable anything)."""
     from app.services import readiness
     return readiness.report(db)
+
+
+# ---- system check agent and end-to-end test trade ----------------------------------------------------------------------
+def _optional_bridge():
+    try:
+        b = BridgeClient()
+    except BridgeError:
+        yield None
+        return
+    try:
+        yield b
+    finally:
+        b.close()
+
+
+@router.get("/system/check")
+def system_check(live: bool = True, _: User = Depends(current_user), db: Session = Depends(get_db),
+                 bridge=Depends(_optional_bridge)):
+    """Every system's status (ok / warning / failing) with the evidence, the impact on trading and what to do."""
+    from app.services import system_check as sc
+    return sc.run(db, bridge if live else None, live=live)
+
+
+class TestTradeIn(BaseModel):
+    symbol: str | None = Field(default=None, max_length=64)
+    direction: str = Field(default="BUY", pattern="^(BUY|SELL)$")
+    confirm: bool = False
+
+
+@router.post("/system/test-trade")
+def system_test_trade(body: TestTradeIn, user: User = Depends(require("trade.manual")), db: Session = Depends(get_db),
+                      bridge=Depends(_optional_bridge)):
+    """One real DEMO order through the normal execution path (Risk Engine, connector, broker), closed again at once.
+    DEMO only; minimum volume with a stop loss; never counted as a trading result."""
+    from app.services import system_check as sc
+    if not body.confirm:
+        raise HTTPException(422, "confirm the test trade (it places a real DEMO order and closes it)")
+    if bridge is None:
+        return {"ok": False, "steps": [{"step": "MT5 connector configured", "ok": False, "detail": "not configured",
+                                        "ms": 0}],
+                "fix": "Desktop app → MT5 Manager → Link and Start the connector."}
+    audit(db, user.id, "SYSTEM_TEST_TRADE_START", body.symbol or "", {"direction": body.direction})
+    db.commit()
+    out = sc.test_trade(db, bridge, user.id, body.symbol, body.direction)
+    audit(db, user.id, "SYSTEM_TEST_TRADE", out.get("symbol") or body.symbol or "",
+          {"ok": out["ok"], "steps": [(s["step"], s["ok"]) for s in out["steps"]], "order_id": out.get("order_id")})
+    return out

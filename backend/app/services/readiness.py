@@ -20,6 +20,8 @@ Informational:
 """
 from __future__ import annotations
 
+from app.services.system_check import not_test_trade  # noqa: E402
+
 import json
 
 from sqlalchemy import func, select
@@ -62,7 +64,7 @@ def report(db: Session) -> dict:
     n, pnl = 0, 0.0
     if demo_ids:
         n, pnl = db.execute(select(func.count(ClosedPosition.id), func.coalesce(func.sum(ClosedPosition.profit), 0.0))
-                            .where(ClosedPosition.account_id.in_(demo_ids))).one()
+                            .where(ClosedPosition.account_id.in_(demo_ids), not_test_trade())).one()
     need = s.live_min_demo_trades
     add("demo_acceptance", f"At least {need} closed DEMO trades", int(n) >= need,
         f"{int(n)} closed DEMO trades, net {float(pnl):.2f} (review the DEMO results before approving)")

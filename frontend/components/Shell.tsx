@@ -1,6 +1,7 @@
 "use client";
 import { IncidentPopups } from "./Incidents";
 import { AssistantPanel } from "./Assistant";
+import { SystemCheck, SystemCheckButton } from "./SystemCheck";
 import clsx from "clsx";
 import {
   Activity, Bell, BookOpen, Bot, BrainCircuit, CandlestickChart, Cpu, FlaskConical, Gauge, Globe, History, LayoutDashboard,
@@ -109,6 +110,7 @@ export default function Shell({ children }: { children: ReactNode }) {
             <span className={clsx("rounded border px-2 py-0.5", state?.auto_trading ? "border-neon/60 text-neon" : "border-line text-dim")}>
               AUTO {state?.auto_trading ? "ON" : "OFF"}</span>
             {state?.kill_switch && <span className="rounded border border-bear bg-bear/20 px-2 py-0.5 text-bear">KILL SWITCH</span>}
+            <SystemCheckButton />
             <Clock />
             <span className="hidden items-center gap-1 sm:flex" title={live.connected ? "Realtime stream connected" : "Realtime stream disconnected"}>
               <Activity size={12} className={live.connected ? "text-neon" : "text-bear"} /></span>
@@ -138,6 +140,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           <main className="min-w-0 flex-1 p-3 md:p-4">{children}</main>
           <IncidentPopups />
           <AssistantPanel />
+          <SystemCheck />
         </div>
       </div>
     </MeCtx.Provider>

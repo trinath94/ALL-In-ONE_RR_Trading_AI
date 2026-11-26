@@ -2,6 +2,35 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**System check agent and DEMO test trade (2026-11-26).**
+
+*System check.* It runs when the console opens and every 5 minutes, and you can run it from the **Check** button in the header. It checks:
+* the database;
+* engine services and Redis;
+* the MT5 connector and broker account, with a live probe of connection, account identity and quotes;
+* broker symbols and market data;
+* the Risk Engine and trading controls;
+* strategies;
+* AI (Anthropic API);
+* open incidents.
+
+When a system is failing, a pop-up shows what is wrong, the evidence, the impact on trading, what to do, and where.
+
+*Execute a DEMO test trade.* This button, inside the check, proves the whole execution path:
+1. pre-flight check;
+2. Risk Engine approval, with every control applying (kill switch, risk lock, limits, stop loss);
+3. order sent through the MT5 connector;
+4. broker fill;
+5. position visible in the engine;
+6. position closed again and the close confirmed.
+
+The pop-up stays open until the test has finished and shows each step. The test trade:
+* is DEMO only and refused in LIVE;
+* uses the broker's minimum volume, with a stop loss and take profit;
+* costs the spread;
+* needs trade.manual and is audited;
+* is never attributed to a strategy, and never counted toward DEMO acceptance or LIVE readiness.
+
 **Remove an AI configuration (2026-11-26).** AI Studio → Anthropic API → **Remove** asks for confirmation. It then:
 * deletes the configuration and its stored key;
 * takes it out of every task route;
