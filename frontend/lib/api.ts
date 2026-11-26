@@ -33,6 +33,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 export const post = <T = any>(p: string, body?: unknown) => api<T>(p, { method: "POST", body: body ?? {} });
 export const put = <T = any>(p: string, body: unknown) => api<T>(p, { method: "PUT", body });
 export const patch = <T = any>(p: string, body: unknown) => api<T>(p, { method: "PATCH", body });
+export const del = <T = any>(p: string) => api<T>(p, { method: "DELETE" });
 
 export function rid(): string {
   return (crypto as any).randomUUID ? crypto.randomUUID().replace(/-/g, "") : String(Date.now()) + Math.random().toString(16).slice(2);

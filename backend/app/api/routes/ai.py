@@ -326,6 +326,36 @@ def patch_provider(provider_id: int, body: ProviderPatch, user: User = Depends(r
     return _provider(p)
 
 
+@router.delete("/ai/providers/{provider_id}")
+def delete_provider(provider_id: int, user: User = Depends(require("system.manage")), db: Session = Depends(get_db)):
+    """Remove an AI provider configuration: the provider and its encrypted key are deleted, it is taken out of every
+    task route, and Active AI / its fallback stop pointing at it (foreign keys, ON DELETE SET NULL). The usage ledger
+    keeps its history. The response says what the removal affected, so the user can choose a replacement."""
+    from app.db.models_ai import AIControl
+    p = db.get(AIProvider, provider_id)
+    if p is None:
+        raise HTTPException(404)
+    name = p.name
+    routes_changed = []
+    for r in db.scalars(select(AITaskRoute)):
+        chain = list(r.chain or [])
+        kept = [x for x in chain if x.get("provider_id") != provider_id]
+        if kept != chain:
+            r.chain = kept
+            routes_changed.append(r.task)
+    c = db.get(AIControl, 1)
+    was_active = bool(c and c.active_provider_id == provider_id)
+    was_fallback = bool(c and c.fallback_provider_id == provider_id)
+    db.delete(p)
+    db.flush()
+    if c is not None:
+        db.refresh(c)
+    audit(db, user.id, "AI_PROVIDER_DELETE", name, {"routes": routes_changed, "was_active": was_active,
+                                                     "was_fallback": was_fallback})
+    return {"deleted": name, "routes_changed": sorted(routes_changed), "was_active": was_active,
+            "was_fallback": was_fallback, "providers_left": db.query(AIProvider).count()}
+
+
 # ---- task routes ---------------------------------------------------------------------------------------------------
 class Hop(BaseModel):
     provider_id: int

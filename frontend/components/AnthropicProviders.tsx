@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Badge, Btn, Field, inputCls, Panel, Table } from "@/components/ui";
-import { api, fmt, patch, post } from "@/lib/api";
+import { api, del, fmt, patch, post } from "@/lib/api";
 
 type Msg = { tone: "ok" | "err"; text: string } | null;
 const blank = { name: "Anthropic", api_key: "", timeout_s: 120, max_retries: 2, price_in_per_mtok: "", price_out_per_mtok: "", max_requests_per_minute: "" };
@@ -46,6 +46,20 @@ export function AnthropicProviders({ provs, admin, onChanged, onModels }: { prov
   const [busy, setBusy] = useState<number | "new" | null>(null);
   const [results, setResults] = useState<Record<number, any>>({});
   const [check, setCheck] = useState<{ id: number; name: string; result?: any } | null>(null);
+  const [removing, setRemoving] = useState<{ id: number; name: string } | null>(null);
+
+  async function remove(p: { id: number; name: string }) {
+    setBusy(p.id); setMsg(null);
+    try {
+      const r = await del<any>(`/api/ai/providers/${p.id}`);
+      if (ed?.id === p.id) setEd(null);
+      const notes = [r.was_active && "Active AI has no provider now: choose one under Active AI",
+        r.was_fallback && "the Active AI fallback was cleared",
+        r.routes_changed.length && `removed from the routes of: ${r.routes_changed.join(", ")}`,
+        r.providers_left === 0 && "no AI provider is configured: the engine runs without AI until you add a key"].filter(Boolean);
+      setMsg({ tone: notes.length ? "err" : "ok", text: `${r.deleted} removed (its key was deleted).${notes.length ? " " + notes.join("; ") + "." : ""}` });
+    } catch (e: any) { setMsg({ tone: "err", text: e.message }); } finally { setRemoving(null); setBusy(null); onChanged(); }
+  }
 
   /** Runs the connection test inside a pop-up that stays open until the test has finished and shows each step. */
   async function test(p: { id: number; name: string }) {
@@ -101,7 +115,23 @@ export function AnthropicProviders({ provs, admin, onChanged, onModels }: { prov
           { k: "actions", h: "", sort: false, r: (p) => admin && <div className="flex gap-1">
             <Btn small tone="neon" disabled={busy !== null || !p.has_key} onClick={() => test(p)}>{busy === p.id ? "Testing…" : "Test"}</Btn>
             <Btn small tone="dim" onClick={() => setEd({ id: p.id, name: p.name, has_key: p.has_key, api_key: "", timeout_s: p.timeout_s, max_retries: p.max_retries, price_in_per_mtok: p.price_in_per_mtok ?? "", price_out_per_mtok: p.price_out_per_mtok ?? "", max_requests_per_minute: p.max_requests_per_minute ?? "" })}>Edit</Btn>
-            <Btn small tone="dim" disabled={!p.has_key} onClick={() => discover(p)}>Models</Btn></div> }]} />
+            <Btn small tone="dim" disabled={!p.has_key} onClick={() => discover(p)}>Models</Btn>
+            <Btn small tone="bear" disabled={busy !== null} onClick={() => setRemoving({ id: p.id, name: p.name })}>Remove</Btn></div> }]} />
+      {removing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-label="Remove AI configuration">
+          <div className="w-full max-w-md rounded border border-bear/60 bg-panel p-4 text-[12px] shadow-2xl">
+            <div className="mb-2 text-[13px] font-bold text-bear">Remove {removing.name}?</div>
+            <ul className="mb-3 list-disc space-y-1 pl-5 text-dim">
+              <li>The configuration and its stored API key are deleted from the engine. The key itself stays valid in the Claude Console (revoke it there if you no longer need it).</li>
+              <li>Tasks that use it are taken off it; if it is the Active AI provider, AI tasks stop until you choose another one. Trading continues according to your "AI unavailable" policy.</li>
+              <li>The usage and cost history is kept.</li>
+            </ul>
+            <div className="flex justify-end gap-2">
+              <Btn small tone="dim" disabled={busy !== null} onClick={() => setRemoving(null)}>Cancel</Btn>
+              <Btn small tone="bear" disabled={busy !== null} onClick={() => remove(removing)}>{busy === removing.id ? "Removing…" : "Remove"}</Btn>
+            </div>
+          </div>
+        </div>)}
       {admin && ed && (
         <div className="mt-3 grid grid-cols-3 gap-2 rounded border border-cyan/40 p-2">
           <div className="col-span-3 text-[11px] text-cyan">Edit {ed.name}</div>

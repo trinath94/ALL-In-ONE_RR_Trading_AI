@@ -255,3 +255,29 @@ def test_connection_test_explains_each_failure_step_by_step(client, keys, monkey
     steps = {s["step"]: s["ok"] for s in r["steps"]}
     assert steps["API key stored"] and steps["API key readable"] and steps["Valid answer from the model"] is False
     assert steps["Anthropic API reached"] is (kind != "connection")
+
+
+def test_remove_an_ai_configuration(client, keys):
+    from app.db.models_ai import AIControl
+    login(client, "admin")
+    a = client.post("/api/ai/providers", json={"name": "Claude A", "api_key": "sk-ant-a"}, headers=h(client)).json()["id"]
+    b = client.post("/api/ai/providers", json={"name": "Claude B", "api_key": "sk-ant-b"}, headers=h(client)).json()["id"]
+    client.put("/api/ai/routes/trade_review", json={"chain": [{"provider_id": a, "model": "m"}, {"provider_id": b, "model": "m"}]},
+               headers=h(client))
+    with session_scope() as db:
+        db.merge(AIControl(id=1, single_active=True, active_provider_id=a, active_model="m", fallback_enabled=True,
+                           fallback_provider_id=b, fallback_model="m"))
+    login(client, "trader")
+    assert client.delete(f"/api/ai/providers/{a}", headers=h(client)).status_code == 403
+    login(client, "admin")
+    r = client.delete(f"/api/ai/providers/{a}", headers=h(client)).json()
+    assert r == {"deleted": "Claude A", "routes_changed": ["trade_review"], "was_active": True, "was_fallback": False,
+                 "providers_left": 1}
+    assert [p["name"] for p in client.get("/api/ai/providers").json()] == ["Claude B"]
+    with session_scope() as db:
+        assert db.get(AITaskRoute, "trade_review").chain == [{"provider_id": b, "model": "m"}]
+        c = db.get(AIControl, 1)
+        assert c.active_provider_id is None and c.fallback_provider_id == b
+        assert db.scalar(select(AuditLog).where(AuditLog.action == "AI_PROVIDER_DELETE"))
+    assert [x.name for x in gateway.chain_for("candidate_review")] == ["Claude B"], "the fallback takes over"
+    assert client.delete(f"/api/ai/providers/{a}", headers=h(client)).status_code == 404

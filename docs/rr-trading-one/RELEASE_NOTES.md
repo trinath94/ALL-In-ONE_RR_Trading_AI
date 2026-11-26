@@ -2,6 +2,13 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Remove an AI configuration (2026-11-26).** AI Studio → Anthropic API → **Remove** asks for confirmation. It then:
+* deletes the configuration and its stored key;
+* takes it out of every task route;
+* clears it from Active AI and its fallback.
+
+Afterwards it says what was affected. For example, if it was the Active AI provider, it asks you to choose another. The usage and cost history is kept, and the key itself stays valid in the Claude Console until you revoke it there.
+
 **Anthropic API connection test pop-up (2026-11-26).** Saving a key, or clicking Test, opens a pop-up that stays open until the test has finished. It shows each step:
 1. key stored;
 2. key readable;
