@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge, Btn, Field, inputCls, Panel, Table } from "@/components/ui";
 import { api, fmt, patch, post } from "@/lib/api";
 
@@ -45,15 +45,18 @@ export function AnthropicProviders({ provs, admin, onChanged, onModels }: { prov
   const [msg, setMsg] = useState<Msg>(null);
   const [busy, setBusy] = useState<number | "new" | null>(null);
   const [results, setResults] = useState<Record<number, any>>({});
+  const [check, setCheck] = useState<{ id: number; name: string; result?: any } | null>(null);
 
+  /** Runs the connection test inside a pop-up that stays open until the test has finished and shows each step. */
   async function test(p: { id: number; name: string }) {
-    setBusy(p.id);
-    try {
-      const r = await post<any>(`/api/ai/providers/${p.id}/test`);
-      setResults((x) => ({ ...x, [p.id]: { ...r, at: new Date().toISOString() } }));
-      setMsg(r.ok ? { tone: "ok", text: `${p.name}: OK — ${r.model}, ${r.latency_ms} ms. The key works.` }
-        : { tone: "err", text: `${p.name}: test failed — ${r.error}` });
-    } catch (e: any) { setMsg({ tone: "err", text: `${p.name}: ${e.message}` }); } finally { setBusy(null); onChanged(); }
+    setBusy(p.id); setCheck({ id: p.id, name: p.name });
+    let r: any;
+    try { r = await post<any>(`/api/ai/providers/${p.id}/test`); }
+    catch (e: any) { r = { ok: false, title: "The engine did not answer", fix: "Check that the engine is running (desktop app → Start All) and try again.", error: e.message, steps: [] }; }
+    setResults((x) => ({ ...x, [p.id]: { ...r, at: new Date().toISOString() } }));
+    setCheck({ id: p.id, name: p.name, result: r });
+    setMsg(r.ok ? { tone: "ok", text: `${p.name}: connected — ${r.model}, ${r.latency_ms} ms.` } : { tone: "err", text: `${p.name}: ${r.title || "test failed"}` });
+    setBusy(null); onChanged();
   }
   async function add() {
     setMsg(null); setBusy("new");
@@ -82,6 +85,9 @@ export function AnthropicProviders({ provs, admin, onChanged, onModels }: { prov
   }
   return (
     <Panel title="Anthropic API">
+      {check && <TestPopup check={check} onClose={() => setCheck(null)}
+        onEdit={() => { const p = (provs || []).find((x) => x.id === check.id); setCheck(null); if (p) setEd({ id: p.id, name: p.name, has_key: p.has_key, api_key: "", timeout_s: p.timeout_s, max_retries: p.max_retries, price_in_per_mtok: p.price_in_per_mtok ?? "", price_out_per_mtok: p.price_out_per_mtok ?? "", max_requests_per_minute: p.max_requests_per_minute ?? "" }); }}
+        onRetry={() => test({ id: check.id, name: check.name })} />}
       {msg && <div className={`mb-2 rounded border px-2 py-1 text-[11px] ${msg.tone === "ok" ? "border-neon/40 bg-neon/5 text-neon" : "border-bear/40 bg-bear/5 text-bear"}`}>{msg.text}</div>}
       <Table rows={provs} empty="No Anthropic API key yet. Follow the guide above, then add it below." rowKey={(p) => p.id}
         cols={[{ k: "name", h: "Name" },
@@ -124,5 +130,49 @@ export function AnthropicProviders({ provs, admin, onChanged, onModels }: { prov
             <span className="text-[10px] text-dim">The engine uses only the Anthropic API. Other AI connectors have been removed.</span></div>
         </div>)}
     </Panel>
+  );
+}
+
+const STEPS = ["API key stored", "API key readable", "Anthropic API reached", "Valid answer from the model"];
+
+/** Modal while the Anthropic API configuration is tested: it cannot be closed until the test has finished. */
+function TestPopup({ check, onClose, onEdit, onRetry }: { check: { name: string; result?: any }; onClose: () => void; onEdit: () => void; onRetry: () => void }) {
+  const [secs, setSecs] = useState(0);
+  const r = check.result;
+  useEffect(() => {
+    if (r) return;
+    setSecs(0);
+    const t = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [r]);
+  const done: Record<string, boolean> = Object.fromEntries((r?.steps || []).map((s: any) => [s.step, s.ok]));
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-label="Testing the Anthropic API configuration">
+      <div className="w-full max-w-md rounded border border-cyan/60 bg-panel p-4 text-[12px] shadow-2xl">
+        <div className="mb-1 text-[13px] font-bold text-cyan">{r ? (r.ok ? "Anthropic API connected" : "Anthropic API not connected") : "Testing the Anthropic API configuration…"}</div>
+        <div className="mb-3 text-[11px] text-dim">{check.name}{r?.model ? ` · model ${r.model}` : ""}{!r && ` · ${secs} s`}</div>
+        <ul className="mb-3 space-y-1">
+          {STEPS.map((s, i) => {
+            const st = s in done ? (done[s] ? "ok" : "bad") : r ? "skip" : (i === Object.keys(done).length ? "run" : "wait");
+            return <li key={s} className="flex items-center gap-2">
+              <span className={`inline-block w-4 text-center ${st === "ok" ? "text-neon" : st === "bad" ? "text-bear" : st === "run" ? "animate-pulse text-cyan" : "text-dim"}`}>
+                {st === "ok" ? "✔" : st === "bad" ? "✖" : st === "run" ? "●" : "–"}</span>
+              <span className={st === "skip" || st === "wait" ? "text-dim" : ""}>{s}</span></li>;
+          })}
+        </ul>
+        {!r && <div className="text-[11px] text-dim">Sending one small request to the Anthropic API. This usually takes a few seconds; please wait.</div>}
+        {r?.ok && <div className="rounded border border-neon/40 bg-neon/5 p-2 text-neon">The key and credits work ({r.latency_ms} ms). Choose which tasks use it under Active AI or Model per task, and set a Budget.</div>}
+        {r && !r.ok && <div className="space-y-1 rounded border border-bear/40 bg-bear/5 p-2">
+          <div className="font-bold text-bear">{r.title || "Test failed"}</div>
+          {r.fix && <div>{r.fix}</div>}
+          {r.error && <details><summary className="cursor-pointer text-[11px] text-dim">Error details</summary><div className="whitespace-pre-wrap break-words text-[10px] text-dim">{r.error}</div></details>}
+        </div>}
+        <div className="mt-3 flex justify-end gap-2">
+          {r && !r.ok && <Btn small tone="dim" onClick={onEdit}>Edit key</Btn>}
+          {r && !r.ok && <Btn small tone="cyan" onClick={onRetry}>Test again</Btn>}
+          <Btn small tone={r?.ok ? "neon" : "dim"} disabled={!r} onClick={onClose}>{r ? "Close" : "Testing…"}</Btn>
+        </div>
+      </div>
+    </div>
   );
 }

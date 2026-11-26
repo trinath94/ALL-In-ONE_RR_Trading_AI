@@ -434,23 +434,75 @@ class Ping(BaseModel):
     note: str
 
 
+# What a failed connection test means and how to fix it (most specific first). Matched on the provider's error text.
+TEST_HINTS = [
+    (("credit balance", "billing", "purchase credits", "insufficient"),
+     "No API credits", "The key is valid but the account has no API credits. Claude Console → Settings → Billing: add "
+     "credits, then test again."),
+    (("401", "authentication", "invalid x-api-key", "invalid api key", "unauthorized"),
+     "API key rejected", "The key is wrong, revoked or incomplete. Claude Console → Settings → API keys: create a new "
+     "key, then Edit → paste it → Save and test."),
+    (("403", "permission", "forbidden"),
+     "Key not permitted", "The key's workspace or organisation does not allow this request. Check the key's workspace "
+     "in the Claude Console or create a key in the right workspace."),
+    (("404", "not_found", "model:", "model not found"),
+     "Model not available", "This key cannot use the configured model. Click Models to see the models the key can use "
+     "and choose one under Model per task / Active AI."),
+    (("429", "rate limit", "rate_limited", "overloaded", "529"),
+     "Rate limited or overloaded", "Anthropic is limiting requests for this key right now. Wait a minute and test "
+     "again; raise the limits in the Claude Console if it keeps happening."),
+    (("connection", "timeout", "timed out", "name resolution", "getaddrinfo", "connect", "ssl", "proxy"),
+     "Cannot reach the Anthropic API", "The engine could not connect to api.anthropic.com. Check this PC's internet "
+     "connection, firewall, antivirus or proxy, and that Docker Desktop has network access."),
+    (("budget",),
+     "AI budget reached", "The daily or monthly AI budget is used up. Raise it under Active AI → Budget."),
+]
+
+
+def _diagnose(error: str) -> tuple[str, str]:
+    e = (error or "").lower()
+    for words, title, fix in TEST_HINTS:
+        if any(w in e for w in words):
+            return title, fix
+    return "Test failed", "See the error below. If it persists, check the key and credits in the Claude Console."
+
+
 @router.post("/ai/providers/{provider_id}/test")
 def test_provider(provider_id: int, model: str | None = None, user: User = Depends(require("system.manage")),
                   db: Session = Depends(get_db)):
     """One small schema-checked call through the gateway (task 'diagnostics'), recorded in the ledger like any call.
-    Without a model, the engine's configured Claude model is used (so a key can be tested right after saving)."""
+    Without a model, the engine's configured Claude model is used (so a key can be tested right after saving). The
+    answer lists each step (key stored, key readable, API reached, valid answer) and, on failure, what it means and
+    how to fix it. An explicit test always calls the API: a cooldown from earlier failures is cleared first."""
     p = db.get(AIProvider, provider_id)
     if p is None:
         raise HTTPException(404)
-    if not p.api_key_enc:
-        return {"ok": False, "error": "no API key is stored for this provider: Edit → API key → Save"}
     model = (model or "").strip() or get_settings().claude_model
+    steps = [{"step": "API key stored", "ok": bool(p.api_key_enc)}]
+
+    def failed(title: str, fix: str, error: str) -> dict:
+        return {"ok": False, "provider": p.name, "model": model, "steps": steps, "title": title, "fix": fix,
+                "error": error}
+    if not p.api_key_enc:
+        return failed("No API key", "Edit → paste the key from the Claude Console → Save and test.",
+                      "no API key is stored for this provider")
+    if p.kind != "anthropic":
+        return failed("Not supported", "Only the Anthropic API is supported. Add an Anthropic API key instead.",
+                      f"provider kind {p.kind!r} is not supported")
     hop = gateway.Hop(p.name, p.kind, model, p.base_url, None, float(p.timeout_s), 0, p.price_in_per_mtok,
                       p.price_out_per_mtok)
     try:
         hop.api_key = gateway._decrypt(p.api_key_enc)
+        steps.append({"step": "API key readable", "ok": True})
     except Exception:  # noqa: BLE001
-        raise HTTPException(409, "the stored key cannot be decrypted (RR_AI_KEYS_KEY changed?)") from None
+        steps.append({"step": "API key readable", "ok": False})
+        return failed("Stored key unreadable", "The engine's key-encryption secret changed since the key was saved. "
+                      "Edit → paste the key again → Save and test.", "the stored key cannot be decrypted")
+    try:                                              # an explicit test always really calls the API
+        from app.services.events import get_redis
+        get_redis().delete(f"rr:ai:cooldown:{p.name}", f"rr:ai:fails:{p.name}")
+    except Exception:  # noqa: BLE001
+        pass
     audit(db, user.id, "AI_PROVIDER_TEST", p.name, {"model": model})
     db.commit()
     schema = {"type": "object", "additionalProperties": False, "required": ["status", "note"],
@@ -459,9 +511,16 @@ def test_provider(provider_id: int, model: str | None = None, user: User = Depen
         out, meta = gateway.run_hops("diagnostics", [hop], "You are a connectivity check. Reply with status ok and a "
                                      "one-sentence note.", {"task": "connectivity_check"}, schema, Ping, max_tokens=200)
     except gateway.GatewayError as exc:
-        return {"ok": False, "error": str(exc)}
-    return {"ok": True, "model": meta["model"], "latency_ms": round(meta["latency_ms"], 1),
-            "input_tokens": meta["input_tokens"], "output_tokens": meta["output_tokens"]}
+        msg = str(exc)
+        reached = not any(w in msg.lower() for w in ("connection", "timeout", "timed out", "getaddrinfo"))
+        steps.append({"step": "Anthropic API reached", "ok": reached})
+        steps.append({"step": "Valid answer from the model", "ok": False})
+        title, fix = _diagnose(msg)
+        return failed(title, fix, msg[:600])
+    steps += [{"step": "Anthropic API reached", "ok": True}, {"step": "Valid answer from the model", "ok": True}]
+    return {"ok": True, "provider": p.name, "model": meta["model"], "steps": steps,
+            "latency_ms": round(meta["latency_ms"], 1), "input_tokens": meta["input_tokens"],
+            "output_tokens": meta["output_tokens"]}
 
 
 # ---- Phase 14: presets, model discovery, model version history ------------------------------------------------------

@@ -234,3 +234,24 @@ def test_test_button_works_right_after_saving_without_typing_a_model(client, key
     r = client.post(f"/api/ai/providers/{pid}/test", headers=h(client)).json()
     default = get_settings().claude_model
     assert r["ok"] is True and fake.seen[0]["model"] == default and fake.seen[0]["key"] == "sk-ant-new-1"
+
+
+@pytest.mark.parametrize("error,title", [
+    ("API error 400: Your credit balance is too low to access the Anthropic API", "No API credits"),
+    ("API error 401: invalid x-api-key", "API key rejected"),
+    ("connection error: getaddrinfo failed", "Cannot reach the Anthropic API"),
+    ("API error 404: model: claude-x not found", "Model not available"),
+])
+def test_connection_test_explains_each_failure_step_by_step(client, keys, monkeypatch, error, title):
+    login(client, "admin")
+    pid = client.post("/api/ai/providers", json={"name": "Claude", "api_key": "sk-ant-x"}, headers=h(client)).json()["id"]
+    from app.services.events import get_redis
+    get_redis().set("rr:ai:cooldown:Claude", "1", ex=120)            # an explicit test is never blocked by a cooldown
+    kind = "connection" if "getaddrinfo" in error else "api"
+    fake = Scripted({"Claude": [ProviderError(error, kind)]})
+    monkeypatch.setattr(gateway, "_provider", lambda hop, factory: fake.factory(hop))
+    r = client.post(f"/api/ai/providers/{pid}/test", headers=h(client)).json()
+    assert r["ok"] is False and r["title"] == title and r["fix"] and len(fake.seen) == 1
+    steps = {s["step"]: s["ok"] for s in r["steps"]}
+    assert steps["API key stored"] and steps["API key readable"] and steps["Valid answer from the model"] is False
+    assert steps["Anthropic API reached"] is (kind != "connection")

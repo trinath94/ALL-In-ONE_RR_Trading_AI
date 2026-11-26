@@ -2,6 +2,14 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Anthropic API connection test pop-up (2026-11-26).** Saving a key, or clicking Test, opens a pop-up that stays open until the test has finished. It shows each step:
+1. key stored;
+2. key readable;
+3. Anthropic API reached;
+4. valid answer.
+
+If the test fails, the pop-up names the reason and the fix: no API credits, key rejected, key not permitted, model not available, rate limited, Anthropic API unreachable, or budget reached. It also offers Edit key and Test again. A manual test is never blocked by a cooldown from earlier failures.
+
 **Installer: upgrades with the app and MT5 connectors running (2026-11-26).** Before writing any file, the installer
 now stops the desktop app first (so it cannot restart the connector), asks every MT5 connector instance to stop, and
 after 20 seconds stops anything still running from the install folder. This fixes "Error opening file for writing …
