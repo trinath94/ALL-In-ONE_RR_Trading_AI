@@ -2,6 +2,29 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Engine-first operation: much lower Anthropic token usage (2026-11-26).** The engine now makes every routine decision itself. The Anthropic API improves the engine and is no longer part of every trade decision.
+
+* **Scan candidates:** they are no longer sent to the AI one by one. The engine's validated signal goes to the Risk Engine.
+  * AI Studio → Engine autonomy → *AI review of scan candidates*: Off (default), Selective (only candidates the engine is uncertain about, with a daily cap) or All (the previous behaviour).
+  * A signal the AI rejected is never executed.
+* **Engine Assistant:** it answers from the engine's records without the AI. AI phrasing is optional. Analyses you ask for ("market summary", "review my trades"…) still use the AI.
+* **Automatic improvement research.** Once a day, the engine looks for strategies losing more than their validated evidence explains. For each, it asks Anthropic for one configuration proposal (at most 2 a day by default, within the budget).
+  * The proposal is saved, versioned and validated by the engine before any use, with rollback available.
+  * You can also ask in the chat: "ask Anthropic to improve <strategy>".
+* **New chat commands:**
+  * "can the engine operate without Anthropic?" and "reduce token usage": autonomy report;
+  * "identify weak strategies";
+  * "discover new strategy candidates";
+  * "complete the autonomous upgrade".
+* **Engine autonomy panel** (AI Studio):
+  * internal workload versus AI calls;
+  * engine versus AI decisions;
+  * tokens, cost and budget, split into routine and improvement;
+  * Claude Code tasks;
+  * improvement proposals and their validation.
+
+Migration 0024 (additive) sets the AI review of scan candidates to Off on every installation.
+
 **System check agent and DEMO test trade (2026-11-26).**
 
 *System check.* It runs when the console opens and every 5 minutes, and you can run it from the **Check** button in the header. It checks:

@@ -78,12 +78,14 @@ def test_selective_review_only_for_uncertain_candidates_within_the_daily_cap(sca
     assert sum(1 for r in shortlisted if r.get("mode") == "ENGINE") == len(shortlisted) - 1
     assert all("cap 1 reached" in r["note"] for r in shortlisted if r.get("mode") == "ENGINE")
     with session_scope() as db:
-        sig = db.scalars(select(TradingSignal)).first()
-        sig.calibrated_confidence = 0.9
+        sig = db.scalars(select(TradingSignal).order_by(TradingSignal.id)).first()
+        sig.calibrated_confidence, sid = 0.9, sig.id
         db.merge(AIControl(id=1, candidate_review="selective", review_confidence_below=0.6, review_daily_cap=100))
     with session_scope() as db:
-        sig = db.scalars(select(TradingSignal)).first()
+        sig = db.get(TradingSignal, sid)
         assert tr.wants_ai_review(db, sig) == (False, "engine confident (0.90 >= 0.6)")
+        sig.calibrated_confidence = 0.3
+        assert tr.wants_ai_review(db, sig) == (True, "engine uncertain")
 
 
 def test_a_rejection_by_the_ai_still_blocks_and_engine_decisions_execute():

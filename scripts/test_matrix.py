@@ -194,6 +194,13 @@ SAFETY: list[tuple[str, list[str]]] = [
       "py:test_claude_code.py::test_claude_unavailable_fails_the_task_and_the_engine_continues",
       "py:test_claude_code.py::test_test_run_never_uses_the_production_database",
       "py:test_claude_code.py::test_api_permissions_status_config_and_merge"]),
+    ("23. Engine-first: routine scans and chat make no AI call by default, the engine's decisions still pass the Risk "
+     "Engine, an AI rejection is never executed, and AI improvements are validated before any use",
+     ["py:test_engine_first.py::test_by_default_the_engine_decides_every_candidate_without_any_ai_call",
+      "py:test_engine_first.py::test_a_rejection_by_the_ai_still_blocks_and_engine_decisions_execute",
+      "py:test_engine_first.py::test_selective_review_only_for_uncertain_candidates_within_the_daily_cap",
+      "py:test_engine_first.py::test_engine_triggered_improvement_research_saves_a_versioned_proposal",
+      "py:test_engine_first.py::test_the_assistant_answers_internally_unless_ai_phrasing_is_on"]),
     ("14. Original strategy preservation tests pass", ["py:test_preservation.py::test_all_original_strategy_ids_present",
                                                       "py:test_preservation.py::test_original_strategy_logic_and_config_unchanged",
                                                       "py:test_preservation.py::test_experimental_strategies_never_enter_production_registry"]),
