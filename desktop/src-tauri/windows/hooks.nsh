@@ -1,9 +1,22 @@
 ; RR Trading One installer hooks (Tauri NSIS, see tauri.bundle.conf.json).
 ;
-; Before install (upgrade) and before uninstall: stop what the app started, using the uninstall-stop.ps1 that the
-; installed copy carries. Nothing is deleted: database and cache volumes, settings and connector data are kept.
+; Before install (upgrade) and before uninstall: stop every process of the installed copy (built into this hook), then
+; stop the engine containers with the uninstall-stop.ps1 that the installed copy carries. Nothing is deleted: database and cache volumes, settings and connector data are kept.
 ; After install: Docker Desktop is required for the engine. If it is missing, the user is ASKED whether to install it;
 ; it is never installed silently (a silent install of RR Trading One answers "No").
+
+; Stop every process started from the install folder before any file is written, without relying on the installed
+; copy (an older version's stop script does not know newer processes):
+;   1. the desktop app first (its supervisor would otherwise restart the MT5 connector at once, which keeps
+;      RR_MT5_Connector.exe locked: "Error opening file for writing");
+;   2. a graceful stop request to every connector instance (one per MT5 profile);
+;   3. after 20 s, anything still running from the install folder is stopped; then 2 s for Windows to release files.
+; A connector installed elsewhere is never touched. Nothing is deleted.
+!macro RR_STOP_INSTALLED_PROCESSES
+  DetailPrint "Stopping RR Trading One and its MT5 connectors..."
+  nsExec::ExecToLog `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d='$INSTDIR\';$$o={Get-Process|?{$$_.Path -and $$_.Path.StartsWith($$d,'OrdinalIgnoreCase')}};& $$o|?{$$_.ProcessName -ne 'RR_MT5_Connector'}|Stop-Process -Force -EA 0;$$c=Join-Path $$env:LOCALAPPDATA 'RR Trading One\connector';if(Test-Path $$c){@($$c)+@(Get-ChildItem (Join-Path $$c 'instances') -Directory -EA 0|%{$$_.FullName})|%{New-Item -ItemType File -Force (Join-Path $$_ 'stop.request') -EA 0|Out-Null}};$$t=(Get-Date).AddSeconds(20);while((& $$o) -and (Get-Date) -lt $$t){Start-Sleep -Milliseconds 500};& $$o|Stop-Process -Force -EA 0;Start-Sleep 2"`
+  Pop $0
+!macroend
 
 !macro RR_STOP_RUNNING_COPY
   IfFileExists "$INSTDIR\infrastructure\windows\uninstall-stop.ps1" 0 +3
@@ -12,10 +25,12 @@
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro RR_STOP_INSTALLED_PROCESSES
   !insertmacro RR_STOP_RUNNING_COPY
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  !insertmacro RR_STOP_INSTALLED_PROCESSES
   !insertmacro RR_STOP_RUNNING_COPY
 !macroend
 

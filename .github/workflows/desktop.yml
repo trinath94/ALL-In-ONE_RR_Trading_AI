@@ -156,8 +156,27 @@ jobs:
           $bk = Join-Path $bkDir "manual-1700000000.rrbk"; [IO.File]::WriteAllBytes($bk, [byte[]](1..64))
           $keep = @{ $settings = (Get-FileHash $settings).Hash; $bk = (Get-FileHash $bk).Hash }
           $old = Join-Path $inst "backend\app\main.py"; Add-Content $old "`n# older version"
+          # Field report 2026-11-26: "Error opening file for writing ... RR_MT5_Connector.exe" during an upgrade, because the
+          # running desktop app restarted the connector the installer had stopped. Reproduced: a stand-in desktop app
+          # (rr-trading-one.exe) keeps restarting a stand-in connector (RR_MT5_Connector.exe), both from the install
+          # folder, holding the connector file locked. The upgrade must stop both and replace the file (manifest check).
+          $conn = Join-Path $inst "mt5-connector\RR_MT5_Connector.exe"; $app = Join-Path $inst "rr-trading-one.exe"
+          Copy-Item "$env:SystemRoot\System32\PING.EXE" $conn -Force
+          Copy-Item "$env:SystemRoot\System32\cmd.exe" $app -Force
+          $loop = Join-Path $env:RUNNER_TEMP "restart-connector.cmd"
+          @("@echo off", ":loop",
+            "tasklist /fi `"imagename eq RR_MT5_Connector.exe`" | find /i `"RR_MT5_Connector`" >nul || start `"`" /b `"$conn`" -t 127.0.0.1 >nul",
+            "ping -n 2 127.0.0.1 >nul", "goto loop") | Set-Content -Encoding ascii $loop
+          Start-Process $app -ArgumentList "/d", "/c", "`"$loop`"" -WindowStyle Hidden | Out-Null
+          Start-Sleep 4
+          if (-not (Get-Process RR_MT5_Connector -ErrorAction SilentlyContinue)) { throw "test setup: the stand-in connector is not running" }
+          Stop-Process -Name RR_MT5_Connector -Force; Start-Sleep 4
+          if (-not (Get-Process RR_MT5_Connector -ErrorAction SilentlyContinue)) { throw "test setup: the stand-in app does not restart the connector" }
           $p = Start-Process $setup -ArgumentList "/S" -PassThru; $p.WaitForExit()
           if ($p.ExitCode -ne 0) { throw "upgrade install failed ($($p.ExitCode))" }
+          $left = Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($inst, [StringComparison]::OrdinalIgnoreCase) }
+          if ($left) { throw "processes from the install folder still running after the upgrade: $($left.Name -join ', ')" }
+          "upgrade: the running app and connector were stopped and the connector was replaced"
           if (-not (Test-Path (Join-Path $inst "rr-trading-one.exe"))) { throw "upgrade removed the app" }
           $bad = 0
           Get-Content (Join-Path $inst "BUNDLE_MANIFEST.txt") | Where-Object { $_ -and -not $_.StartsWith("#") } | ForEach-Object {

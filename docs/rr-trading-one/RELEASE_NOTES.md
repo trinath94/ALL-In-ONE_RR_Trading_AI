@@ -2,6 +2,11 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Installer: upgrades with the app and MT5 connectors running (2026-11-26).** Before writing any file, the installer
+now stops the desktop app first (so it cannot restart the connector), asks every MT5 connector instance to stop, and
+after 20 seconds stops anything still running from the install folder. This fixes "Error opening file for writing …
+RR_MT5_Connector.exe" during an upgrade. Data and settings are untouched.
+
 **Anthropic API only; easier key management (2026-11-25).**
 * **Other connectors removed.** The engine now uses only the Anthropic API. The Qwen, OpenAI, Ollama and other
   OpenAI-compatible connectors are gone, and migration 0023 deletes any such provider with its stored key and route
