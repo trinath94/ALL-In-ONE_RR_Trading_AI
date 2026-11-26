@@ -34,6 +34,8 @@ SEV = {"critical": 0, "error": 1, "warning": 2, "info": 3}
 WORKFLOWS = [  # (key, pattern, title) - first match wins
     ("handover", r"hand ?(it )?(control )?(back|over)|handover|complete the (current |autonomous )?upgrade|finish|"
                  r"start the internal runtime", "Handover"),
+    ("execution", r"not executing|no trades?\b|trades? (is|are) not|not (being )?execut|execute trades? smoothly|"
+                  r"why .*(no|not) trad|trades? (do|does)n'?t execut", "Why trades are not executing"),
     ("autonomy", r"token|anthropic (api )?usage|without (the )?(anthropic|ai|claude)|operate (independent|without)|"
                  r"routine analysis|internal engine|api usage|api cost", "Engine autonomy and AI usage"),
     ("weak_strategies", r"weak strateg|identify weak|underperform|losing strateg", "Weak strategies"),
@@ -49,7 +51,7 @@ WORKFLOWS = [  # (key, pattern, title) - first match wins
 ]
 COMMAND_RE = re.compile(r"\b(audit|inspect|repair|fix|heal|readiness|ready for|handover|hand control|hand it back|"
                         r"token|operate without|can operate|internal engine|internal runtime|identify weak|"
-                        r"weak strateg|discover|"
+                        r"weak strateg|discover|not executing|no trades?|trades? (is|are) not|execute trades?|"
                         r"complete the upgrade|check all|find (and|all|missing)|improve|optimi[sz]e|prepare|"
                         r"test the engine|test using)\b", re.I)
 
@@ -365,7 +367,8 @@ SCOPE = {"audit": list(CHECKS), "repair": list(CHECKS), "readiness": list(CHECKS
          "handover": list(CHECKS), "accounts": ["accounts", "risk"], "symbols": ["symbols"],
          "demo_test": ["services", "accounts", "symbols", "ai", "risk", "controls", "incidents"],
          "live_prep": ["accounts", "risk", "controls", "incidents"], "autonomy": ["ai", "services", "runtime"],
-         "weak_strategies": ["strategies"], "discovery": ["strategies"]}
+         "weak_strategies": ["strategies"], "discovery": ["strategies"],
+         "execution": ["services", "accounts", "controls", "risk", "incidents"]}
 
 
 def inspect(db: Session, scope: list[str]) -> tuple[list[dict], dict]:
@@ -518,6 +521,9 @@ def start(db: Session, command: str, user_id: int | None) -> AgentTask:
                                     "Every scan or chat message costs tokens.", "user",
                                     "AI Studio → Engine-first: set candidate review to Off (the engine decides) and "
                                     "leave assistant AI phrasing off."))
+    if wf == "execution":
+        from app.services import execution_doctor
+        report["execution"] = execution_doctor.diagnose(db)
     if wf == "weak_strategies":
         report["weak_strategies"] = _weak_strategies(db)
     if wf == "discovery":
@@ -664,6 +670,18 @@ def describe(task: AgentTask) -> str:
                      + ("possible" if ind["can_trade_without_ai"] else "NOT possible (candidates wait for the AI)"))
         lines.append("Still depends on the AI: " + ("; ".join(ind["routine_dependencies"]) or "nothing routine")
                      + ". " + ind["note"])
+    if r.get("execution"):
+        ex = r["execution"]
+        lines.append(ex["verdict"])
+        for g in ex["gates"]:
+            lines.append(f"{'✔' if g['ok'] else '✖'} {g['gate']}: {g['detail']}" + ("" if g["ok"] else f" → {g['fix']}"))
+        d = ex["last_24h"]
+        lines.append(f"Last 24 h: {d['signals']} BUY/SELL signals, {d['executed']} executed.")
+        for x in d["not_executed_reasons"]:
+            lines.append(f"• {x['count']}x not executed: {x['reason']} → {x['fix']}")
+        for x in d["risk_rejections"]:
+            lines.append(f"• {x['count']}x refused by the Risk Engine ({x['check']}: {x['example']}) → {x['fix']}")
+        lines.append("Next: " + ex["next_step"])
     if r.get("weak_strategies"):
         w = r["weak_strategies"]
         lines.append(f"Weak strategies: {len(w['weak'])} (within normal variance {w['within_normal_variance']}, "

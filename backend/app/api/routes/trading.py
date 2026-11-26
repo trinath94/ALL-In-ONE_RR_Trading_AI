@@ -814,3 +814,10 @@ def system_test_trade(body: TestTradeIn, user: User = Depends(require("trade.man
     audit(db, user.id, "SYSTEM_TEST_TRADE", out.get("symbol") or body.symbol or "",
           {"ok": out["ok"], "steps": [(s["step"], s["ok"]) for s in out["steps"]], "order_id": out.get("order_id")})
     return out
+
+
+@router.get("/system/execution")
+def system_execution(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Why trades are (not) executing: every gate of the execution pipeline and the last 24 hours' blockers."""
+    from app.services import execution_doctor
+    return execution_doctor.diagnose(db)

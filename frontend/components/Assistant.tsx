@@ -6,7 +6,7 @@ import { ClaudeCodeTask } from "./ClaudeCode";
 import { can, useMe } from "./Shell";
 
 type Msg = { role: "you" | "engine"; text: string; data?: any };
-const QUICK = ["Engine status", "Why was the last signal not executed?", "What should I do next?",
+const QUICK = ["Why are trades not executing?", "Engine status", "Why was the last signal not executed?", "What should I do next?",
   "Audit my entire trading engine", "Find and repair all errors", "Is the engine ready for autonomous trading?",
   "Check all available trading symbols", "Hand control back to the engine", "Give me a market summary",
   "Review my recent trades", "Explain the open errors"];

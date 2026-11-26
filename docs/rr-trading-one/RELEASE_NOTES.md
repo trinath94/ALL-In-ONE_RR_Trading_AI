@@ -2,6 +2,21 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Trades not executing: built-in economic calendar and execution diagnosis (2026-11-26).**
+
+*Built-in economic calendar.* The installed engine had no economic calendar configured. News risk was therefore UNKNOWN for every symbol, and the Risk Engine refused every entry ("News feed unavailable"). The engine now uses a built-in calendar (the public weekly economic calendar; no key needed; refreshed hourly). Entries are allowed except around high-impact events for the symbol's currencies. The protection itself is unchanged: if the calendar cannot be reached, news risk is UNKNOWN again and entries wait.
+
+*Execution diagnosis.* Ask "Why are trades not executing?" in the Engine Assistant, or open System Check. It shows every gate a signal must pass, with the fix for each closed one:
+* trading worker running;
+* Auto trading on;
+* kill switch, risk lock and paused entries clear;
+* startup checks passed;
+* execution account available and reconciled;
+* candidates not waiting for the AI;
+* news calendar available.
+
+It also counts why the last 24 hours' signals were not executed, including the Risk Engine's actual rejection reasons, each with its fix. Nothing is changed by the diagnosis.
+
 **Engine-first operation: much lower Anthropic token usage (2026-11-26).** The engine now makes every routine decision itself. The Anthropic API improves the engine and is no longer part of every trade decision.
 
 * **Scan candidates:** they are no longer sent to the AI one by one. The engine's validated signal goes to the Risk Engine.

@@ -40,6 +40,10 @@ x-backend: &backend
     RR_COOKIE_SECURE: "false"
     RR_CORS_ORIGINS: http://127.0.0.1:${RR_ONE_GATEWAY_PORT:-47810}
     RR_ANTHROPIC_API_KEY: ${RR_ONE_ANTHROPIC_API_KEY:-}
+    # Economic calendar for the news-risk check (no key). Without a calendar every symbol's news risk is UNKNOWN and
+    # the Risk Engine refuses entries (news_unknown_blocks). Override with RR_ONE_NEWS_PROVIDER / RR_ONE_NEWS_API_URL.
+    RR_NEWS_PROVIDER: ${RR_ONE_NEWS_PROVIDER:-faireconomy}
+    RR_NEWS_API_URL: ${RR_ONE_NEWS_API_URL:-}
     # Newly discovered broker symbols are not scanned until the user enables them (Broker Symbols page).
     RR_NEW_SYMBOLS_SCAN_ENABLED: "false"
   depends_on:

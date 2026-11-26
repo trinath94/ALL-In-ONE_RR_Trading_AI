@@ -33,8 +33,45 @@ INSTRUMENT_CCY = {"US30": ["USD"], "NAS100": ["USD"], "SPX500": ["USD"], "US500"
                   "BTC": ["USD"], "ETH": ["USD"], "WTI": ["USD"], "BRENT": ["USD"], "USOIL": ["USD"]}
 
 
+# Built-in economic calendar (no key): the public weekly calendar feed, refreshed hourly by the monitor role.
+FAIRECONOMY_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+IMPACT = {"high": "HIGH", "medium": "MEDIUM", "low": "LOW", "holiday": "LOW", "non-economic": "LOW"}
+
+
+def parse_faireconomy(items) -> list[dict]:
+    """Calendar entries ``{title, country, date (ISO-8601 with offset), impact, forecast, previous}`` -> the engine's
+    event format. Entries without a currency or a parsable time are skipped, never guessed."""
+    out = []
+    for it in items if isinstance(items, list) else []:
+        if not isinstance(it, dict):
+            continue
+        cur, raw = str(it.get("country") or "").strip().upper(), str(it.get("date") or "").strip()
+        if not cur or not raw:
+            continue
+        try:
+            when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when.tzinfo is None:
+            continue
+        when = when.astimezone(UTC)
+        title = str(it.get("title") or "")[:255]
+        out.append({"id": f"ff-{cur}-{when.isoformat()}-{title}"[:128], "title": title, "currency": cur,
+                    "impact": IMPACT.get(str(it.get("impact") or "").strip().lower(), "LOW"),
+                    "time": when.isoformat(), "forecast": it.get("forecast") or None,
+                    "previous": it.get("previous") or None, "actual": it.get("actual") or None})
+    return out
+
+
 def fetch_events() -> list[dict]:
     cfg = get_settings()
+    if cfg.news_provider == "faireconomy":
+        r = httpx.get(cfg.news_api_url or FAIRECONOMY_URL, timeout=15, headers={"User-Agent": "RR-Trading-One/1.0"})
+        r.raise_for_status()
+        events = parse_faireconomy(r.json())
+        if not events:
+            raise RuntimeError("economic calendar returned no usable events")
+        return events
     if cfg.news_provider != "generic_json" or not cfg.news_api_url:
         raise RuntimeError("news provider not configured")
     headers = {"Authorization": f"Bearer {cfg.news_api_key}"} if cfg.news_api_key else {}
@@ -56,10 +93,10 @@ def refresh(db: Session) -> dict:
     n = 0
     for it in items:
         pid = str(it.get("id") or f"{it['currency']}-{it['time']}-{it['title']}")[:128]
-        ev = db.scalar(select(EconomicEvent).where(EconomicEvent.provider == "generic_json",
-                                                   EconomicEvent.provider_id == pid))
+        prov = (get_settings().news_provider or "generic_json")[:32]
+        ev = db.scalar(select(EconomicEvent).where(EconomicEvent.provider == prov, EconomicEvent.provider_id == pid))
         if ev is None:
-            ev = EconomicEvent(provider="generic_json", provider_id=pid)
+            ev = EconomicEvent(provider=prov, provider_id=pid)
             db.add(ev)
         ev.title = it["title"][:255]
         ev.currency = it["currency"].upper()[:8]

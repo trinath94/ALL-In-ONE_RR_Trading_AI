@@ -20,6 +20,7 @@ function dismiss(fp: string) { try { sessionStorage.setItem("rr-syscheck-dismiss
 export function SystemCheck() {
   const me = useMe();
   const [rep, setRep] = useState<any>(null);
+  const [ex, setEx] = useState<any>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -29,6 +30,7 @@ export function SystemCheck() {
     try {
       const r = await api<any>("/api/system/check");
       setRep(r);
+      api<any>("/api/system/execution").then(setEx).catch(() => setEx(null));
       if (show || (r.overall === "failing" && !dismissed(r.fingerprint))) setOpen(true);
     } catch (e: any) { setErr(e.message); if (show) setOpen(true); } finally { setBusy(false); }
   }, []);
@@ -65,6 +67,15 @@ export function SystemCheck() {
           {rep && <div className="grid grid-cols-2 gap-1">
             {rep.systems.map((s: any) => <div key={s.key} className="flex items-center gap-2">
               <span className={`w-4 text-center font-bold ${TONE[s.status]}`}>{ICON[s.status]}</span>{s.title}</div>)}
+          </div>}
+          {ex && <div className={`rounded border p-2 ${ex.can_execute && !ex.last_24h.risk_rejections.length ? "border-neon/40" : "border-warn/50"}`}>
+            <div className="font-bold">Trade execution</div>
+            <div className={ex.can_execute ? "text-neon" : "text-bear"}>{ex.verdict}</div>
+            {ex.gates.filter((g: any) => !g.ok).map((g: any) => <div key={g.gate} className="mt-1"><span className="text-bear">✖ {g.gate}</span> <span className="text-dim">— {g.detail}</span><div className="text-cyan">What to do: {g.fix}</div></div>)}
+            <div className="mt-1 text-[11px] text-dim">Last 24 h: {ex.last_24h.signals} BUY/SELL signals, {ex.last_24h.executed} executed.</div>
+            {ex.last_24h.not_executed_reasons.map((x: any) => <div key={x.reason} className="text-[11px]">• {x.count}× {x.reason} <span className="text-cyan">→ {x.fix}</span></div>)}
+            {ex.last_24h.risk_rejections.map((x: any) => <div key={x.check} className="text-[11px]">• {x.count}× Risk Engine: {x.check} <span className="text-dim">({x.example})</span> <span className="text-cyan">→ {x.fix}</span></div>)}
+            {ex.can_execute && <div className="mt-1 text-[11px] text-cyan">Next: {ex.next_step}</div>}
           </div>}
           {bad.map((s: any) => (
             <div key={s.key} className={`rounded border p-2 ${s.status === "failing" ? "border-bear/50" : "border-warn/40"}`}>
