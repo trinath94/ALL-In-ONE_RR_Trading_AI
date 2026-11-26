@@ -26,7 +26,7 @@ from app.services.events import get_redis
 from app.strategies import profiles, registry
 from app.workers import main as worker
 from tests.test_accounts_execution import ready, two  # noqa: F401 (fixture)
-from tests.test_ai_gateway import REVIEW_OK, Scripted, keys, provider  # noqa: F401 (fixture)
+from tests.test_ai_gateway import ai_review_all, REVIEW_OK, Scripted, keys, provider  # noqa: F401 (fixture)
 from tests.test_execution_e2e import stack  # noqa: F401 (fixture)
 from tests.test_part27 import scan  # noqa: F401 (fixture)
 
@@ -50,6 +50,7 @@ def test_master_upgrade_flow_end_to_end_in_demo(two, keys, monkeypatch):
                 made[code] = f"{p.id}:v{p.version}"
     assert [h.name for h in gateway.chain_for("candidate_review")] == ["active-ai"]
     reviewer = gateway.GatewayReviewer(Scripted({"active-ai": [dict(REVIEW_OK)] * 50}).factory)
+    ai_review_all()
     scan_once(bridge1, reviewer, worker.auto_execute_factory(bridge1, bridges))
 
     # 3. both accounts traded, each within its own limits, each signal once per account

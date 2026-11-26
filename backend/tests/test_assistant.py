@@ -10,7 +10,7 @@ from app.services import trading as tr
 from app.services.events import get_redis
 from app.workers import main as worker
 from tests.test_accounts_execution import ready, two  # noqa: F401 (fixture)
-from tests.test_ai_gateway import Scripted, keys, provider, route  # noqa: F401 (fixture)
+from tests.test_ai_gateway import ai_review_all, Scripted, keys, provider, route  # noqa: F401 (fixture)
 from tests.test_api import client, h, login  # noqa: F401 (fixture)
 from tests.test_execution_e2e import allow_unknown_news, stack  # noqa: F401 (fixture)
 from tests.test_part27 import force_buy, scan  # noqa: F401 (fixture)
@@ -77,6 +77,7 @@ def test_auto_trading_off_is_where_the_signal_stopped(scan, monkeypatch):
 
 
 def test_ai_mode_without_a_provider_points_to_ai_studio(scan, monkeypatch, keys):
+    ai_review_all()
     sid = scanned(scan, monkeypatch, mode="AI")
     with session_scope() as db:
         d = assistant.diagnose_signal(db, db.get(TradingSignal, sid))
@@ -121,6 +122,7 @@ def test_questions_are_routed_and_answered_without_ai(scan, monkeypatch):
 def test_the_ai_phrases_the_engine_facts_and_falls_back(stack, keys):
     a = provider("chat")
     route("engine_assistant", (a, "m"))
+    ai_review_all()
     seen = {}
 
     class Spy(Scripted):

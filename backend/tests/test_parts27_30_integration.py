@@ -21,7 +21,7 @@ from app.scanner.service import expire_signals, scan_once
 from app.services import readiness
 from app.services import trading as tr
 from app.workers import main as worker
-from tests.test_ai_gateway import REVIEW_OK, Scripted, keys, provider  # noqa: F401 (fixture)
+from tests.test_ai_gateway import ai_review_all, REVIEW_OK, Scripted, keys, provider  # noqa: F401 (fixture)
 from tests.test_api import h, login, make_user
 from tests.test_execution_e2e import allow_unknown_news, open_eur, stack  # noqa: F401 (fixture)
 from tests.test_part27 import force_buy, scan  # noqa: F401 (fixture)
@@ -77,6 +77,7 @@ def test_an_inconsistent_feed_is_refused_by_the_risk_engine_even_after_ai_consen
     reviewer = consensus_reviewer()
     assert worker.startup_checks(bridge)[0]
     enable_auto()
+    ai_review_all()
     scan_once(bridge, reviewer, worker.auto_execute_factory(bridge))
     with session_scope() as db:
         expire_signals(db)
@@ -117,6 +118,7 @@ def test_parts27_30_flow_end_to_end_in_demo(scan, keys, monkeypatch):
     enable_auto()
     with session_scope() as db:
         assert tr.get_state(db).active_mode == "DEMO"
+    ai_review_all()
     scan_once(bridge, reviewer, worker.auto_execute_factory(bridge))
     with session_scope() as db:
         expire_signals(db)                                                 # the monitor's sync of opportunity states

@@ -11,6 +11,7 @@ from app.db.session import session_scope
 from app.scanner.service import expire_signals, scan_once
 from app.services import trading as tr
 from app.workers import main as worker
+from tests.test_ai_gateway import ai_review_all
 from tests.test_api import client, h, login  # noqa: F401 (fixture)
 from tests.test_execution_e2e import allow_unknown_news, stack  # noqa: F401 (fixture)
 from tests.test_part27 import force_buy, scan  # noqa: F401 (fixture)
@@ -116,6 +117,7 @@ def test_ai_mode_without_provider_still_executes_nothing(scan, monkeypatch):
     allow_unknown_news()
     assert worker.startup_checks(bridge)[0]
     enable_auto()
+    ai_review_all()
     scan_once(bridge, None, worker.auto_execute_factory(bridge))
     with session_scope() as db:
         assert not db.scalars(select(TradeOrder)).all() and not fake.positions

@@ -24,7 +24,7 @@ from app.risk.engine import RiskParams
 from app.scanner import triggers
 from app.scanner.service import expire_signals, scan_once
 from app.services.events import get_redis
-from tests.test_ai_gateway import REVIEW_OK, Scripted, keys, provider, route  # noqa: F401 (fixture)
+from tests.test_ai_gateway import ai_review_all, REVIEW_OK, Scripted, keys, provider, route  # noqa: F401 (fixture)
 from tests.test_api import client, login, make_user  # noqa: F401 (fixture)
 from tests.test_execution_e2e import stack  # noqa: F401 (fixture)
 from tests.test_scanner_scheduling import varied
@@ -235,6 +235,7 @@ def test_ai_review_moves_opportunities_and_sync_follows_the_signal(scan, monkeyp
         def review(self, cand):
             return Review.model_validate({**REVIEW_OK, "decision": cand["direction"]}), \
                 {"provider": "scripted", "model": "m", "input_tokens": 1, "output_tokens": 1, "latency_ms": 1.0}
+    ai_review_all()
     scan_once(bridge, Reviewer(), lambda _id: None)
     with session_scope() as db:
         q = db.scalars(select(Opportunity).where(Opportunity.state == "QUALIFIED")).all()

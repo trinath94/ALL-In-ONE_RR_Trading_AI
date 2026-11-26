@@ -17,7 +17,7 @@ from app.scanner.service import scan_once
 from app.services import agent, assistant, incidents
 from app.services import trading as tr
 from app.workers import main as worker
-from tests.test_ai_gateway import REVIEW_OK, Scripted, keys, provider, route  # noqa: F401 (fixture)
+from tests.test_ai_gateway import ai_review_all, REVIEW_OK, Scripted, keys, provider, route  # noqa: F401 (fixture)
 from tests.test_api import client, h, login  # noqa: F401 (fixture)
 from tests.test_execution_e2e import allow_unknown_news, stack  # noqa: F401 (fixture)
 from tests.test_part27 import force_buy, scan  # noqa: F401 (fixture)
@@ -176,6 +176,7 @@ def scan_ai_mode(scan, monkeypatch, policy):
         tr.get_state(db).ai_mode = "AI"
         db.merge(AIControl(id=1, single_active=False, active_model="", fallback_enabled=False, fallback_model="",
                            ai_unavailable_policy=policy))
+    ai_review_all()
     scan_once(bridge, None, worker.auto_execute_factory(bridge))       # no AI provider: AI unavailable
     with session_scope() as db:
         reviews = {(s.ai_review or {}).get("decision") for s in db.scalars(select(TradingSignal)) if s.decision == "BUY"}

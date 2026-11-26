@@ -281,3 +281,14 @@ def test_remove_an_ai_configuration(client, keys):
         assert db.scalar(select(AuditLog).where(AuditLog.action == "AI_PROVIDER_DELETE"))
     assert [x.name for x in gateway.chain_for("candidate_review")] == ["Claude B"], "the fallback takes over"
     assert client.delete(f"/api/ai/providers/{a}", headers=h(client)).status_code == 404
+
+
+def ai_review_all():
+    """Tests of the AI review itself: select the previous behaviour (every candidate reviewed, AI-phrased answers);
+    the default since migration 0024 is engine-first (no routine AI call)."""
+    from app.db.models_ai import AIControl
+    with session_scope() as db:
+        c = db.get(AIControl, 1) or AIControl(id=1, single_active=False, active_model="", fallback_enabled=False,
+                                              fallback_model="")
+        c.candidate_review, c.assistant_ai = "all", True
+        db.add(c)
