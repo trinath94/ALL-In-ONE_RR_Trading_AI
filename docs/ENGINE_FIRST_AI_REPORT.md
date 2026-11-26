@@ -106,6 +106,13 @@ No data is deleted. Rollback: `alembic downgrade 0023`. Expected version: `0024`
 | 24 | Existing strategies and modules intact | Preservation suite |
 | 25 | LIVE subject to explicit authorisation | Unchanged |
 
+**Test results:**
+* Engine suite: **599 passed, 0 failed** (local, `57d4099`); 16 new engine-first tests.
+* Nine existing tests of the AI review now select that behaviour explicitly.
+* Migration 0023 → 0024 → 0023 → 0024 round trip works.
+* The console builds.
+* CI: desktop green on `57d4099` (Windows install/upgrade/uninstall and installer published); backend green on `9dc940e`.
+
 **Not verified here:**
 * weeks of operation on your broker DEMO account;
 * real token savings on your account (the dashboard will show them after you install);
