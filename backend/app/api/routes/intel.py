@@ -331,6 +331,35 @@ def scanner_settings(body: ScannerSettingsIn, user: User = Depends(require("stra
     return {"timeframes": tfs}
 
 
+class PrioritySymbolsIn(BaseModel):
+    symbols: list[str] | None = Field(default=None, max_length=200)   # None = the built-in default list
+
+
+@router.get("/scanner/priority")
+def priority_symbols(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    from app.scanner import priority as prio
+    row = db.get(ScannerSettings, 1)
+    return {"list": prio.listed(db), "default": prio.DEFAULT, "mode": tr.get_state(db).active_mode,
+            "is_default": row is None or row.priority_symbols is None, "symbols": prio.spread_view(db)}
+
+
+@router.put("/scanner/priority")
+def set_priority_symbols(body: PrioritySymbolsIn, user: User = Depends(require("strategy.manage")),
+                         db: Session = Depends(get_db)):
+    from app.scanner import priority as prio
+    from app.scanner.service import scan_timeframes as _tfs
+    row = db.get(ScannerSettings, 1)
+    if row is None:
+        row = ScannerSettings(id=1, timeframes=_tfs(db))
+        db.add(row)
+    row.priority_symbols = prio.clean(body.symbols) if body.symbols is not None else None
+    row.updated_by = user.id
+    db.flush()
+    out = prio.apply(db)
+    audit(db, user.id, "SCANNER_PRIORITY", "priority_symbols", {"list": out["list"], "enabled": out["scan_enabled_now"]})
+    return {**out, "symbols": prio.spread_view(db)}
+
+
 @router.post("/symbols/peers/apply-suggested")
 def apply_suggested_peers(user: User = Depends(require("strategy.manage")), db: Session = Depends(get_db)):
     """Set the suggested peers on symbols that have none configured (explicit user action; audited)."""

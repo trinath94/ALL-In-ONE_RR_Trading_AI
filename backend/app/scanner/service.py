@@ -729,6 +729,12 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
         stats = strategy_stats(db)
         stats_ms = (time.perf_counter() - t_stats) * 1000
         calib = calibrator(db)
+        try:                              # owner's priority symbols: scanned first and ranked first, every cycle
+            from app.scanner import priority as prio
+            with db.begin_nested():
+                prio.apply(db)
+        except Exception as exc:  # noqa: BLE001 - priority never stops the scan
+            log.warning("priority symbols skipped: %s", exc)
         symbols = db.scalars(select(Symbol).where(Symbol.scan_enabled.is_(True), Symbol.tradable.is_(True))
                              .order_by(Symbol.priority, Symbol.canonical)).all()
         targets = [(x.id, x.broker_symbol, x.priority) for x in symbols]
@@ -810,11 +816,14 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
                   evidence={"sources": "OOS, walk-forward, paper and live results only (in-sample backtests excluded)"})
     t_rank = time.perf_counter()
     eligible = [r for r in results if r.get("signal_id") and r["decision"] in ("BUY", "SELL")]
-    ranked = sorted(eligible, key=lambda r: r["score"], reverse=True)[: s.claude_max_candidates_per_scan]
+    first = {name: p for _, name, p in targets}
+    # priority symbols first, then the engine score (the score and grade themselves are unchanged)
+    ranked = sorted(eligible, key=lambda r: (first.get(r["symbol"], 100), -r["score"]))[: s.claude_max_candidates_per_scan]
     if eligible:
         cycle.add("strategy_ranking", ref=[r["signal_id"] for r in ranked], ms=(time.perf_counter() - t_rank) * 1000,
                   out={"candidates": len(eligible), "shortlisted": len(ranked)},
-                  evidence={"rule": f"top {s.claude_max_candidates_per_scan} BUY/SELL by engine score"})
+                  evidence={"rule": f"top {s.claude_max_candidates_per_scan} BUY/SELL: priority symbols first, "
+                                    "then engine score"})
     for r in ranked:
         with session_scope() as db:
             sig = db.get(TradingSignal, r["signal_id"])

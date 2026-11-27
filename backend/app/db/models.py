@@ -628,6 +628,7 @@ class ScannerSettings(Base):
     __table_args__ = (CheckConstraint("id = 1", name="ck_scanner_settings_single_row"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     timeframes: Mapped[list] = mapped_column(JSONB)
+    priority_symbols: Mapped[list | None] = mapped_column(JSONB, nullable=True)   # 0026; NULL = default list
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

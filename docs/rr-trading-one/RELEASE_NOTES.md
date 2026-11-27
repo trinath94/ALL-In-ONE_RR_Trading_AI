@@ -2,6 +2,21 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Priority symbols: high-volatility list scanned and ranked first (2026-11-27).**
+
+The owner's list (default: XAUUSD, XAGUSD, oil, JPY and other volatile crosses, USDZAR, USDMXN, USDTRY, US and European
+indices, JP225, BTCUSD, ETHUSD, SOLUSD, XRPUSD) is matched to the broker's symbols by name, including broker suffixes.
+
+* Matched symbols are scanned first in every cycle and switched on for scanning when the broker allows trading them
+  (excluded symbols stay off).
+* Their candidates are ranked first, with grade and score unchanged.
+* The list is edited on the Scanner page (Priority symbols).
+
+Priority never loosens a risk limit. The panel shows each symbol's last spread against the Risk Engine's spread limit.
+The owner can set a spread limit per symbol (`symbol_max_spread_points`); every other symbol keeps the global limit.
+
+Migration 0026 (additive).
+
 **Trader discipline: daily stop, key levels, A+ setups only (2026-11-27).**
 
 Set these in the Risk Centre. Each one is off (0) until you set it, or apply the "Professional trader discipline" profile

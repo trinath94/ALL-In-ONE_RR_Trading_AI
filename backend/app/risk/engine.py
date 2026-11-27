@@ -69,6 +69,8 @@ class RiskParams:
     # A+ setups only (scanner, before any AI call). 0 = off.
     key_level_max_atr: float = 0.0             # entry must be within this many ATR of a key level
     min_setup_score: int = 0                   # minimum setup quality score (0-7)
+    # Per-symbol spread limits in points, set by the owner (e.g. {"XAUUSD.r": 45}). Absent: max_spread_points.
+    symbol_max_spread_points: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "RiskParams":
@@ -102,6 +104,10 @@ class RiskParams:
             errs.append("daily trade and loss counts must be >= 0 (0 = off)")
         if not 0 < self.streak_reduce_factor <= 1:
             errs.append("streak_reduce_factor must be in (0, 1] (it only ever reduces size)")
+        bad = [k for k, v in (self.symbol_max_spread_points or {}).items()
+               if not isinstance(v, (int, float)) or isinstance(v, bool) or v <= 0]
+        if bad:
+            errs.append(f"symbol_max_spread_points must be > 0 points per symbol: {bad}")
         if self.key_level_max_atr < 0 or not 0 <= self.min_setup_score <= 7:
             errs.append("key_level_max_atr must be >= 0 and min_setup_score 0-7 (0 = off)")
         return errs
@@ -306,8 +312,9 @@ def evaluate(req: OrderRequest, spec: SymbolSpec, acct: AccountState, positions:
             add("min_rr", rr >= params.min_rr, f"R:R {rr:.2f} < {params.min_rr}" if rr < params.min_rr else f"R:R {rr:.2f}")
 
     # --- Market conditions -----------------------------------------------------------
-    add("spread", req.spread_points <= params.max_spread_points,
-        f"spread {req.spread_points:.1f}pt > max {params.max_spread_points}pt" if req.spread_points > params.max_spread_points
+    max_spread = float((params.symbol_max_spread_points or {}).get(req.symbol) or params.max_spread_points)
+    add("spread", req.spread_points <= max_spread,
+        f"spread {req.spread_points:.1f}pt > max {max_spread:g}pt" if req.spread_points > max_spread
         else f"spread {req.spread_points:.1f}pt")
     add("slippage", req.expected_slippage_points <= params.max_slippage_points,
         f"expected slippage {req.expected_slippage_points}pt > {params.max_slippage_points}pt"

@@ -4,6 +4,7 @@ import { can, PageTitle, useMe } from "@/components/Shell";
 import { Badge, Btn, dirTone, ErrorLine, gradeTone, inputCls, Panel, Stat, Table } from "@/components/ui";
 import { fmt, put } from "@/lib/api";
 import { useApi, useLive } from "@/lib/hooks";
+import { PrioritySymbols } from "@/components/PrioritySymbols";
 
 const TFS = ["", "M1", "M5", "M15", "M30", "H1", "H4", "D1"];
 
@@ -86,6 +87,7 @@ export default function Scanner() {
       <PageTitle sub={`${data?.length ?? 0} symbol/timeframe analyses from the latest scan cycles`}>Market Scanner</PageTitle>
       <ErrorLine error={error} />
       <ScannerStatus />
+      <PrioritySymbols />
       <Panel>
         <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-6">
           <input placeholder="search symbol" value={q} onChange={(e) => setQ(e.target.value)} className={inputCls} />
