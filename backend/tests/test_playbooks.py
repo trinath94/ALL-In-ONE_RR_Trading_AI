@@ -37,12 +37,13 @@ def test_the_ai_plan_is_saved_and_reused_for_every_candidate(scan, monkeypatch, 
     assert all(r["playbook"]["allow"] for r in shortlisted if r.get("mode") == "ENGINE")
     with session_scope() as db:
         pbs = db.scalars(select(MarketPlaybook)).all()
-        assert pbs and all(p.source == "ai" and p.status == "ACTIVE" for p in pbs)
-        assert len(fake.seen) == len({p.symbol for p in pbs}), "one AI call per symbol, not per candidate"
+        assert pbs and all(p.source == "ai" and p.status == "ACTIVE" for p in pbs), [(p.symbol, p.regime, p.status) for p in pbs]
+        assert len(fake.seen) == len({p.symbol for p in pbs}), "one AI call per symbol, not per candidate or timeframe"
         assert "timeframes" in pbs[0].facts and "recent_results" in pbs[0].facts, "engine facts, never raw data"
         sym = db.scalar(select(Symbol).where(Symbol.broker_symbol == pbs[0].symbol))
         calls = len(fake.seen)
-        again, how = pbk.get_or_create(db, sym, pbs[0].regime)
+        assert len({(p.symbol, p.regime) for p in pbs}) == len(pbs), "one plan per symbol: timeframes share it"
+        again, how = pbk.get_or_create(db, sym, pbk.plan_regime(db, sym, None))
         assert how == "active" and again.id == pbs[0].id and len(fake.seen) == calls
 
 

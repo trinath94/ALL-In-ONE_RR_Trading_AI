@@ -829,7 +829,8 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
                 try:
                     from app.intelligence import playbook as pbk
                     with db.begin_nested():
-                        pb, how = pbk.get_or_create(db, db.get(Symbol, sig.symbol_id), sig.regime or "UNKNOWN")
+                        psym = db.get(Symbol, sig.symbol_id)
+                        pb, how = pbk.get_or_create(db, psym, pbk.plan_regime(db, psym, sig.regime))
                 except Exception as exc:  # noqa: BLE001 - a playbook problem never stops the engine
                     pb, how = None, f"none:error {type(exc).__name__}"
                 if pb is not None:

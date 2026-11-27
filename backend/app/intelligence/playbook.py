@@ -105,6 +105,22 @@ def facts_for(db: Session, sym, regime: str) -> dict:
     }, default=str))
 
 
+PLAN_TIMEFRAMES = ("H4", "H1")
+
+
+def plan_regime(db: Session, sym, fallback: str | None) -> str:
+    """The regime a plan is made for: the symbol's higher-timeframe regime (H4, then H1), as a trader plans from the
+    higher timeframe. Signals on lower timeframes share that plan instead of replacing it with their own regime."""
+    from app.db.models import AnalysisResult
+    for tf in PLAN_TIMEFRAMES:
+        r = db.scalar(select(AnalysisResult.regime).where(AnalysisResult.symbol_id == sym.id,
+                                                          AnalysisResult.timeframe == tf)
+                      .order_by(AnalysisResult.id.desc()).limit(1))
+        if r:
+            return r
+    return fallback or "UNKNOWN"
+
+
 def _active(db: Session, symbol: str, now: datetime) -> list[MarketPlaybook]:
     return db.scalars(select(MarketPlaybook).where(MarketPlaybook.symbol == symbol, MarketPlaybook.status == "ACTIVE")
                       .order_by(MarketPlaybook.id.desc())).all()
