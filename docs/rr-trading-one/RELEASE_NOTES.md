@@ -2,6 +2,17 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Fix: Market analysis and Trading worker shown as stopped after a while (2026-11-27).**
+
+Each role's health check tests its lock in Redis. The lock lasts 120 s and was renewed only between cycles.
+
+* **What went wrong:** a cycle longer than that let the lock expire. A long scan with AI playbook calls, several
+  candidates or a slow broker reply was enough. The lock was then never re-created, so the role kept running but
+  failed its health check for good, and the desktop showed it as stopped.
+* **The fix:** a background thread renews the lock every 20 s, and a lost lock is taken back.
+* **What stays the same:** a role whose loop makes no progress for 15 minutes is still reported unhealthy, and a lock
+  held by another process is never taken.
+
 **Priority symbols: high-volatility list scanned and ranked first (2026-11-27).**
 
 The owner's list (default: XAUUSD, XAGUSD, oil, JPY and other volatile crosses, USDZAR, USDMXN, USDTRY, US and European

@@ -262,3 +262,35 @@ def test_switching_auto_trading_on_records_when(client):
     client.post("/api/control/auto-trading", json={"enabled": True}, headers=h(client))
     with session_scope() as db:
         assert tr.get_state(db).auto_trading_since > first
+
+
+def test_an_expired_lock_is_taken_back_and_a_long_cycle_keeps_it(r):
+    """A cycle longer than the lock TTL (long scan, AI call, slow broker) let the lock expire, and it was never
+    re-created: the role kept running but its health check failed for good and the desktop showed it stopped."""
+    roles.acquire("analysis", r, owner="container-a")
+    r.delete(roles.lock_key("analysis"))                      # the TTL ran out during a long cycle
+    assert roles.renew("analysis", r, owner="container-a") and r.exists(roles.lock_key("analysis"))
+    assert r.ttl(roles.lock_key("analysis")) > 0
+    r.set(roles.lock_key("analysis"), "container-b")
+    assert not roles.renew("analysis", r, owner="container-a"), "never takes a lock another process holds"
+    assert roles._text(r.get(roles.lock_key("analysis"))) == "container-b"
+
+
+def test_keepalive_renews_while_the_loop_progresses_and_stops_when_it_is_stuck(r):
+    ka = roles.KeepAlive("trading", r, owner="container-a", every=0.05, stall=60)
+    roles.acquire("trading", r, owner="container-a")
+    r.delete(roles.lock_key("trading"))
+    assert ka.tick() and r.exists(roles.lock_key("trading"))
+    ka.start()
+    try:
+        r.delete(roles.lock_key("trading"))
+        import time as _t
+        deadline = _t.monotonic() + 3
+        while not r.exists(roles.lock_key("trading")) and _t.monotonic() < deadline:
+            _t.sleep(0.02)
+        assert r.exists(roles.lock_key("trading")), "renewed in the background during a long cycle"
+    finally:
+        ka.stop()
+    stuck = roles.KeepAlive("trading", r, owner="container-a", stall=0)
+    r.delete(roles.lock_key("trading"))
+    assert not stuck.tick() and not r.exists(roles.lock_key("trading")), "a stuck loop is still reported unhealthy"

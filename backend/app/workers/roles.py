@@ -26,6 +26,7 @@ import os
 import signal
 import socket
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -48,6 +49,8 @@ log = logging.getLogger("roles")
 UTC = timezone.utc
 ROLES = ("monitor", "analysis", "trading")
 LOCK_TTL = 120
+KEEPALIVE_SECONDS = 20          # the lock is renewed in the background, so a long cycle never lets it expire
+STALL_SECONDS = 900             # ...but only while the main loop makes progress: a stuck role still shows unhealthy
 TRADING_POLL_SECONDS = 5
 TRADING_BATCH = 20
 
@@ -85,6 +88,63 @@ def acquire(role: str, r=None, owner: str | None = None) -> None:
         r.expire(lock_key(role), LOCK_TTL)
         return
     raise RoleConflict(f"another '{role}' process holds its lock")
+
+
+def renew(role: str, r=None, owner: str | None = None) -> bool:
+    """Keep this process's lock. If it expired (a cycle outlasted the TTL), take it back, unless another process of
+    the same role now holds it. Before this, an expired lock was never re-created: the role kept running but its
+    health check (lock exists) failed for good, and the desktop showed it as stopped."""
+    r = r or get_redis()
+    owner = owner or owner_token()
+    if r.set(lock_key(role), owner, nx=True, ex=LOCK_TTL):
+        log.warning("%s lock had expired; re-acquired", role)
+        return True
+    if _text(r.get(lock_key(role))) == owner:
+        r.expire(lock_key(role), LOCK_TTL)
+        return True
+    log.error("%s lock is held by another process", role)
+    return False
+
+
+class KeepAlive:
+    """Renews the role lock every KEEPALIVE_SECONDS from a background thread while the main loop reports progress
+    (``beat``) within STALL_SECONDS. A long scan, AI call or slow broker reply no longer makes a healthy role look
+    stopped; a role whose loop is really stuck stops renewing and is reported unhealthy as before."""
+
+    def __init__(self, role: str, r=None, owner: str | None = None, every: float = KEEPALIVE_SECONDS,
+                 stall: float = STALL_SECONDS):
+        self.role, self.r, self.owner, self.every, self.stall = role, r, owner, every, stall
+        self.last_beat = time.monotonic()
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, name=f"{role}-keepalive", daemon=True)
+
+    def beat(self) -> None:
+        self.last_beat = time.monotonic()
+
+    def stalled(self) -> bool:
+        return time.monotonic() - self.last_beat > self.stall
+
+    def tick(self) -> bool:
+        if self.stalled():
+            log.error("%s loop made no progress for %.0fs; lock not renewed (reported unhealthy)", self.role,
+                      time.monotonic() - self.last_beat)
+            return False
+        try:
+            return renew(self.role, self.r, self.owner)
+        except Exception:  # noqa: BLE001 - Redis briefly unavailable: try again next tick
+            log.warning("%s lock renewal failed", self.role, exc_info=True)
+            return False
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.every):
+            self.tick()
+
+    def start(self) -> "KeepAlive":
+        self._t.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
 
 
 def release(role: str, r=None, owner: str | None = None) -> None:
@@ -323,6 +383,7 @@ def run(role: str) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.update(flag=True))
     signal.signal(signal.SIGINT, lambda *_: stop.update(flag=True))
     bridge: BridgeClient | None = None
+    keepalive = KeepAlive(role, r).start()
     try:
         agent_activity(f"{role}_role", "processing", f"{role} role started (pid {os.getpid()})")
         started_at = datetime.now(UTC)
@@ -333,7 +394,11 @@ def run(role: str) -> int:
         from app.services.resources import Reporter
         usage = Reporter(role)       # Phase 20: this container's CPU and memory against its limits
         while not stop["flag"]:
-            r.expire(lock_key(role), LOCK_TTL)
+            keepalive.beat()
+            try:
+                renew(role, r)
+            except Exception:  # noqa: BLE001 - Redis briefly unavailable; the cycle below reports it
+                log.warning("%s lock renewal failed", role, exc_info=True)
             usage.tick(r)
             try:
                 # (Re)connect: none registered yet, another agent selected, or the same agent re-linked (its
@@ -377,6 +442,7 @@ def run(role: str) -> int:
                 log.exception("%s cycle failed", role)
                 time.sleep(2)
     finally:
+        keepalive.stop()
         release(role, r)
         if bridges is not None:
             bridges.close()
