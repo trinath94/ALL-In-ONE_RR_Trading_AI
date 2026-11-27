@@ -715,6 +715,17 @@ def put_risk(mode: str, body: dict, user: User = Depends(require("risk.manage"))
     return params.__dict__
 
 
+@router.get("/risk/presets")
+def risk_presets(_: User = Depends(current_user)):
+    """Named risk profiles (FTMO-style, engine default) that fill the Risk Centre form; the user saves them."""
+    from app.risk.presets import PRESETS
+    out = []
+    for pid, p in PRESETS.items():
+        errs = RiskParams.from_dict({**RiskParams().__dict__, **p["values"]}).validate()
+        out.append({"id": pid, "label": p["label"], "note": p["note"], "values": p["values"], "valid": not errs})
+    return out
+
+
 @router.get("/risk/evaluations")
 def evaluations(_: User = Depends(current_user), db: Session = Depends(get_db), limit: int = 100):
     return [{"id": e.id, "signal_id": e.signal_id, "approved": e.approved, "volume": f(e.volume),

@@ -2,6 +2,23 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**FTMO-style risk profile and risk lock reset (2026-11-27).**
+
+*Apply profile → FTMO-style* (Risk Centre). The profile fills the form for you to review before saving. Its values:
+* trading locks at 4 % daily loss and 9 % drawdown (FTMO's limits are 5 % and 10 % of the initial balance);
+* floating loss is counted (3 %);
+* 0.5 % risk per trade;
+* at most 3 positions, and 1 per symbol;
+* reward:risk at least 1.5;
+* take profit required;
+* no entries when news risk is unknown.
+
+Initial capital, lot size, spread and trade-management values keep their current values. Set initial capital to your FTMO account size, and verify the current rules of your FTMO account type. There is also an *Engine default* profile.
+
+*Reset risk lock* (Risk Centre). It needs risk.manage and the typed confirmation "RESET RISK LOCK"; in LIVE it also needs trade.live. Every reset is audited.
+* It bypasses nothing: every loss limit is checked again on the next order, and trading locks again if a limit is still breached.
+* The kill switch is separate (Control Center).
+
 **Trades not executing: built-in economic calendar and execution diagnosis (2026-11-26).**
 
 *Built-in economic calendar.* The installed engine had no economic calendar configured. News risk was therefore UNKNOWN for every symbol, and the Risk Engine refused every entry ("News feed unavailable"). The engine now uses a built-in calendar (the public weekly economic calendar; no key needed; refreshed hourly). Entries are allowed except around high-impact events for the symbol's currencies. The protection itself is unchanged: if the calendar cannot be reached, news risk is UNKNOWN again and entries wait.

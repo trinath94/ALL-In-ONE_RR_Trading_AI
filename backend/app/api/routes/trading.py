@@ -203,6 +203,27 @@ class ConfirmIn(BaseModel):
     confirm_text: str
 
 
+@router.post("/control/risk-lock/reset")
+def risk_lock_reset(body: ConfirmIn, request: Request, user: User = Depends(require("risk.manage")),
+                    db: Session = Depends(get_db)):
+    """Clear a risk lock after reviewing it (typed confirmation). It bypasses nothing: the Risk Engine re-checks every
+    loss limit on the next order and locks again if a limit is still breached. The kill switch is not touched. In LIVE
+    it also needs trade.live."""
+    from app.api.deps import user_perms
+    if body.confirm_text != "RESET RISK LOCK":
+        raise HTTPException(428, "Type 'RESET RISK LOCK' to confirm")
+    st = tr.get_state(db)
+    if st.active_mode == "LIVE" and "trade.live" not in user_perms(user):
+        raise HTTPException(403, "resetting the risk lock in LIVE requires trade.live permission")
+    if not st.risk_lock:
+        return {**state_out(db), "note": "the risk lock was not set"}
+    reason = st.risk_lock_reason
+    st.risk_lock, st.risk_lock_reason = False, ""
+    audit(db, user.id, "RISK_LOCK_RESET", st.active_mode, {"reason": reason}, ip=client_ip(request))
+    publish("control", {"risk_lock": False})
+    return {**state_out(db), "note": f"risk lock cleared (was: {reason}); the limits are checked again on every order"}
+
+
 @router.post("/control/close-all")
 def close_all(body: ConfirmIn, user: User = Depends(require("trade.control")), db: Session = Depends(get_db),
               bridge: BridgeClient = Depends(bridge_dep)):
