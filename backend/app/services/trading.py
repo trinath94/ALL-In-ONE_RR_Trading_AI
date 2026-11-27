@@ -109,9 +109,13 @@ def auto_execution_block(st: TradingState, sig, policy: str = "pause") -> str | 
     review = sig.ai_review or {}
     d = review.get("decision")
     if (st.ai_mode or "AI") == "ENGINE_ONLY":
+        if review.get("mode") == "PLAYBOOK":
+            return review.get("note") or "the market playbook rules this trade out"
         if d == "SKIPPED" and review.get("mode") in ("ENGINE_ONLY", "ENGINE"):
             return None
         return "produced while the AI mode was on; engine-only mode executes only signals produced without AI"
+    if review.get("mode") == "PLAYBOOK":
+        return review.get("note") or "the market playbook rules this trade out"
     if d == "SKIPPED" and review.get("mode") == "ENGINE":
         return None                                  # engine-first: decided by the engine, never rejected by an AI
     if d == "SKIPPED" and review.get("mode") == "AI_UNAVAILABLE":

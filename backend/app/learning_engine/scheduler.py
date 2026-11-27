@@ -476,6 +476,13 @@ def job_improvement_research() -> dict:
         return out
 
 
+def job_playbooks() -> dict:
+    """Grade market playbooks from the trades they governed and expire old ones (no AI call)."""
+    from app.intelligence import playbook
+    with session_scope() as db:
+        return playbook.grade(db)
+
+
 JOBS = [
     Job("trade_sync", 300, 240, job_trade_sync, "execution", isolated=True),
     Job("failure_analysis", 900, 600, job_failure_analysis, isolated=True),
@@ -490,6 +497,7 @@ JOBS = [
     Job("discovery", 7 * 86400, 900, job_discovery, "claude_agent", isolated=True),
     Job("config_profiles", 3600, 1800, job_config_profiles, isolated=True),
     Job("improvement_research", 86400, 1800, job_improvement_research, "claude_agent", isolated=True),
+    Job("playbooks", 3600, 600, job_playbooks, isolated=True),
 ]
 JOB_MAP = {j.name: j for j in JOBS}
 

@@ -40,15 +40,15 @@ export function Autonomy({ admin }: { admin: boolean }) {
             ["Engine decision share", share], ["Learner jobs", i.learner_jobs]].map(([k, v]) => (
             <div key={k as string} className="rounded border border-line p-2"><div className="text-[10px] uppercase text-dim">{k}</div><div className="text-[15px] font-bold">{v as any}</div></div>))}
         </div>
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-          {[["Routine AI calls", ai.routine], ["Improvement AI calls", ai.improvement], ["All AI calls", ai.total]].map(([k, t]: any) => (
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          {[["Routine AI calls", ai.routine], ["Playbook AI calls", ai.playbook || { calls: 0, input_tokens: 0, output_tokens: 0, cost: 0 }], ["Improvement AI calls", ai.improvement], ["All AI calls", ai.total]].map(([k, t]: any) => (
             <div key={k} className="rounded border border-line p-2"><div className="text-[10px] uppercase text-dim">{k}</div>
               <div className="text-[15px] font-bold">{t.calls}</div>
               <div className="text-[10px] text-dim">{t.input_tokens.toLocaleString()} in / {t.output_tokens.toLocaleString()} out tokens · {t.cost ? `${t.cost} USD` : "no price set"}</div></div>))}
         </div>
         <div className="text-[11px] text-dim">Budget: today {b.spend_today_usd} USD{b.daily_budget_usd != null ? ` of ${b.daily_budget_usd}` : ""} · month {b.spend_month_usd} USD{b.monthly_budget_usd != null ? ` of ${b.monthly_budget_usd}` : ""}{b.exhausted ? ` · ${b.exhausted}` : b.alert ? ` · alert: ${b.alert}` : ""} · Claude Code tasks: {a.claude_code.tasks} ({a.claude_code.cost_usd} USD)</div>
         {ai.by_task.length > 0 && <Table rows={ai.by_task} rowKey={(r: any) => r.task}
-          cols={[{ k: "task", h: "AI task" }, { k: "kind", h: "Kind", r: (r: any) => <Badge tone={r.kind === "routine" ? "warn" : "cyan"}>{r.kind}</Badge> },
+          cols={[{ k: "task", h: "AI task" }, { k: "kind", h: "Kind", r: (r: any) => <Badge tone={r.kind === "routine" ? "warn" : r.kind === "playbook" ? "neon" : "cyan"}>{r.kind}</Badge> },
             { k: "calls", h: "Calls" }, { k: "input_tokens", h: "Tokens in / out", r: (r: any) => `${r.input_tokens} / ${r.output_tokens}` },
             { k: "cost", h: "Cost", r: (r: any) => r.cost == null ? <span className="text-dim">no price</span> : r.cost }]} />}
         <div>

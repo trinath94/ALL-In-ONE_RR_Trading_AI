@@ -823,10 +823,29 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
             elif not want[0]:
                 # Engine-first (owner's decision 2026-11-26): the engine decides; no AI call for this candidate.
                 from app.services.trading import engine_decided_review
-                sig.ai_review = engine_decided_review(want[1])
+                review = engine_decided_review(want[1])
+                # Market playbook: the saved plan for this symbol and regime (AI only when no valid or proven plan
+                # exists, capped per day). It can only restrict: stand aside, skip a direction, reduce size.
+                try:
+                    from app.intelligence import playbook as pbk
+                    with db.begin_nested():
+                        pb, how = pbk.get_or_create(db, db.get(Symbol, sig.symbol_id), sig.regime or "UNKNOWN")
+                except Exception as exc:  # noqa: BLE001 - a playbook problem never stops the engine
+                    pb, how = None, f"none:error {type(exc).__name__}"
+                if pb is not None:
+                    v = pbk.apply(pb, sig.decision)
+                    if v["allow"]:
+                        review["playbook"] = {**v, "how": how}
+                        review["size_multiplier"] = v["size_multiplier"]
+                    else:
+                        review = {"decision": "NO_TRADE", "mode": "PLAYBOOK", "note": v["reason"],
+                                  "playbook": {**v, "how": how}}
+                else:
+                    review["playbook"] = {"how": how}
+                sig.ai_review = review
                 _review_to_opportunity(db, sig, sig.ai_review, {"mode": "ENGINE"})
                 cycle.add("signal_quality", ref=f"signal:{sig.id}", out={"engine_decided": 1},
-                          evidence={"ai_call": f"none ({want[1]})"})
+                          evidence={"ai_call": "playbook" if how == "ai" else f"none ({want[1]}; playbook {how})"})
             elif agent is not None:
                 ar = db.get(AnalysisResult, sig.analysis_id)
                 sym = db.get(Symbol, sig.symbol_id)

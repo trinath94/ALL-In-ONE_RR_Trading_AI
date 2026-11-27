@@ -2,6 +2,26 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Market playbooks: trader plans the engine saves and reuses (2026-11-27).**
+
+For each symbol and market regime, the AI writes one trading plan like a professional trader:
+* the directional bias and the directions to trade;
+* the strategy families that suit the market;
+* conditions to avoid;
+* the risk posture: normal, reduced (half size or less) or stand aside.
+
+It writes the plan from the engine's own facts: multi-timeframe analysis, regime, volatility, spread, sessions, news and the symbol's recent results.
+
+**How the engine uses a plan:**
+* It applies the plan to every signal on that symbol itself, with no AI call per trade.
+* A plan can only hold back a trade or reduce size. It never forces a trade, never raises size and never bypasses the Risk Engine.
+* Each plan is graded from the trades it governed. A plan that made money is reused for the same symbol and regime without asking the AI again.
+* A regime change retires the current plan.
+* Limits: at most 12 new AI plans a day and 12 hours of validity (both adjustable in AI Studio → Market playbooks), within the AI budget.
+* Without an AI key, the engine trades exactly as before.
+
+Migration 0025 (additive).
+
 **FTMO-style risk profile and risk lock reset (2026-11-27).**
 
 *Apply profile → FTMO-style* (Risk Centre). The profile fills the form for you to review before saving. Its values:

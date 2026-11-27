@@ -95,6 +95,11 @@ class AIControl(Base):
     assistant_ai: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     auto_improvement: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     improvement_daily_cap: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    # Market playbooks (migration 0025): the AI's plan per symbol and regime, reused and graded by the engine.
+    playbook_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    playbook_hours: Mapped[int] = mapped_column(Integer, default=12, server_default="12")
+    playbook_daily_cap: Mapped[int] = mapped_column(Integer, default=12, server_default="12")
+    playbook_reuse_min_trades: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
     # Budget alert: an incident (warning) when spend reaches this % of a daily or monthly budget.
     budget_alert_pct: Mapped[int] = mapped_column(Integer, default=80, server_default="80")
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
@@ -130,3 +135,31 @@ class AIUsage(Base):
     error: Mapped[str | None] = mapped_column(Text)
     fallback_from: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class MarketPlaybook(Base):
+    """A trading plan for one symbol in one market regime (migration 0025). Written by the AI from the engine's facts,
+    or reused from an earlier plan that worked; applied by the engine to every candidate without an AI call. A plan
+    can only restrict (stand aside, skip a direction, reduce size); it never forces a trade or bypasses the Risk
+    Engine."""
+    __tablename__ = "market_playbooks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(64))
+    regime: Mapped[str] = mapped_column(String(32))
+    bias: Mapped[str] = mapped_column(String(8))                        # BUY | SELL | NEUTRAL
+    allowed_directions: Mapped[list] = mapped_column(JSONB, default=list)
+    preferred_strategies: Mapped[list] = mapped_column(JSONB, default=list)
+    avoid: Mapped[list] = mapped_column(JSONB, default=list)
+    risk_posture: Mapped[str] = mapped_column(String(16))               # normal | reduced | stand_aside
+    size_multiplier: Mapped[float] = mapped_column(Float, default=1.0)  # <= 1
+    reasoning: Mapped[str] = mapped_column(Text, default="")
+    facts: Mapped[dict] = mapped_column(JSONB, default=dict)
+    source: Mapped[str] = mapped_column(String(12))                     # ai | reused
+    reused_from: Mapped[int | None] = mapped_column(ForeignKey("market_playbooks.id", ondelete="SET NULL"))
+    ai_provider: Mapped[str | None] = mapped_column(String(160))
+    tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(12), default="ACTIVE")    # ACTIVE | EXPIRED | SUPERSEDED
+    outcomes: Mapped[dict] = mapped_column(JSONB, default=dict)          # {trades, wins, net, avg_r}
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

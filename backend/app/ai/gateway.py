@@ -50,11 +50,13 @@ TASKS = {
     "performance_analysis": "Performance analysis of strategies and accounts",
     "strategy_research": "Strategy research questions (no fabricated backtests)",
     "error_explanation": "Explanations of engine errors and incidents",
+    # Market playbooks: one plan per symbol and regime, reused by the engine for every candidate.
+    "market_playbook": "Market playbook per symbol and regime (reused by the engine)",
 }
 # Tasks the engine calls (Phase 14: all of them).
 WIRED_TASKS = ("candidate_review", "strategy_discovery", "trade_research", "learning_explanation", "research_summary",
                "diagnostics", "config_proposal", "engine_assistant", "market_summary", "trade_review",
-               "performance_analysis", "strategy_research", "error_explanation")
+               "performance_analysis", "strategy_research", "error_explanation", "market_playbook")
 # Parts 27-30 Phase 4: tasks whose route may use mode "consensus" (two providers answer independently).
 CONSENSUS_TASKS = ("candidate_review",)
 ENV_PROVIDER = "anthropic (RR_ANTHROPIC_API_KEY)"

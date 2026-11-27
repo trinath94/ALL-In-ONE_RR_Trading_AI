@@ -201,6 +201,13 @@ SAFETY: list[tuple[str, list[str]]] = [
       "py:test_engine_first.py::test_selective_review_only_for_uncertain_candidates_within_the_daily_cap",
       "py:test_engine_first.py::test_engine_triggered_improvement_research_saves_a_versioned_proposal",
       "py:test_engine_first.py::test_the_assistant_answers_internally_unless_ai_phrasing_is_on"]),
+    ("24. Market playbooks only restrict (stand aside, skip a direction, reduce size), are reused only when proven, and "
+     "make one AI call per symbol and regime, not per trade",
+     ["py:test_playbooks.py::test_the_ai_plan_is_saved_and_reused_for_every_candidate",
+      "py:test_playbooks.py::test_stand_aside_blocks_and_never_forces",
+      "py:test_playbooks.py::test_direction_against_the_plan_is_skipped_and_reduced_posture_halves_size",
+      "py:test_playbooks.py::test_a_proven_plan_is_reused_without_an_ai_call_and_a_failed_one_is_not",
+      "py:test_playbooks.py::test_playbooks_are_graded_from_the_trades_they_governed"]),
     ("14. Original strategy preservation tests pass", ["py:test_preservation.py::test_all_original_strategy_ids_present",
                                                       "py:test_preservation.py::test_original_strategy_logic_and_config_unchanged",
                                                       "py:test_preservation.py::test_experimental_strategies_never_enter_production_registry"]),

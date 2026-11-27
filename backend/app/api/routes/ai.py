@@ -627,6 +627,10 @@ class EngineFirstIn(BaseModel):
     assistant_ai: bool | None = None
     auto_improvement: bool | None = None
     improvement_daily_cap: int | None = Field(default=None, ge=0, le=20)
+    playbook_enabled: bool | None = None
+    playbook_hours: int | None = Field(default=None, ge=1, le=168)
+    playbook_daily_cap: int | None = Field(default=None, ge=0, le=200)
+    playbook_reuse_min_trades: int | None = Field(default=None, ge=1, le=100)
 
 
 @router.put("/ai/engine-first")
@@ -650,3 +654,22 @@ def put_engine_first(body: EngineFirstIn, user: User = Depends(require("system.m
     db.flush()
     audit(db, user.id, "AI_ENGINE_FIRST_UPDATE", "", {"old": old, "new": fields})
     return engine_first(db)
+
+
+
+@router.get("/ai/playbooks")
+def playbooks(limit: int = 50, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Market playbooks: active plans first, then recent ones, with how each was made (AI or reused) and its graded
+    results."""
+    from app.db.models_ai import MarketPlaybook
+    rows = db.scalars(select(MarketPlaybook).order_by((MarketPlaybook.status == "ACTIVE").desc(),
+                                                      MarketPlaybook.id.desc()).limit(min(limit, 200))).all()
+    since = datetime.now(UTC) - timedelta(days=1)
+    return {"playbooks": [{"id": p.id, "symbol": p.symbol, "regime": p.regime, "bias": p.bias,
+                           "allowed_directions": p.allowed_directions, "risk_posture": p.risk_posture,
+                           "size_multiplier": p.size_multiplier, "preferred_strategies": p.preferred_strategies,
+                           "avoid": p.avoid, "reasoning": p.reasoning, "source": p.source, "reused_from": p.reused_from,
+                           "status": p.status, "outcomes": p.outcomes, "tokens": p.tokens,
+                           "valid_until": p.valid_until, "created_at": p.created_at} for p in rows],
+            "today": {"ai": sum(1 for p in rows if p.source == "ai" and p.created_at >= since),
+                      "reused": sum(1 for p in rows if p.source == "reused" and p.created_at >= since)}}

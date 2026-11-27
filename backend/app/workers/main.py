@@ -93,6 +93,15 @@ def startup_checks(bridge: BridgeClient, account_id: int | None = None) -> tuple
     return True, report
 
 
+def _playbook_size(sig) -> float:
+    """A market playbook may only reduce size (multiplier in [0, 1]); anything else means normal size."""
+    try:
+        m = float((sig.ai_review or {}).get("size_multiplier", 1.0))
+    except (TypeError, ValueError):
+        return 1.0
+    return m if 0 < m < 1 else 1.0
+
+
 def auto_execute_factory(bridge: BridgeClient, bridges: AccountBridges | None = None):
     """Multi-account: one signal is evaluated for every execution account (the active account first, then every other
     account enabled for trading in the active mode). Each account passes its own eligibility, Risk Engine (its own
@@ -128,7 +137,8 @@ def auto_execute_factory(bridge: BridgeClient, bridges: AccountBridges | None = 
                     em.open_position(db, b, symbol=sym.broker_symbol, direction=sig.decision,
                                      stop_loss=float(sig.stop_loss), take_profit=float(sig.tp2) if sig.tp2 else None,
                                      source="AUTO", dedupe_key=f"{account.id}:signal:{sig.id}:OPEN", signal=sig,
-                                     strategy_codes=codes, expires_at=sig.expires_at, account=account)
+                                     strategy_codes=codes, expires_at=sig.expires_at, account=account,
+                                     size_multiplier=_playbook_size(sig))
                 except em.ExecutionBlocked as exc:
                     log.info("auto-execution blocked for signal %s on account %s: %s", signal_id, account.login,
                              exc.reason)

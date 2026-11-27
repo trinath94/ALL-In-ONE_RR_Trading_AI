@@ -51,7 +51,8 @@ def report(db: Session, days: int = 1) -> dict:
                       .where(AIUsage.created_at >= since, AIUsage.status.in_(["ok", "error", "invalid_output",
                                                                               "rate_limited"]))
                       .group_by(AIUsage.task)).all()
-    by_task = [{"task": t, "kind": "routine" if t in ROUTINE_TASKS else "improvement", "calls": c,
+    by_task = [{"task": t, "kind": "routine" if t in ROUTINE_TASKS else "playbook" if t == "market_playbook"
+                else "improvement", "calls": c,
                 "input_tokens": int(i or 0), "output_tokens": int(o or 0), "cache_read_tokens": int(cr or 0),
                 "cost": round(float(cost), 6) if cost is not None else None} for t, c, i, o, cr, cost in rows]
 
@@ -65,7 +66,8 @@ def report(db: Session, days: int = 1) -> dict:
                            .order_by(StrategyConfigProfile.id.desc()).limit(20)).all()
     return {
         "days": days, "internal": internal,
-        "ai": {"total": total(), "routine": total("routine"), "improvement": total("improvement"), "by_task": by_task},
+        "ai": {"total": total(), "routine": total("routine"), "improvement": total("improvement"),
+               "playbook": total("playbook"), "by_task": by_task},
         "claude_code": {"tasks": len(cc), "cost_usd": round(sum(float((t.usage or {}).get("cost_usd") or 0) for t in cc), 6),
                         "by_status": {s: sum(1 for t in cc if t.status == s) for s in {t.status for t in cc}}},
         "budget": gateway.budget_status(), "policy": engine_first(db),
@@ -83,7 +85,10 @@ def engine_first(db: Session) -> dict:
             "review_daily_cap": c.review_daily_cap if c else 10,
             "review_confidence_below": c.review_confidence_below if c else 0.6,
             "assistant_ai": bool(c and c.assistant_ai), "auto_improvement": bool(c.auto_improvement) if c else True,
-            "improvement_daily_cap": c.improvement_daily_cap if c else 2}
+            "improvement_daily_cap": c.improvement_daily_cap if c else 2,
+            "playbook_enabled": bool(c.playbook_enabled) if c else True,
+            "playbook_hours": c.playbook_hours if c else 12, "playbook_daily_cap": c.playbook_daily_cap if c else 12,
+            "playbook_reuse_min_trades": c.playbook_reuse_min_trades if c else 3}
 
 
 def independence(db: Session, rep: dict | None = None) -> dict:
