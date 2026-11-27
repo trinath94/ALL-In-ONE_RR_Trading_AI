@@ -2,6 +2,37 @@
 
 ## In development: Parts 27-30 (autonomous research and AI orchestration)
 
+**Trader discipline: daily stop, key levels, A+ setups only (2026-11-27).**
+
+Set these in the Risk Centre. Each one is off (0) until you set it, or apply the "Professional trader discipline" profile
+(it keeps your own loss limits); the FTMO-style profile includes them too.
+
+1. **Daily discipline** (Risk Engine, on every order):
+   * the number of new trades per day, and per symbol per day, is limited;
+   * the engine is done for the day after N losing trades (this is not a risk lock: it resets the next day);
+   * after N losses in a row, risk per trade is reduced (half by default; it is never raised).
+2. **Key levels**, computed by the engine itself from the bars it already loads, with no AI:
+   * previous day high, low and close;
+   * week open, previous week high and low;
+   * today's Asian range;
+   * round numbers.
+
+   They are recorded with every analysis, with the distance from the price to the nearest level in ATR.
+3. **A+ setups only.** A seven-point checklist, scored by the engine:
+   * grade A+;
+   * the higher timeframe agrees;
+   * the entry is at a key level;
+   * two or more strategies agree;
+   * the playbook bias agrees;
+   * confidence of at least 55 %;
+   * reward:risk of at least 2.
+
+   A candidate below the minimum score, or too far from a key level, is held back in the scanner before any AI call, so
+   it costs no tokens. The score is recorded on every candidate.
+
+All of this can only hold back a trade or reduce its size. Nothing forces a trade, and the Risk Engine still decides
+every order.
+
 **Market playbooks: trader plans the engine saves and reuses (2026-11-27).**
 
 For each symbol and market regime, the AI writes one trading plan like a professional trader:

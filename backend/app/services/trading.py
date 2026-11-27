@@ -109,12 +109,12 @@ def auto_execution_block(st: TradingState, sig, policy: str = "pause") -> str | 
     review = sig.ai_review or {}
     d = review.get("decision")
     if (st.ai_mode or "AI") == "ENGINE_ONLY":
-        if review.get("mode") == "PLAYBOOK":
+        if review.get("mode") in ("PLAYBOOK", "QUALITY"):
             return review.get("note") or "the market playbook rules this trade out"
         if d == "SKIPPED" and review.get("mode") in ("ENGINE_ONLY", "ENGINE"):
             return None
         return "produced while the AI mode was on; engine-only mode executes only signals produced without AI"
-    if review.get("mode") == "PLAYBOOK":
+    if review.get("mode") in ("PLAYBOOK", "QUALITY"):
         return review.get("note") or "the market playbook rules this trade out"
     if d == "SKIPPED" and review.get("mode") == "ENGINE":
         return None                                  # engine-first: decided by the engine, never rejected by an AI
@@ -396,10 +396,32 @@ def account_state(db: Session, account: TradingAccount, snap: AccountSnapshot) -
             streak += 1
         else:
             break
+    day = _period_start(now, "day")
+    from app.services.system_check import not_test_trade
+    losses = db.scalar(select(func.count(ClosedPosition.id)).where(ClosedPosition.account_id == account.id,
+                                                                  ClosedPosition.closed_at >= day,
+                                                                  ClosedPosition.profit < 0, not_test_trade())) or 0
     return AccountState(account.login, account.server, account.mode, account.currency, float(snap.balance),
                         float(snap.equity), float(snap.margin), float(snap.free_margin), snap.leverage,
-                        first_equity(_period_start(now, "day")), first_equity(_period_start(now, "week")),
-                        first_equity(_period_start(now, "month")), float(peak or snap.equity), streak)
+                        first_equity(day), first_equity(_period_start(now, "week")),
+                        first_equity(_period_start(now, "month")), float(peak or snap.equity), streak,
+                        entries_today(db, account), int(losses))
+
+
+ENTRY_SOURCES = ("AUTO", "MANUAL")
+ENTRY_STATES = ("PENDING", "SENT", "CONFIRMED", "UNKNOWN")
+
+
+def entries_today(db: Session, account: TradingAccount, symbol: str | None = None) -> int:
+    """New entries sent today (trader discipline): engine and manual orders, not management or system test orders."""
+    from app.db.models import TradeOrder
+    q = select(func.count(TradeOrder.id)).where(
+        TradeOrder.account_id == account.id, TradeOrder.created_at >= _period_start(datetime.now(UTC), "day"),
+        TradeOrder.source.in_(ENTRY_SOURCES), TradeOrder.status.in_(ENTRY_STATES),
+        TradeOrder.action.notin_(("CLOSE", "PARTIAL_CLOSE", "MODIFY_SLTP", "MODIFY")))
+    if symbol is not None:
+        q = q.where(TradeOrder.symbol == symbol)
+    return int(db.scalar(q) or 0)
 
 
 # ---- positions -------------------------------------------------------------------------

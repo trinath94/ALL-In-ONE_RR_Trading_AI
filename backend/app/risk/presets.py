@@ -37,6 +37,19 @@ PRESETS: dict[str, dict] = {
             "news_unknown_blocks": True,
             "min_free_margin_pct": 50.0,
             "existing_position_policy": "PROTECT",
+            # trader discipline: stop after a bad day, smaller after a losing streak, A+ setups only
+            "max_trades_per_day": 6, "max_trades_per_symbol_day": 2, "max_losses_per_day": 3,
+            "streak_reduce_after": 2, "streak_reduce_factor": 0.5, "key_level_max_atr": 1.0, "min_setup_score": 4,
+        },
+    },
+    "pro_discipline": {
+        "label": "Professional trader discipline (keeps your loss limits)",
+        "note": "Adds a trader's daily discipline to your current limits: at most 5 trades a day and 2 per symbol, done "
+                "for the day after 3 losing trades, half size after 2 losses in a row, and only A+ setups (at a key "
+                "level within 1 ATR, at least 4 of the 7 checklist points). Loss limits, capital and exposure are kept.",
+        "values": {
+            "max_trades_per_day": 5, "max_trades_per_symbol_day": 2, "max_losses_per_day": 3,
+            "streak_reduce_after": 2, "streak_reduce_factor": 0.5, "key_level_max_atr": 1.0, "min_setup_score": 4,
         },
     },
     "engine_default": {

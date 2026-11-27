@@ -182,7 +182,8 @@ def open_position(db: Session, bridge: BridgeClient, *, symbol: str, direction: 
                             expected_slippage_points=params.max_slippage_points / 2, size_multiplier=size_multiplier,
                             expires_at=expires_at, source=source, strategy_codes=strategy_codes or [],
                             requested_volume=requested_volume, margin_required_per_lot=margin,
-                            volatility_percentile=_volatility_percentile(db, signal))
+                            volatility_percentile=_volatility_percentile(db, signal),
+                            symbol_trades_today=tr.entries_today(db, account, symbol))
     decision = risk.evaluate(req, spec, tr.account_state(db, account, snap), tr.open_risks(db, account), params, control,
                              corr=portfolio_intel.cached_corr())
     ev = RiskEvaluation(signal_id=signal.id if signal else None, account_id=account.id, approved=decision.approved,

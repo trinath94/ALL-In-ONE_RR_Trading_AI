@@ -60,6 +60,15 @@ class RiskParams:
     max_floating_loss_pct: float = 0.0         # no new entry while open positions are this far under water (% balance)
     max_strategy_risk_pct: float = 0.0         # open risk of one strategy, including the new order (% equity)
     volatility_sizing: bool = False            # scale the risk budget down when volatility is high (ATR percentile)
+    # Trader discipline (2026-11-27). 0 = off, the original behaviour. They only ever hold back or reduce.
+    max_trades_per_day: int = 0                # new entries per account per day
+    max_trades_per_symbol_day: int = 0         # new entries per symbol per day
+    max_losses_per_day: int = 0                # stop for the day after this many losing trades (resets next day)
+    streak_reduce_after: int = 0               # after this many losses in a row, risk per trade x streak_reduce_factor
+    streak_reduce_factor: float = 0.5
+    # A+ setups only (scanner, before any AI call). 0 = off.
+    key_level_max_atr: float = 0.0             # entry must be within this many ATR of a key level
+    min_setup_score: int = 0                   # minimum setup quality score (0-7)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "RiskParams":
@@ -88,6 +97,13 @@ class RiskParams:
             errs.append("volatility_exit_atr_ratio must be 0 (off) or > 1")
         if self.max_floating_loss_pct < 0 or self.max_strategy_risk_pct < 0:
             errs.append("max_floating_loss_pct and max_strategy_risk_pct must be >= 0 (0 = off)")
+        if min(self.max_trades_per_day, self.max_trades_per_symbol_day, self.max_losses_per_day,
+               self.streak_reduce_after) < 0:
+            errs.append("daily trade and loss counts must be >= 0 (0 = off)")
+        if not 0 < self.streak_reduce_factor <= 1:
+            errs.append("streak_reduce_factor must be in (0, 1] (it only ever reduces size)")
+        if self.key_level_max_atr < 0 or not 0 <= self.min_setup_score <= 7:
+            errs.append("key_level_max_atr must be >= 0 and min_setup_score 0-7 (0 = off)")
         return errs
 
 
@@ -125,6 +141,8 @@ class AccountState:
     month_start_equity: float
     peak_equity: float
     consecutive_losses: int = 0
+    trades_today: int = 0                    # new entries today (trader discipline)
+    losses_today: int = 0                    # losing trades closed today
 
 
 @dataclass
@@ -155,6 +173,7 @@ class OrderRequest:
     margin_required_per_lot: float | None = None  # from MT5 order_calc_margin when available
     conversion_rate: float | None = None    # profit ccy -> account ccy if tick_value unavailable
     volatility_percentile: float | None = None  # ATR percentile 0..1 from the signal's analysis (volatility sizing)
+    symbol_trades_today: int = 0                # new entries on this symbol today (trader discipline)
 
 
 @dataclass
@@ -332,6 +351,21 @@ def evaluate(req: OrderRequest, spec: SymbolSpec, acct: AccountState, positions:
             f"open positions {floating:.2f}% under water >= {params.max_floating_loss_pct}%"
             if floating >= params.max_floating_loss_pct else f"{floating:.2f}% floating loss")
 
+    # --- Trader discipline: a professional stops for the day (not a lock: it resets the next day) ---------
+    if req.source != "SYSTEM":
+        if params.max_losses_per_day > 0:
+            add("daily_losses", acct.losses_today < params.max_losses_per_day,
+                f"{acct.losses_today} losing trades today: done for the day (max {params.max_losses_per_day})"
+                if acct.losses_today >= params.max_losses_per_day else f"{acct.losses_today} losses today")
+        if params.max_trades_per_day > 0:
+            add("daily_trades", acct.trades_today < params.max_trades_per_day,
+                f"{acct.trades_today} trades today >= max {params.max_trades_per_day}"
+                if acct.trades_today >= params.max_trades_per_day else f"{acct.trades_today} trades today")
+        if params.max_trades_per_symbol_day > 0:
+            add("daily_symbol_trades", req.symbol_trades_today < params.max_trades_per_symbol_day,
+                f"{req.symbol_trades_today} trades on {req.symbol} today >= max {params.max_trades_per_symbol_day}"
+                if req.symbol_trades_today >= params.max_trades_per_symbol_day else f"{req.symbol_trades_today} today")
+
     # --- Portfolio limits -------------------------------------------------------------------
     add("max_open_positions", len(positions) < params.max_open_positions,
         f"{len(positions)} open >= max {params.max_open_positions}" if len(positions) >= params.max_open_positions else f"{len(positions)} open")
@@ -358,6 +392,10 @@ def evaluate(req: OrderRequest, spec: SymbolSpec, acct: AccountState, positions:
         if req.size_multiplier > params.max_size_multiplier:
             add("size_multiplier", True, f"requested x{req.size_multiplier} capped to x{mult}")
         budget = eq * params.risk_per_trade_pct / 100 * mult
+        if params.streak_reduce_after > 0 and acct.consecutive_losses >= params.streak_reduce_after:
+            f = min(1.0, params.streak_reduce_factor)                           # only ever reduces
+            budget *= f
+            add("losing_streak_sizing", True, f"{acct.consecutive_losses} losses in a row: risk budget x{f:.2f}")
         if params.volatility_sizing and req.volatility_percentile is not None and req.volatility_percentile > 0.5:
             vf = max(0.25, 1 - (req.volatility_percentile - 0.5) * 1.5)       # only ever reduces
             budget *= vf

@@ -293,6 +293,11 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
                                peers, adaptive_recs, stats, cyc, ref, now, patt, dq)
         except Exception as exc:  # noqa: BLE001 - the trace must not break the scan; the engine's decision stands
             log.warning("opportunity record skipped for %s: %s", ref, exc)
+    try:                                  # Trader discipline: key levels a trader marks before the session (no AI)
+        from app.intelligence import levels as key_levels
+        kl = key_levels.summary(df, float(sym.point), float(mctx.price), mctx.atr)
+    except Exception as exc:  # noqa: BLE001 - levels are advisory; never break the scan
+        kl = {"error": str(exc)[:200]}
     ar = AnalysisResult(symbol_id=sym.id, timeframe=tf, bar_time=df.index[-1].to_pydatetime(), regime=reg.primary,
                         structure={"regime": reg.dict(), "htf_bias": mctx.htf_bias, "sessions": mctx.sessions,
                                    "news": news, "atr": mctx.atr, "price": mctx.price,
@@ -300,7 +305,7 @@ def analyse(db: Session, bridge: BridgeClient, sym: Symbol, tf: str, enabled: di
                                    # Phase 8: what this symbol's feed actually provided and what every strategy did
                                    "data_caps": sorted(caps), "peers": sorted(peers), "peer_problems": peer_problems,
                                    "peer_correlation": peer_correlation(df, peers) if peers else {},
-                                   "evaluation": outcomes, "data_quality": dq,
+                                   "evaluation": outcomes, "data_quality": dq, "key_levels": kl,
                                    "unavailable": sorted({d["strategy"] for d in diag if d["status"] == "unavailable"})},
                         strategy_outputs=[s.dict() for s in sigs] + [d for d in diag if d["status"] == "error"],
                         score={**res.dict(), "intelligence": intel, "fusion": fused})
@@ -814,8 +819,16 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
         with session_scope() as db:
             sig = db.get(TradingSignal, r["signal_id"])
             from app.services.trading import wants_ai_review
-            want = (False, "engine-only mode") if ai_mode == "ENGINE_ONLY" else wants_ai_review(db, sig)
-            if ai_mode == "ENGINE_ONLY":
+            setup = _setup_quality(db, sig)
+            want = (False, "engine-only mode") if ai_mode == "ENGINE_ONLY" else (
+                (False, "below the A+ bar") if setup and setup["block"] else wants_ai_review(db, sig))
+            if setup and setup["block"]:
+                # A+ setups only: a weak setup is held back here, before any AI call (no tokens). Never forced.
+                sig.ai_review = {"decision": "NO_TRADE", "mode": "QUALITY", "note": setup["block"], "setup": setup}
+                _review_to_opportunity(db, sig, sig.ai_review, {"mode": "QUALITY"})
+                cycle.add("signal_quality", ref=f"signal:{sig.id}", out={"below_a_plus": 1},
+                          evidence={"ai_call": "none", "reason": setup["block"]})
+            elif ai_mode == "ENGINE_ONLY":
                 # The operator runs the engine without AI: no provider call, no cost; the Risk Engine decides.
                 from app.services.trading import engine_only_review
                 sig.ai_review = engine_only_review()
@@ -863,6 +876,8 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
                 from app.services.trading import unavailable_review
                 sig.ai_review = unavailable_review(db, "no AI provider is configured for candidate review")
                 _review_to_opportunity(db, sig, sig.ai_review, None)
+            if setup and not setup["block"] and isinstance(sig.ai_review, dict):
+                sig.ai_review = {**sig.ai_review, "setup": setup}
         auto_execute(r["signal_id"])
     sched.publish_status(rds, report)
     cycle.finish({"analysed": report.analysed, "due": report.due, "candidates": len(ranked),
@@ -875,6 +890,22 @@ def scan_once(bridge: BridgeClient, agent: ClaudeAgent | None, auto_execute,
                                                 f"{report.deferred} deferred), {len(ranked)} candidates")
     return {"analyses": report.analysed, "candidates": len(ranked), "errors": report.errors + report.timed_out,
             "not_due": report.not_due, "deferred": report.deferred, "timed_out": report.timed_out}
+
+
+def _setup_quality(db: Session, sig) -> dict | None:
+    """The A+ checklist for a candidate (trader discipline), or None when it cannot be assessed. Never raises."""
+    try:
+        from app.intelligence import setup_quality
+        from app.services import trading as tr
+        acct = tr.active_account(db)
+        params = tr.account_risk_params(db, acct) if acct is not None else None
+        if params is None:
+            return None
+        q = setup_quality.assess(db, sig, db.get(AnalysisResult, sig.analysis_id) if sig.analysis_id else None, params)
+        return q if setup_quality.gate_on(params) else {**q, "block": None}
+    except Exception as exc:  # noqa: BLE001 - the checklist never stops the engine
+        log.warning("setup quality skipped for signal %s: %s", sig.id, exc)
+        return None
 
 
 class _ResultView:

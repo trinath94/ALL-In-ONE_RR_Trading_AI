@@ -208,6 +208,13 @@ SAFETY: list[tuple[str, list[str]]] = [
       "py:test_playbooks.py::test_direction_against_the_plan_is_skipped_and_reduced_posture_halves_size",
       "py:test_playbooks.py::test_a_proven_plan_is_reused_without_an_ai_call_and_a_failed_one_is_not",
       "py:test_playbooks.py::test_playbooks_are_graded_from_the_trades_they_governed"]),
+    ("25. Trader discipline only holds back or reduces: done for the day after the daily loss count, daily trade limits, "
+     "smaller size after a losing streak, A+ setups only before any AI call; off by default",
+     ["py:test_trader_discipline.py::test_defaults_are_off_and_keep_the_original_behaviour",
+      "py:test_trader_discipline.py::test_done_for_the_day_after_the_daily_loss_count_and_trade_counts",
+      "py:test_trader_discipline.py::test_a_losing_streak_halves_the_size_and_never_raises_it",
+      "py:test_trader_discipline.py::test_weak_setups_are_held_back_before_any_ai_call",
+      "py:test_trader_discipline.py::test_daily_trade_limit_through_the_execution_path"]),
     ("14. Original strategy preservation tests pass", ["py:test_preservation.py::test_all_original_strategy_ids_present",
                                                       "py:test_preservation.py::test_original_strategy_logic_and_config_unchanged",
                                                       "py:test_preservation.py::test_experimental_strategies_never_enter_production_registry"]),

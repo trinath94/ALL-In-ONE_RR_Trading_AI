@@ -9,6 +9,8 @@ const GROUPS: [string, string[]][] = [
   ["Capital & sizing", ["initial_capital", "risk_per_trade_pct", "max_lot_size", "max_size_multiplier", "min_rr"]],
   ["Loss limits (lock trading)", ["max_daily_loss_pct", "max_weekly_loss_pct", "max_monthly_loss_pct", "max_drawdown_pct", "max_consecutive_losses", "daily_profit_target_pct", "stop_after_profit_target"]],
   ["Exposure", ["max_open_positions", "max_trades_per_symbol", "max_positions_per_strategy", "max_total_exposure_pct", "max_correlated_exposure_pct", "correlation_threshold", "max_leverage_exposure", "min_free_margin_pct"]],
+  ["Trader discipline (0 = off)", ["max_trades_per_day", "max_trades_per_symbol_day", "max_losses_per_day", "streak_reduce_after", "streak_reduce_factor"]],
+  ["A+ setups only (0 = off; checked before any AI call)", ["key_level_max_atr", "min_setup_score"]],
   ["Execution quality", ["max_spread_points", "max_slippage_points", "require_take_profit", "news_unknown_blocks"]],
   ["Trade management", ["break_even_at_r", "partial_close_at_r", "partial_close_fraction", "trailing_start_r", "trailing_atr_mult"]],
   // Parts 27-30 Phase 6: optional exits, all 0 / off by default
